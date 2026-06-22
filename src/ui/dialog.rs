@@ -7,6 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap},
 };
 
+use super::button::Button;
 use super::to_color;
 
 #[derive(Debug, Clone)]
@@ -62,12 +63,12 @@ impl ConfirmState {
 }
 
 pub struct ConfirmButtonAreas {
-    pub yes: Rect,
-    pub no: Rect,
+    pub yes: Button,
+    pub no: Button,
 }
 
 pub struct ErrorButtonArea {
-    pub ok: Rect,
+    pub ok: Button,
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -78,20 +79,6 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
         y,
         width: width.min(area.width),
         height: height.min(area.height),
-    }
-}
-
-fn btn_style(cs: &ColorScheme, pressed: bool) -> Style {
-    if pressed {
-        Style::default()
-            .fg(to_color(cs.dialog_butt_bg))
-            .bg(to_color(cs.dialog_butt_fg))
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(to_color(cs.dialog_butt_fg))
-            .bg(to_color(cs.dialog_butt_bg))
-            .add_modifier(Modifier::BOLD)
     }
 }
 
@@ -137,24 +124,19 @@ pub fn render_confirm(
         .wrap(Wrap { trim: false });
     Widget::render(para, msg_area, buf);
 
-    // Button row
+    // Buttons
     let button_row = inner.y + line_count + 1;
     const YES_LABEL: &str = "[Y]es";
     const NO_LABEL: &str = "[N]o";
-    let yes_x = inner.x + 1;
-    let no_x = yes_x + YES_LABEL.len() as u16 + 2;
-
-    let yes_rect = Rect { x: yes_x, y: button_row, width: YES_LABEL.len() as u16, height: 1 };
-    let no_rect = Rect { x: no_x, y: button_row, width: NO_LABEL.len() as u16, height: 1 };
+    let yes_btn = Button::build(YES_LABEL, inner.x + 1, button_row, cs);
+    let no_btn = Button::build(NO_LABEL, yes_btn.area.x + YES_LABEL.len() as u16 + 2, button_row, cs);
 
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
-        buf.set_string(yes_x, button_row, YES_LABEL,
-            btn_style(cs, press.map(|p| yes_rect.contains(p)).unwrap_or(false)));
-        buf.set_string(no_x, button_row, NO_LABEL,
-            btn_style(cs, press.map(|p| no_rect.contains(p)).unwrap_or(false)));
+        yes_btn.render(YES_LABEL, buf, press);
+        no_btn.render(NO_LABEL, buf, press);
     }
 
-    ConfirmButtonAreas { yes: yes_rect, no: no_rect }
+    ConfirmButtonAreas { yes: yes_btn, no: no_btn }
 }
 
 pub fn render_error(
@@ -200,12 +182,11 @@ pub fn render_error(
     const OK_LABEL: &str = "[ OK ]";
     let button_row = inner.y + line_count + 1;
     let ok_x = inner.x + inner.width.saturating_sub(OK_LABEL.len() as u16) / 2;
-    let ok_rect = Rect { x: ok_x, y: button_row, width: OK_LABEL.len() as u16, height: 1 };
+    let ok_btn = Button::build(OK_LABEL, ok_x, button_row, cs);
 
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
-        buf.set_string(ok_x, button_row, OK_LABEL,
-            btn_style(cs, press.map(|p| ok_rect.contains(p)).unwrap_or(false)));
+        ok_btn.render(OK_LABEL, buf, press);
     }
 
-    ErrorButtonArea { ok: ok_rect }
+    ErrorButtonArea { ok: ok_btn }
 }

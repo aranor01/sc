@@ -3,11 +3,11 @@ use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
-    style::Style,
-    text::{Line, Span},
-    widgets::{Paragraph, Widget},
+    style::{Modifier, Style},
+    widgets::Widget,
 };
 
+use super::button::Button;
 use super::to_color;
 
 fn first_fkey(bindings: &ActionBindings) -> Option<u8> {
@@ -50,41 +50,43 @@ impl<'a> ButtonBarWidget<'a> {
 
 impl<'a> Widget for ButtonBarWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let butt_normal = Style::default()
-            .fg(to_color(self.cs.button_bar_butt_fg))
-            .bg(to_color(self.cs.button_bar_butt_bg));
-        let butt_pressed = Style::default()
-            .fg(to_color(self.cs.button_bar_butt_bg))
-            .bg(to_color(self.cs.button_bar_butt_fg));
-        let label_normal = Style::default()
-            .fg(to_color(self.cs.button_bar_fg))
-            .bg(to_color(self.cs.button_bar_bg));
-        let label_pressed = Style::default()
-            .fg(to_color(self.cs.button_bar_bg))
-            .bg(to_color(self.cs.button_bar_fg));
-
-        // Only the column matters for the button bar (it occupies a single row).
-        let pressed_col: Option<u16> = self.press
-            .filter(|p| p.y == area.y)
-            .map(|p| p.x);
+        let butt_fg = to_color(self.cs.button_bar_butt_fg);
+        let butt_bg = to_color(self.cs.button_bar_butt_bg);
+        let label_fg = to_color(self.cs.button_bar_fg);
+        let label_bg = to_color(self.cs.button_bar_bg);
 
         let buttons = Self::buttons(self.kb);
-        let mut spans = Vec::new();
         let mut x = area.x;
         for (n, label) in &buttons {
             let fkey_str = format!("F{}", n);
             let label_str = format!("{} ", label);
             let fkey_len = fkey_str.len() as u16;
             let label_len = label_str.len() as u16;
-            let button_end = x + fkey_len + label_len;
-            let pressed = pressed_col.map(|c| c >= x && c < button_end).unwrap_or(false);
-            spans.push(Span::styled(fkey_str, if pressed { butt_pressed } else { butt_normal }));
-            spans.push(Span::styled(label_str, if pressed { label_pressed } else { label_normal }));
+
+            // pressed if the mouse Down is anywhere in the full button (fkey + label)
+            let pressed = self.press
+                .filter(|p| p.y == area.y && p.x >= x && p.x < x + fkey_len + label_len)
+                .is_some();
+
+            // Fn number: rendered directly with button_bar_butt colors
+            let fkey_style = if pressed {
+                Style::default().fg(butt_bg).bg(butt_fg).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(butt_fg).bg(butt_bg).add_modifier(Modifier::BOLD)
+            };
+            buf.set_string(x, area.y, &fkey_str, fkey_style);
+
+            // Label: rendered via Button with button_bar label colors
+            Button::build_with_colors(&label_str, x + fkey_len, area.y, label_fg, label_bg)
+                .render_state(&label_str, buf, pressed);
+
             x += fkey_len + label_len;
         }
 
-        let line = Line::from(spans);
-        let para = Paragraph::new(line).style(Style::default().bg(to_color(self.cs.button_bar_bg)));
-        Widget::render(para, area, buf);
+        // Fill the rest of the row with the button bar background
+        if x < area.x + area.width {
+            let fill = " ".repeat((area.x + area.width - x) as usize);
+            buf.set_string(x, area.y, &fill, Style::default().bg(label_bg));
+        }
     }
 }

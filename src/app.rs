@@ -26,6 +26,7 @@ use crate::macros::{MacroContext, PanelContext};
 use crate::provider::{NodeKind, NodePath, TreeProvider};
 use crate::provider::filesystem::FilesystemProvider;
 use crate::state::{AppState, Orientation};
+use crate::ui::button::Button;
 use crate::ui::button_bar::ButtonBarWidget;
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::dialog::{render_confirm, render_error, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea};
@@ -280,10 +281,10 @@ pub struct App {
     button_bar_area: Cell<Rect>,
     overlay_area: Cell<Rect>,
     // Modal button hit-test areas (updated each render)
-    confirm_yes_area: Cell<Rect>,
-    confirm_no_area: Cell<Rect>,
-    error_ok_area: Cell<Rect>,
-    menu_close_area: Cell<Rect>,
+    confirm_yes_btn: Cell<Button>,
+    confirm_no_btn: Cell<Button>,
+    error_ok_btn: Cell<Button>,
+    menu_close_btn: Cell<Button>,
     menu_list_area: Cell<Rect>,
     menu_list_offset: Cell<usize>,
     // Pending left-button press for down+up click detection
@@ -323,10 +324,10 @@ impl App {
             right_area: Cell::new(Rect::default()),
             button_bar_area: Cell::new(Rect::default()),
             overlay_area: Cell::new(Rect::default()),
-            confirm_yes_area: Cell::new(Rect::default()),
-            confirm_no_area: Cell::new(Rect::default()),
-            error_ok_area: Cell::new(Rect::default()),
-            menu_close_area: Cell::new(Rect::default()),
+            confirm_yes_btn: Cell::new(Button::default()),
+            confirm_no_btn: Cell::new(Button::default()),
+            error_ok_btn: Cell::new(Button::default()),
+            menu_close_btn: Cell::new(Button::default()),
             menu_list_area: Cell::new(Rect::default()),
             menu_list_offset: Cell::new(0),
             mouse_pressed: None,
@@ -941,16 +942,16 @@ impl App {
     // Called on confirmed click (Up on same cell as Down) inside a modal: fires actions.
     fn handle_modal_click(&mut self, col: u16, row: u16) {
         let pos = ratatui::layout::Position { x: col, y: row };
-        let yes_area = self.confirm_yes_area.get();
-        let no_area = self.confirm_no_area.get();
-        let ok_area = self.error_ok_area.get();
-        let close_area = self.menu_close_area.get();
+        let yes_btn = self.confirm_yes_btn.get();
+        let no_btn = self.confirm_no_btn.get();
+        let ok_btn = self.error_ok_btn.get();
+        let close_btn = self.menu_close_btn.get();
         let list_area = self.menu_list_area.get();
         let list_offset = self.menu_list_offset.get();
 
         // Pre-extract menu item command to avoid nested borrows.
         let menu_item_cmd: Option<String> =
-            if matches!(self.modal, Modal::UserMenu(_)) && list_area.contains(pos) {
+            if matches!(self.modal, Modal::UserMenu(_)) && list_area.contains(pos) && !close_btn.contains(pos) {
                 let item_idx = (row - list_area.y) as usize + list_offset;
                 if let Modal::UserMenu(ref s) = self.modal {
                     s.items.get(item_idx).map(|i| i.command.clone())
@@ -964,23 +965,23 @@ impl App {
         match &mut self.modal {
             Modal::None => {}
             Modal::Confirm(_) => {
-                if yes_area.contains(pos) {
+                if yes_btn.contains(pos) {
                     if let Modal::Confirm(state) =
                         std::mem::replace(&mut self.modal, Modal::None)
                     {
                         self.execute_file_op(state);
                     }
-                } else if no_area.contains(pos) {
+                } else if no_btn.contains(pos) {
                     self.modal = Modal::None;
                 }
             }
             Modal::Error(_) => {
-                if ok_area.contains(pos) {
+                if ok_btn.contains(pos) {
                     self.modal = Modal::None;
                 }
             }
             Modal::UserMenu(_) => {
-                if close_area.contains(pos) {
+                if close_btn.contains(pos) {
                     self.modal = Modal::None;
                 } else if let Some(cmd_template) = menu_item_cmd {
                     self.modal = Modal::None;
@@ -1004,14 +1005,13 @@ impl App {
         let buttons = ButtonBarWidget::buttons(&self.config.keybindings);
         let mut x = bb_area.x;
         for (n, label) in &buttons {
-            let fkey_len = format!("F{}", n).len() as u16;
-            let label_len = label.len() as u16 + 1;
-            if col >= x && col < x + fkey_len + label_len {
+            let btn_width = format!("F{}{} ", n, label).len() as u16;
+            if col >= x && col < x + btn_width {
                 let fkey_event = KeyEvent::new(KeyCode::F(*n), KeyModifiers::NONE);
                 self.handle_key_event(fkey_event);
                 return;
             }
-            x += fkey_len + label_len;
+            x += btn_width;
         }
     }
 
@@ -1279,16 +1279,16 @@ impl App {
         match modal_areas {
             ModalAreas::None => {}
             ModalAreas::Confirm(a) => {
-                self.confirm_yes_area.set(a.yes);
-                self.confirm_no_area.set(a.no);
+                self.confirm_yes_btn.set(a.yes);
+                self.confirm_no_btn.set(a.no);
             }
             ModalAreas::UserMenu(a) => {
                 self.menu_list_area.set(a.list_area);
                 self.menu_list_offset.set(a.list_offset);
-                self.menu_close_area.set(a.close);
+                self.menu_close_btn.set(a.close);
             }
             ModalAreas::Error(a) => {
-                self.error_ok_area.set(a.ok);
+                self.error_ok_btn.set(a.ok);
             }
         }
     }

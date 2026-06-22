@@ -1,3 +1,4 @@
+pub mod button;
 pub mod button_bar;
 pub mod cmdline;
 pub mod dialog;

@@ -7,6 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, StatefulWidget, Widget},
 };
 
+use super::button::Button;
 use super::to_color;
 
 pub struct UserMenuState {
@@ -39,7 +40,7 @@ impl UserMenuState {
 pub struct UserMenuAreas {
     pub list_area: Rect,
     pub list_offset: usize,
-    pub close: Rect,
+    pub close: Button,
 }
 
 pub struct UserMenuWidget<'a> {
@@ -128,25 +129,12 @@ impl<'a> UserMenuWidget<'a> {
         const CLOSE_LABEL: &str = "[ Close ]";
         let close_row = inner.y + list_height;
         let close_x = inner.x + inner.width.saturating_sub(CLOSE_LABEL.len() as u16) / 2;
-        let close_rect = Rect { x: close_x, y: close_row, width: CLOSE_LABEL.len() as u16, height: 1 };
-
-        let close_pressed = press.map(|p| close_rect.contains(p)).unwrap_or(false);
-        let close_style = if close_pressed {
-            Style::default()
-                .fg(to_color(self.cs.dialog_butt_bg))
-                .bg(to_color(self.cs.dialog_butt_fg))
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-                .fg(to_color(self.cs.dialog_butt_fg))
-                .bg(to_color(self.cs.dialog_butt_bg))
-                .add_modifier(Modifier::BOLD)
-        };
+        let close_btn = Button::build(CLOSE_LABEL, close_x, close_row, self.cs);
 
         if close_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
-            buf.set_string(close_x, close_row, CLOSE_LABEL, close_style);
+            close_btn.render(CLOSE_LABEL, buf, press);
         }
 
-        UserMenuAreas { list_area, list_offset, close: close_rect }
+        UserMenuAreas { list_area, list_offset, close: close_btn }
     }
 }
