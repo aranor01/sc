@@ -133,8 +133,9 @@ impl<'a> UserMenuWidget<'a> {
 
         if close_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
             close_btn.render(CLOSE_LABEL, buf, press);
+            UserMenuAreas { list_area, list_offset, close: close_btn }
+        } else {
+            UserMenuAreas { list_area, list_offset, close: Button::default() }
         }
-
-        UserMenuAreas { list_area, list_offset, close: close_btn }
     }
 }

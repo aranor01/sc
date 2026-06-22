@@ -952,11 +952,7 @@ impl App {
 
         // Pre-extract menu item command to avoid nested borrows.
         let menu_item_cmd: Option<String> =
-            if matches!(self.modal, Modal::UserMenu(_))
-                && down == Some(up)
-                && list_area.contains(up)
-                && !close_btn.contains(up)
-            {
+            if down == Some(up) && list_area.contains(up) && !close_btn.contains(up) {
                 let item_idx = (up.y - list_area.y) as usize + list_offset;
                 if let Modal::UserMenu(ref s) = self.modal {
                     s.items.get(item_idx).map(|i| i.command.clone())
@@ -1007,7 +1003,7 @@ impl App {
 
     fn handle_button_bar_click(&mut self, pos: Position) {
         let bb_area = self.button_bar_area.get();
-        if let Some(n) = ButtonBarWidget::button_at(&self.config.keybindings, bb_area.x, pos) {
+        if let Some(n) = ButtonBarWidget::button_at(&self.config.keybindings, bb_area, pos) {
             self.handle_key_event(KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE));
         }
     }
@@ -1080,8 +1076,9 @@ impl App {
 
         let pos = Position { x: col, y: row };
 
-        // Output overlay scroll support (fires on Down)
-        if self.show_output {
+        // Output overlay scroll support. Skipped when a modal is open so that
+        // modal button clicks are not swallowed by the overlay catch-all.
+        if self.show_output && matches!(self.modal, Modal::None) {
             let area = self.overlay_area.get();
             if area.contains(pos) {
                 match mouse.kind {
@@ -1107,6 +1104,10 @@ impl App {
                             let new_pos = track_row * total_lines / inner_h as usize;
                             self.output_scroll = new_pos as u16;
                         }
+                        return;
+                    }
+                    MouseEventKind::Up(_) => {
+                        self.mouse_pressed = None;
                         return;
                     }
                     _ => { return; }

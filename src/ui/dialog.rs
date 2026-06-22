@@ -134,9 +134,10 @@ pub fn render_confirm(
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
         yes_btn.render(YES_LABEL, buf, press);
         no_btn.render(NO_LABEL, buf, press);
+        ConfirmButtonAreas { yes: yes_btn, no: no_btn }
+    } else {
+        ConfirmButtonAreas { yes: Button::default(), no: Button::default() }
     }
-
-    ConfirmButtonAreas { yes: yes_btn, no: no_btn }
 }
 
 pub fn render_error(
@@ -186,7 +187,8 @@ pub fn render_error(
 
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
         ok_btn.render(OK_LABEL, buf, press);
+        ErrorButtonArea { ok: ok_btn }
+    } else {
+        ErrorButtonArea { ok: Button::default() }
     }
-
-    ErrorButtonArea { ok: ok_btn }
 }

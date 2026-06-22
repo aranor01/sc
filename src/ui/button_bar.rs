@@ -47,10 +47,12 @@ impl<'a> ButtonBarWidget<'a> {
         items
     }
 
-    /// Returns the F-key number of the button whose area contains `pos`,
-    /// given that the button bar starts at column `bb_x`.
-    pub fn button_at(kb: &KeyBindings, bb_x: u16, pos: Position) -> Option<u8> {
-        let mut x = bb_x;
+    /// Returns the F-key number of the button whose area contains `pos`.
+    pub fn button_at(kb: &KeyBindings, bb_area: Rect, pos: Position) -> Option<u8> {
+        if pos.y != bb_area.y {
+            return None;
+        }
+        let mut x = bb_area.x;
         for (n, label) in Self::buttons(kb) {
             let w = (format!("F{}", n).len() + label.len() + 1) as u16;
             if pos.x >= x && pos.x < x + w {
@@ -78,8 +80,7 @@ impl<'a> Widget for ButtonBarWidget<'a> {
             let label_len = label_str.len() as u16;
 
             let pressed = self.press
-                .filter(|p| p.y == area.y)
-                .map(|p| Self::button_at(self.kb, area.x, p) == Some(*n))
+                .map(|p| p.y == area.y && p.x >= x && p.x < x + fkey_len + label_len)
                 .unwrap_or(false);
 
             // Fn number: rendered directly with button_bar_butt colors

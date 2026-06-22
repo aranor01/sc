@@ -35,11 +35,11 @@ impl Button {
         }
     }
 
-    pub fn build_with_colors(label: &str, x: u16, y: u16, fg:Color, bg:Color) -> Self {
+    pub fn build_with_colors(label: &str, x: u16, y: u16, fg: Color, bg: Color) -> Self {
         Button {
             area: Rect { x, y, width: label.len() as u16, height: 1 },
-            fg: fg,
-            bg: bg,
+            fg,
+            bg,
         }
     }
 
@@ -54,7 +54,7 @@ impl Button {
     /// True when `down` and `up` are the same cell and `up` is inside this button.
     /// Combines the "Down+Up on same cell" and "hit test" checks into one call.
     pub fn clicked(self, down: Option<Position>, up: Position) -> bool {
-        down == Some(up) && self.area.contains(up)
+        down == Some(up) && self.is_pressed(Some(up))
     }
 
     /// Render `label` at the button's position, detecting pressed from `press`.
