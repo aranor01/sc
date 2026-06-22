@@ -1,7 +1,7 @@
 use crate::config::ColorScheme;
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::Span,
     widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap},
@@ -81,11 +81,26 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     }
 }
 
+fn btn_style(cs: &ColorScheme, pressed: bool) -> Style {
+    if pressed {
+        Style::default()
+            .fg(to_color(cs.dialog_butt_bg))
+            .bg(to_color(cs.dialog_butt_fg))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(to_color(cs.dialog_butt_fg))
+            .bg(to_color(cs.dialog_butt_bg))
+            .add_modifier(Modifier::BOLD)
+    }
+}
+
 pub fn render_confirm(
     area: Rect,
     buf: &mut Buffer,
     cs: &ColorScheme,
     state: &ConfirmState,
+    press: Option<Position>,
 ) -> ConfirmButtonAreas {
     let msg = state.message();
     let line_count = msg.lines().count() as u16;
@@ -110,7 +125,7 @@ pub fn render_confirm(
     let inner = block.inner(dialog_area);
     block.render(dialog_area, buf);
 
-    // Render message text (without buttons)
+    // Render message text
     let msg_area = Rect {
         x: inner.x,
         y: inner.y,
@@ -122,27 +137,24 @@ pub fn render_confirm(
         .wrap(Wrap { trim: false });
     Widget::render(para, msg_area, buf);
 
-    // Render buttons on the row after the blank line
+    // Button row
     let button_row = inner.y + line_count + 1;
-    let btn_style = Style::default()
-        .fg(to_color(cs.dialog_butt_fg))
-        .bg(to_color(cs.dialog_butt_bg))
-        .add_modifier(Modifier::BOLD);
-
     const YES_LABEL: &str = "[Y]es";
     const NO_LABEL: &str = "[N]o";
     let yes_x = inner.x + 1;
     let no_x = yes_x + YES_LABEL.len() as u16 + 2;
 
+    let yes_rect = Rect { x: yes_x, y: button_row, width: YES_LABEL.len() as u16, height: 1 };
+    let no_rect = Rect { x: no_x, y: button_row, width: NO_LABEL.len() as u16, height: 1 };
+
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
-        buf.set_string(yes_x, button_row, YES_LABEL, btn_style);
-        buf.set_string(no_x, button_row, NO_LABEL, btn_style);
+        buf.set_string(yes_x, button_row, YES_LABEL,
+            btn_style(cs, press.map(|p| yes_rect.contains(p)).unwrap_or(false)));
+        buf.set_string(no_x, button_row, NO_LABEL,
+            btn_style(cs, press.map(|p| no_rect.contains(p)).unwrap_or(false)));
     }
 
-    ConfirmButtonAreas {
-        yes: Rect { x: yes_x, y: button_row, width: YES_LABEL.len() as u16, height: 1 },
-        no: Rect { x: no_x, y: button_row, width: NO_LABEL.len() as u16, height: 1 },
-    }
+    ConfirmButtonAreas { yes: yes_rect, no: no_rect }
 }
 
 pub fn render_error(
@@ -150,6 +162,7 @@ pub fn render_error(
     buf: &mut Buffer,
     cs: &ColorScheme,
     message: &str,
+    press: Option<Position>,
 ) -> ErrorButtonArea {
     let line_count = message.lines().count() as u16;
     // border(2) + message lines + blank line + button line
@@ -171,7 +184,7 @@ pub fn render_error(
     let inner = block.inner(dialog_area);
     block.render(dialog_area, buf);
 
-    // Render message text (without button)
+    // Render message text
     let msg_area = Rect {
         x: inner.x,
         y: inner.y,
@@ -183,20 +196,16 @@ pub fn render_error(
         .wrap(Wrap { trim: false });
     Widget::render(para, msg_area, buf);
 
-    // Render centered [ OK ] button
+    // Centered [ OK ] button
     const OK_LABEL: &str = "[ OK ]";
     let button_row = inner.y + line_count + 1;
     let ok_x = inner.x + inner.width.saturating_sub(OK_LABEL.len() as u16) / 2;
-    let btn_style = Style::default()
-        .fg(to_color(cs.dialog_butt_fg))
-        .bg(to_color(cs.dialog_butt_bg))
-        .add_modifier(Modifier::BOLD);
+    let ok_rect = Rect { x: ok_x, y: button_row, width: OK_LABEL.len() as u16, height: 1 };
 
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
-        buf.set_string(ok_x, button_row, OK_LABEL, btn_style);
+        buf.set_string(ok_x, button_row, OK_LABEL,
+            btn_style(cs, press.map(|p| ok_rect.contains(p)).unwrap_or(false)));
     }
 
-    ErrorButtonArea {
-        ok: Rect { x: ok_x, y: button_row, width: OK_LABEL.len() as u16, height: 1 },
-    }
+    ErrorButtonArea { ok: ok_rect }
 }

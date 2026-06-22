@@ -1,7 +1,7 @@
 use crate::config::{ColorScheme, MenuItem};
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, StatefulWidget, Widget},
@@ -52,6 +52,7 @@ impl<'a> UserMenuWidget<'a> {
         area: Rect,
         buf: &mut Buffer,
         state: &mut UserMenuState,
+        press: Option<Position>,
     ) -> UserMenuAreas {
         let width = 40u16.min(area.width.saturating_sub(4));
         // border(2) + items + close button(1)
@@ -123,28 +124,29 @@ impl<'a> UserMenuWidget<'a> {
 
         let list_offset = list_state.offset();
 
-        // Render centered Close button on the last inner row
+        // Centered Close button on the last inner row
         const CLOSE_LABEL: &str = "[ Close ]";
         let close_row = inner.y + list_height;
         let close_x = inner.x + inner.width.saturating_sub(CLOSE_LABEL.len() as u16) / 2;
-        let close_style = Style::default()
-            .fg(to_color(self.cs.dialog_butt_fg))
-            .bg(to_color(self.cs.dialog_butt_bg))
-            .add_modifier(Modifier::BOLD);
+        let close_rect = Rect { x: close_x, y: close_row, width: CLOSE_LABEL.len() as u16, height: 1 };
+
+        let close_pressed = press.map(|p| close_rect.contains(p)).unwrap_or(false);
+        let close_style = if close_pressed {
+            Style::default()
+                .fg(to_color(self.cs.dialog_butt_bg))
+                .bg(to_color(self.cs.dialog_butt_fg))
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(to_color(self.cs.dialog_butt_fg))
+                .bg(to_color(self.cs.dialog_butt_bg))
+                .add_modifier(Modifier::BOLD)
+        };
 
         if close_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
             buf.set_string(close_x, close_row, CLOSE_LABEL, close_style);
         }
 
-        UserMenuAreas {
-            list_area,
-            list_offset,
-            close: Rect {
-                x: close_x,
-                y: close_row,
-                width: CLOSE_LABEL.len() as u16,
-                height: 1,
-            },
-        }
+        UserMenuAreas { list_area, list_offset, close: close_rect }
     }
 }
