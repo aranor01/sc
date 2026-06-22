@@ -817,6 +817,16 @@ impl App {
             return;
         }
 
+        // Alt+B: move word left when cmdline has text; otherwise the action binding
+        // (toggle_button_bar) fires from match_key below.
+        if event.code == KeyCode::Char('b')
+            && event.modifiers == KeyModifiers::ALT
+            && !self.cmdline.is_empty()
+        {
+            self.cmdline.move_word_left();
+            return;
+        }
+
         let pending = self.pending_chord.take();
         let bl = self.bindings_list();
         match match_key(&bl, &event, pending.as_ref()) {
@@ -891,6 +901,40 @@ impl App {
             }
             KeyCode::Esc if event.modifiers == KeyModifiers::NONE && self.show_output => {
                 self.show_output = false;
+            }
+            // Bash readline shortcuts
+            KeyCode::Char('a') if event.modifiers == KeyModifiers::CONTROL => {
+                self.cmdline.move_home();
+            }
+            KeyCode::Char('e') if event.modifiers == KeyModifiers::CONTROL => {
+                self.cmdline.move_end();
+            }
+            KeyCode::Char('k') if event.modifiers == KeyModifiers::CONTROL => {
+                self.cmdline.kill_to_end();
+            }
+            KeyCode::Char('u') if event.modifiers == KeyModifiers::CONTROL => {
+                self.cmdline.kill_to_start();
+            }
+            KeyCode::Char('w') if event.modifiers == KeyModifiers::CONTROL => {
+                self.cmdline.kill_word_left();
+            }
+            KeyCode::Backspace if event.modifiers == KeyModifiers::ALT => {
+                self.cmdline.kill_word_left();
+            }
+            KeyCode::Char('d') if event.modifiers == KeyModifiers::ALT => {
+                self.cmdline.kill_word_right();
+            }
+            KeyCode::Char('f') if event.modifiers == KeyModifiers::ALT => {
+                self.cmdline.move_word_right();
+            }
+            KeyCode::Char('y') if event.modifiers == KeyModifiers::CONTROL => {
+                self.cmdline.yank();
+            }
+            KeyCode::Char('p') if event.modifiers == KeyModifiers::CONTROL => {
+                self.handle_action(Action::CmdlineHistoryPrev);
+            }
+            KeyCode::Char('n') if event.modifiers == KeyModifiers::CONTROL => {
+                self.handle_action(Action::CmdlineHistoryNext);
             }
             _ => {}
         }

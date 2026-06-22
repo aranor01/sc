@@ -10,6 +10,7 @@ use ratatui::{
 pub struct CmdLineState {
     pub text: String,
     pub cursor: usize, // byte offset
+    pub kill_ring: String,
 }
 
 impl CmdLineState {
@@ -17,6 +18,7 @@ impl CmdLineState {
         CmdLineState {
             text: String::new(),
             cursor: 0,
+            kill_ring: String::new(),
         }
     }
 
@@ -87,6 +89,63 @@ impl CmdLineState {
 
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
+    }
+
+    // Returns the byte offset of the start of the word to the left of the cursor.
+    // Skips spaces, then skips non-spaces (moving leftward).
+    fn prev_word_boundary(&self) -> usize {
+        let chars: Vec<(usize, char)> = self.text[..self.cursor].char_indices().collect();
+        let mut i = chars.len();
+        while i > 0 && chars[i - 1].1 == ' ' { i -= 1; }
+        while i > 0 && chars[i - 1].1 != ' ' { i -= 1; }
+        if i == 0 { 0 } else { chars[i].0 }
+    }
+
+    // Returns the byte offset of the end of the next word to the right of the cursor.
+    // Skips spaces, then skips non-spaces (moving rightward).
+    fn next_word_boundary(&self) -> usize {
+        let chars: Vec<(usize, char)> = self.text[self.cursor..].char_indices().collect();
+        let mut i = 0;
+        while i < chars.len() && chars[i].1 == ' ' { i += 1; }
+        while i < chars.len() && chars[i].1 != ' ' { i += 1; }
+        if i == chars.len() { self.text.len() } else { self.cursor + chars[i].0 }
+    }
+
+    pub fn move_word_left(&mut self) {
+        self.cursor = self.prev_word_boundary();
+    }
+
+    pub fn move_word_right(&mut self) {
+        self.cursor = self.next_word_boundary();
+    }
+
+    pub fn kill_to_end(&mut self) {
+        let killed: String = self.text.drain(self.cursor..).collect();
+        if !killed.is_empty() { self.kill_ring = killed; }
+    }
+
+    pub fn kill_to_start(&mut self) {
+        let killed: String = self.text.drain(..self.cursor).collect();
+        if !killed.is_empty() { self.kill_ring = killed; }
+        self.cursor = 0;
+    }
+
+    pub fn kill_word_left(&mut self) {
+        let boundary = self.prev_word_boundary();
+        let killed: String = self.text.drain(boundary..self.cursor).collect();
+        if !killed.is_empty() { self.kill_ring = killed; }
+        self.cursor = boundary;
+    }
+
+    pub fn kill_word_right(&mut self) {
+        let boundary = self.next_word_boundary();
+        let killed: String = self.text.drain(self.cursor..boundary).collect();
+        if !killed.is_empty() { self.kill_ring = killed; }
+    }
+
+    pub fn yank(&mut self) {
+        let s = self.kill_ring.clone();
+        if !s.is_empty() { self.insert_str(&s); }
     }
 
     /// Return the display column of the cursor (byte offset == char offset for ASCII).
