@@ -143,7 +143,7 @@ fn match_key(
             for b in *bindings {
                 if let KeyBinding::Chord(f, s) = b {
                     if f == first && s == event {
-                        return KeyMatch::Act(action.clone());
+                        return KeyMatch::Act(*action);
                     }
                 }
             }
@@ -153,7 +153,7 @@ fn match_key(
     for (bindings, action) in bindings_list {
         for b in *bindings {
             match b {
-                KeyBinding::Single(ke) if ke == event => return KeyMatch::Act(action.clone()),
+                KeyBinding::Single(ke) if ke == event => return KeyMatch::Act(*action),
                 KeyBinding::Chord(first, _) if first == event => return KeyMatch::ChordStart,
                 _ => {}
             }
@@ -874,10 +874,8 @@ impl App {
                     }
                 }
             }
-            KeyCode::Esc if event.modifiers == KeyModifiers::NONE => {
-                if self.show_output {
-                    self.show_output = false;
-                }
+            KeyCode::Esc if event.modifiers == KeyModifiers::NONE && self.show_output => {
+                self.show_output = false;
             }
             _ => {}
         }

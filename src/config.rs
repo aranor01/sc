@@ -268,36 +268,19 @@ impl Default for ColorScheme {
 
 // ── StartupConfig ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StartupConfig {
     pub restore_paths: bool,
 }
 
-impl Default for StartupConfig {
-    fn default() -> Self {
-        StartupConfig { restore_paths: false }
-    }
-}
-
 // ── Config ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     pub keybindings: KeyBindings,
     pub menu: Vec<MenuItem>,
     pub colorscheme: ColorScheme,
     pub startup: StartupConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            keybindings: KeyBindings::default(),
-            menu: Vec::new(),
-            colorscheme: ColorScheme::default(),
-            startup: StartupConfig::default(),
-        }
-    }
 }
 
 impl Config {

@@ -2,17 +2,12 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Orientation {
+    #[default]
     Vertical,
     Horizontal,
-}
-
-impl Default for Orientation {
-    fn default() -> Self {
-        Orientation::Vertical
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
