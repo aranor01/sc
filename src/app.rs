@@ -28,8 +28,8 @@ use crate::provider::filesystem::FilesystemProvider;
 use crate::state::{AppState, Orientation};
 use crate::ui::button_bar::ButtonBarWidget;
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
-use crate::ui::dialog::{render_confirm, render_error, ConfirmOp, ConfirmState};
-use crate::ui::menu::{UserMenuState, UserMenuWidget};
+use crate::ui::dialog::{render_confirm, render_error, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea};
+use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::OutputOverlayWidget;
 use crate::ui::panel::{PanelState, PanelWidget};
 
@@ -175,6 +175,15 @@ enum Modal {
     Error(String),
 }
 
+// ── ModalAreas ────────────────────────────────────────────────────────────────
+
+enum ModalAreas {
+    None,
+    Confirm(ConfirmButtonAreas),
+    UserMenu(UserMenuAreas),
+    Error(ErrorButtonArea),
+}
+
 // ── AppLayout ─────────────────────────────────────────────────────────────────
 
 struct AppLayout {
@@ -270,6 +279,13 @@ pub struct App {
     right_area: Cell<Rect>,
     button_bar_area: Cell<Rect>,
     overlay_area: Cell<Rect>,
+    // Modal button hit-test areas (updated each render)
+    confirm_yes_area: Cell<Rect>,
+    confirm_no_area: Cell<Rect>,
+    error_ok_area: Cell<Rect>,
+    menu_close_area: Cell<Rect>,
+    menu_list_area: Cell<Rect>,
+    menu_list_offset: Cell<usize>,
     should_quit: bool,
     mouse: bool,
 }
@@ -305,6 +321,12 @@ impl App {
             right_area: Cell::new(Rect::default()),
             button_bar_area: Cell::new(Rect::default()),
             overlay_area: Cell::new(Rect::default()),
+            confirm_yes_area: Cell::new(Rect::default()),
+            confirm_no_area: Cell::new(Rect::default()),
+            error_ok_area: Cell::new(Rect::default()),
+            menu_close_area: Cell::new(Rect::default()),
+            menu_list_area: Cell::new(Rect::default()),
+            menu_list_offset: Cell::new(0),
             should_quit: false,
             mouse,
             config,
@@ -898,6 +920,88 @@ impl App {
         crate::macros::expand(template, &ctx)
     }
 
+    fn handle_modal_mouse(&mut self, mouse: MouseEvent) {
+        let pos = ratatui::layout::Position { x: mouse.column, y: mouse.row };
+
+        // Scroll wheel navigates the user menu list
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                if let Modal::UserMenu(ref mut s) = self.modal {
+                    s.move_up();
+                }
+                return;
+            }
+            MouseEventKind::ScrollDown => {
+                if let Modal::UserMenu(ref mut s) = self.modal {
+                    s.move_down();
+                }
+                return;
+            }
+            _ => {}
+        }
+
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+
+        let yes_area = self.confirm_yes_area.get();
+        let no_area = self.confirm_no_area.get();
+        let ok_area = self.error_ok_area.get();
+        let close_area = self.menu_close_area.get();
+        let list_area = self.menu_list_area.get();
+        let list_offset = self.menu_list_offset.get();
+
+        // For UserMenu item click: extract command before taking &mut borrow of modal
+        let menu_item_cmd: Option<String> =
+            if matches!(self.modal, Modal::UserMenu(_)) && list_area.contains(pos) {
+                let item_idx = (mouse.row - list_area.y) as usize + list_offset;
+                if let Modal::UserMenu(ref s) = self.modal {
+                    s.items.get(item_idx).map(|i| i.command.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+        match &mut self.modal {
+            Modal::None => {}
+            Modal::Confirm(_) => {
+                if yes_area.contains(pos) {
+                    if let Modal::Confirm(state) =
+                        std::mem::replace(&mut self.modal, Modal::None)
+                    {
+                        self.execute_file_op(state);
+                    }
+                } else if no_area.contains(pos) {
+                    self.modal = Modal::None;
+                }
+            }
+            Modal::Error(_) => {
+                if ok_area.contains(pos) {
+                    self.modal = Modal::None;
+                }
+            }
+            Modal::UserMenu(_) => {
+                if close_area.contains(pos) {
+                    self.modal = Modal::None;
+                } else if let Some(cmd_template) = menu_item_cmd {
+                    self.modal = Modal::None;
+                    let result = self.expand_menu_command(&cmd_template);
+                    if result.untag_active {
+                        self.active_panel_mut().tagged.clear();
+                    }
+                    if result.untag_inactive {
+                        self.inactive_panel_mut().tagged.clear();
+                    }
+                    self.cmdline.text = result.text;
+                    self.cmdline.move_end();
+                    self.execute_command();
+                }
+            }
+        }
+    }
+
     fn handle_mouse_event(&mut self, mouse: MouseEvent) {
         // Output overlay scroll support
         if self.show_output {
@@ -933,6 +1037,12 @@ impl App {
                     _ => { return; }
                 }
             }
+        }
+
+        // When any modal is open it captures all mouse events
+        if !matches!(self.modal, Modal::None) {
+            self.handle_modal_mouse(mouse);
+            return;
         }
 
         if let MouseEventKind::Down(btn) = mouse.kind {
@@ -1109,18 +1219,37 @@ impl App {
             );
         }
 
-        // Modals (drawn last, on top)
-        match &mut self.modal {
-            Modal::None => {}
+        // Modals (drawn last, on top) — capture returned hit-test areas
+        let modal_areas = match &mut self.modal {
+            Modal::None => ModalAreas::None,
             Modal::UserMenu(state) => {
-                UserMenuWidget { cs: &cs }.render_in(area, frame.buffer_mut(), state);
+                let a = UserMenuWidget { cs: &cs }.render_in(area, frame.buffer_mut(), state);
+                ModalAreas::UserMenu(a)
             }
             Modal::Confirm(state) => {
-                render_confirm(area, frame.buffer_mut(), &cs, state);
+                let a = render_confirm(area, frame.buffer_mut(), &cs, state);
+                ModalAreas::Confirm(a)
             }
             Modal::Error(msg) => {
                 let msg = msg.clone();
-                render_error(area, frame.buffer_mut(), &cs, &msg);
+                let a = render_error(area, frame.buffer_mut(), &cs, &msg);
+                ModalAreas::Error(a)
+            }
+        };
+        // Borrow of self.modal released; store areas for mouse hit-testing
+        match modal_areas {
+            ModalAreas::None => {}
+            ModalAreas::Confirm(a) => {
+                self.confirm_yes_area.set(a.yes);
+                self.confirm_no_area.set(a.no);
+            }
+            ModalAreas::UserMenu(a) => {
+                self.menu_list_area.set(a.list_area);
+                self.menu_list_offset.set(a.list_offset);
+                self.menu_close_area.set(a.close);
+            }
+            ModalAreas::Error(a) => {
+                self.error_ok_area.set(a.ok);
             }
         }
     }

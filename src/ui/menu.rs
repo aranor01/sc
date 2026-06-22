@@ -36,14 +36,26 @@ impl UserMenuState {
     }
 }
 
+pub struct UserMenuAreas {
+    pub list_area: Rect,
+    pub list_offset: usize,
+    pub close: Rect,
+}
+
 pub struct UserMenuWidget<'a> {
     pub cs: &'a ColorScheme,
 }
 
 impl<'a> UserMenuWidget<'a> {
-    pub fn render_in(&self, area: Rect, buf: &mut Buffer, state: &mut UserMenuState) {
+    pub fn render_in(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        state: &mut UserMenuState,
+    ) -> UserMenuAreas {
         let width = 40u16.min(area.width.saturating_sub(4));
-        let height = (state.items.len() as u16 + 2).min(area.height.saturating_sub(2));
+        // border(2) + items + close button(1)
+        let height = (state.items.len() as u16 + 3).min(area.height.saturating_sub(2));
         let x = (area.x + area.width / 2).saturating_sub(width / 2);
         let y = area.y + 2;
         let dialog_area = Rect { x, y, width, height };
@@ -61,6 +73,15 @@ impl<'a> UserMenuWidget<'a> {
 
         let inner = block.inner(dialog_area);
         block.render(dialog_area, buf);
+
+        // Reserve the last inner row for the Close button
+        let list_height = inner.height.saturating_sub(1);
+        let list_area = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: list_height,
+        };
 
         let items: Vec<ListItem> = state
             .items
@@ -98,6 +119,32 @@ impl<'a> UserMenuWidget<'a> {
                     .add_modifier(Modifier::BOLD),
             );
 
-        StatefulWidget::render(list, inner, buf, &mut list_state);
+        StatefulWidget::render(list, list_area, buf, &mut list_state);
+
+        let list_offset = list_state.offset();
+
+        // Render centered Close button on the last inner row
+        const CLOSE_LABEL: &str = "[ Close ]";
+        let close_row = inner.y + list_height;
+        let close_x = inner.x + inner.width.saturating_sub(CLOSE_LABEL.len() as u16) / 2;
+        let close_style = Style::default()
+            .fg(to_color(self.cs.dialog_fg))
+            .bg(to_color(self.cs.dialog_bg))
+            .add_modifier(Modifier::BOLD);
+
+        if close_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
+            buf.set_string(close_x, close_row, CLOSE_LABEL, close_style);
+        }
+
+        UserMenuAreas {
+            list_area,
+            list_offset,
+            close: Rect {
+                x: close_x,
+                y: close_row,
+                width: CLOSE_LABEL.len() as u16,
+                height: 1,
+            },
+        }
     }
 }

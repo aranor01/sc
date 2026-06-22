@@ -61,6 +61,15 @@ impl ConfirmState {
     }
 }
 
+pub struct ConfirmButtonAreas {
+    pub yes: Rect,
+    pub no: Rect,
+}
+
+pub struct ErrorButtonArea {
+    pub ok: Rect,
+}
+
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
@@ -72,10 +81,16 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     }
 }
 
-pub fn render_confirm(area: Rect, buf: &mut Buffer, cs: &ColorScheme, state: &ConfirmState) {
+pub fn render_confirm(
+    area: Rect,
+    buf: &mut Buffer,
+    cs: &ColorScheme,
+    state: &ConfirmState,
+) -> ConfirmButtonAreas {
     let msg = state.message();
     let line_count = msg.lines().count() as u16;
-    let height = line_count + 4; // border + message lines + empty + hint
+    // border(2) + message lines + blank line + button line
+    let height = line_count + 4;
     let width = 44u16.min(area.width.saturating_sub(2));
     let dialog_area = centered_rect(width, height, area);
 
@@ -95,15 +110,49 @@ pub fn render_confirm(area: Rect, buf: &mut Buffer, cs: &ColorScheme, state: &Co
     let inner = block.inner(dialog_area);
     block.render(dialog_area, buf);
 
-    let text = format!("{}\n\n[Y]es  [N]o", msg);
-    let para = Paragraph::new(text)
+    // Render message text (without buttons)
+    let msg_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: line_count.min(inner.height),
+    };
+    let para = Paragraph::new(msg.as_str())
         .style(Style::default().fg(to_color(cs.dialog_fg)).bg(to_color(cs.dialog_bg)))
         .wrap(Wrap { trim: false });
-    Widget::render(para, inner, buf);
+    Widget::render(para, msg_area, buf);
+
+    // Render buttons on the row after the blank line
+    let button_row = inner.y + line_count + 1;
+    let btn_style = Style::default()
+        .fg(to_color(cs.dialog_fg))
+        .bg(to_color(cs.dialog_bg))
+        .add_modifier(Modifier::BOLD);
+
+    const YES_LABEL: &str = "[Y]es";
+    const NO_LABEL: &str = "[N]o";
+    let yes_x = inner.x + 1;
+    let no_x = yes_x + YES_LABEL.len() as u16 + 2;
+
+    if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
+        buf.set_string(yes_x, button_row, YES_LABEL, btn_style);
+        buf.set_string(no_x, button_row, NO_LABEL, btn_style);
+    }
+
+    ConfirmButtonAreas {
+        yes: Rect { x: yes_x, y: button_row, width: YES_LABEL.len() as u16, height: 1 },
+        no: Rect { x: no_x, y: button_row, width: NO_LABEL.len() as u16, height: 1 },
+    }
 }
 
-pub fn render_error(area: Rect, buf: &mut Buffer, cs: &ColorScheme, message: &str) {
+pub fn render_error(
+    area: Rect,
+    buf: &mut Buffer,
+    cs: &ColorScheme,
+    message: &str,
+) -> ErrorButtonArea {
     let line_count = message.lines().count() as u16;
+    // border(2) + message lines + blank line + button line
     let height = line_count + 4;
     let width = 50u16.min(area.width.saturating_sub(2));
     let dialog_area = centered_rect(width, height, area);
@@ -122,9 +171,32 @@ pub fn render_error(area: Rect, buf: &mut Buffer, cs: &ColorScheme, message: &st
     let inner = block.inner(dialog_area);
     block.render(dialog_area, buf);
 
-    let text = format!("{}\n\n[Enter/Esc] OK", message);
-    let para = Paragraph::new(text)
+    // Render message text (without button)
+    let msg_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: line_count.min(inner.height),
+    };
+    let para = Paragraph::new(message)
         .style(Style::default().fg(to_color(cs.dialog_fg)).bg(to_color(cs.dialog_bg)))
         .wrap(Wrap { trim: false });
-    Widget::render(para, inner, buf);
+    Widget::render(para, msg_area, buf);
+
+    // Render centered [ OK ] button
+    const OK_LABEL: &str = "[ OK ]";
+    let button_row = inner.y + line_count + 1;
+    let ok_x = inner.x + inner.width.saturating_sub(OK_LABEL.len() as u16) / 2;
+    let btn_style = Style::default()
+        .fg(to_color(cs.dialog_fg))
+        .bg(to_color(cs.dialog_bg))
+        .add_modifier(Modifier::BOLD);
+
+    if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
+        buf.set_string(ok_x, button_row, OK_LABEL, btn_style);
+    }
+
+    ErrorButtonArea {
+        ok: Rect { x: ok_x, y: button_row, width: OK_LABEL.len() as u16, height: 1 },
+    }
 }
