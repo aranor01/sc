@@ -128,8 +128,8 @@ impl<'a> UserMenuWidget<'a> {
         let close_row = inner.y + list_height;
         let close_x = inner.x + inner.width.saturating_sub(CLOSE_LABEL.len() as u16) / 2;
         let close_style = Style::default()
-            .fg(to_color(self.cs.dialog_fg))
-            .bg(to_color(self.cs.dialog_bg))
+            .fg(to_color(self.cs.dialog_butt_fg))
+            .bg(to_color(self.cs.dialog_butt_bg))
             .add_modifier(Modifier::BOLD);
 
         if close_row < dialog_area.y + dialog_area.height.saturating_sub(1) {

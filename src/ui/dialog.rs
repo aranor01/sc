@@ -125,8 +125,8 @@ pub fn render_confirm(
     // Render buttons on the row after the blank line
     let button_row = inner.y + line_count + 1;
     let btn_style = Style::default()
-        .fg(to_color(cs.dialog_fg))
-        .bg(to_color(cs.dialog_bg))
+        .fg(to_color(cs.dialog_butt_fg))
+        .bg(to_color(cs.dialog_butt_bg))
         .add_modifier(Modifier::BOLD);
 
     const YES_LABEL: &str = "[Y]es";
@@ -188,8 +188,8 @@ pub fn render_error(
     let button_row = inner.y + line_count + 1;
     let ok_x = inner.x + inner.width.saturating_sub(OK_LABEL.len() as u16) / 2;
     let btn_style = Style::default()
-        .fg(to_color(cs.dialog_fg))
-        .bg(to_color(cs.dialog_bg))
+        .fg(to_color(cs.dialog_butt_fg))
+        .bg(to_color(cs.dialog_butt_bg))
         .add_modifier(Modifier::BOLD);
 
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
