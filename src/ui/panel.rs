@@ -39,11 +39,7 @@ impl PanelState {
     pub fn refresh(&mut self) {
         match self.provider.list(&self.path) {
             Ok(mut entries) => {
-                entries.sort_by(|a, b| match (&a.kind, &b.kind) {
-                    (NodeKind::Dir, NodeKind::File) => std::cmp::Ordering::Less,
-                    (NodeKind::File, NodeKind::Dir) => std::cmp::Ordering::Greater,
-                    _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                });
+                // Sort invariant is provided by the TreeProvider (dir-first, case-insensitive name).
                 if self.provider.parent(&self.path).is_some() {
                     entries.insert(
                         0,
@@ -70,6 +66,8 @@ impl PanelState {
         if self.entries.is_empty() {
             self.cursor = 0;
             self.scroll = 0;
+        } else if self.scroll > self.cursor {
+            self.scroll = self.cursor;
         }
     }
 
@@ -96,7 +94,7 @@ impl PanelState {
                 self.refresh();
             }
         } else if entry.kind == NodeKind::Dir {
-            let new_path = self.provider.join(&self.path, &entry.name.clone());
+            let new_path = self.provider.join(&self.path, &entry.name);
             self.path = new_path;
             self.cursor = 0;
             self.scroll = 0;
@@ -176,16 +174,14 @@ impl PanelState {
     }
 }
 
-fn to_color(c: crate::config::Color) -> Color {
-    Color::Rgb(c.0, c.1, c.2)
-}
+use super::to_color;
 
 fn format_size(bytes: u64, kind: &NodeKind) -> String {
     if *kind == NodeKind::Dir {
         return "   <DIR>".to_string();
     }
     if bytes < 1024 {
-        format!("{:>7} B", bytes)
+        format!("{:>6} B", bytes)
     } else if bytes < 1024 * 1024 {
         format!("{:>5.1} KB", bytes as f64 / 1024.0)
     } else if bytes < 1024 * 1024 * 1024 {

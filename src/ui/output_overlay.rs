@@ -2,7 +2,7 @@ use crate::config::ColorScheme;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::Span,
     widgets::{
         Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -10,9 +10,7 @@ use ratatui::{
     },
 };
 
-fn to_color(c: crate::config::Color) -> Color {
-    Color::Rgb(c.0, c.1, c.2)
-}
+use super::to_color;
 
 pub struct OutputOverlayWidget<'a> {
     pub cs: &'a ColorScheme,

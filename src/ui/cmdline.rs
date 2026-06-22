@@ -2,7 +2,7 @@ use crate::config::ColorScheme;
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
@@ -95,9 +95,7 @@ impl CmdLineState {
     }
 }
 
-fn to_color(c: crate::config::Color) -> Color {
-    Color::Rgb(c.0, c.1, c.2)
-}
+use super::to_color;
 
 pub struct CmdLineWidget<'a> {
     pub cs: &'a ColorScheme,

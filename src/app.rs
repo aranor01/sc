@@ -100,7 +100,7 @@ impl Side {
 
 // ── Action ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum Action {
     SwitchPanel,
     ToggleLayout,
@@ -160,6 +160,10 @@ fn match_key(
         }
     }
     KeyMatch::None
+}
+
+fn event_matches_bindings(bindings: &ActionBindings, event: &KeyEvent) -> bool {
+    bindings.iter().any(|b| matches!(b, KeyBinding::Single(ke) if ke == event))
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
@@ -347,9 +351,9 @@ impl App {
         self.panel_visible_height(self.active)
     }
 
-    fn bindings_list(&self) -> Vec<(&ActionBindings, Action)> {
+    fn bindings_list(&self) -> [(&ActionBindings, Action); 21] {
         let kb = &self.config.keybindings;
-        vec![
+        [
             (&kb.switch_panel, Action::SwitchPanel),
             (&kb.toggle_layout, Action::ToggleLayout),
             (&kb.tag_file, Action::TagFile),
@@ -453,19 +457,14 @@ impl App {
                 });
             }
             Action::Delete => {
-                if !self.cmdline.is_empty() {
-                    self.cmdline.delete_char();
-                    return;
-                }
                 let files = self.active_panel().op_files();
-                if files.is_empty() {
-                    return;
+                if !files.is_empty() {
+                    self.modal = Modal::Confirm(ConfirmState {
+                        op: ConfirmOp::Delete,
+                        files,
+                        dst: None,
+                    });
                 }
-                self.modal = Modal::Confirm(ConfirmState {
-                    op: ConfirmOp::Delete,
-                    files,
-                    dst: None,
-                });
             }
             Action::CmdlineInsertFilename => {
                 let name = self.active_panel().current_name();
@@ -686,21 +685,19 @@ impl App {
     fn handle_key_event(&mut self, event: KeyEvent) {
         // Output overlay active — handle scroll keys
         if self.show_output {
+            let dismiss = event.code == KeyCode::Esc
+                || event_matches_bindings(&self.config.keybindings.toggle_shell, &event);
+            if dismiss {
+                self.show_output = false;
+                return;
+            }
             match event.code {
-                KeyCode::Esc => {
-                    self.show_output = false;
-                    return;
-                }
-                KeyCode::Char('o') if event.modifiers == KeyModifiers::CONTROL => {
-                    self.show_output = false;
-                    return;
-                }
                 KeyCode::Up => {
                     self.output_scroll = self.output_scroll.saturating_sub(1);
                     return;
                 }
                 KeyCode::Down => {
-                    self.output_scroll += 1;
+                    self.output_scroll = self.output_scroll.saturating_add(1);
                     return;
                 }
                 KeyCode::PageUp => {
@@ -708,7 +705,7 @@ impl App {
                     return;
                 }
                 KeyCode::PageDown => {
-                    self.output_scroll += 20;
+                    self.output_scroll = self.output_scroll.saturating_add(20);
                     return;
                 }
                 _ => {}
@@ -765,8 +762,14 @@ impl App {
                             if let Some(item) = s.selected() {
                                 let cmd_template = item.command.clone();
                                 self.modal = Modal::None;
-                                let expanded = self.expand_menu_command(&cmd_template);
-                                self.cmdline.text = expanded;
+                                let result = self.expand_menu_command(&cmd_template);
+                                if result.untag_active {
+                                    self.active_panel_mut().tagged.clear();
+                                }
+                                if result.untag_inactive {
+                                    self.inactive_panel_mut().tagged.clear();
+                                }
+                                self.cmdline.text = result.text;
                                 self.cmdline.move_end();
                                 self.execute_command();
                             }
@@ -779,6 +782,15 @@ impl App {
         }
 
         // Chord handling
+        // Pre-dispatch: plain Delete on a non-empty cmdline is text editing, not a file op.
+        if event.code == KeyCode::Delete
+            && event.modifiers == KeyModifiers::NONE
+            && !self.cmdline.is_empty()
+        {
+            self.cmdline.delete_char();
+            return;
+        }
+
         let pending = self.pending_chord.take();
         let bl = self.bindings_list();
         match match_key(&bl, &event, pending.as_ref()) {
@@ -804,18 +816,14 @@ impl App {
                 self.cmdline.backspace();
             }
             KeyCode::Delete if event.modifiers == KeyModifiers::NONE => {
-                if !self.cmdline.is_empty() {
-                    self.cmdline.delete_char();
-                } else {
-                    // When cmdline empty, Delete acts as file-delete
-                    let files = self.active_panel().op_files();
-                    if !files.is_empty() {
-                        self.modal = Modal::Confirm(ConfirmState {
-                            op: ConfirmOp::Delete,
-                            files,
-                            dst: None,
-                        });
-                    }
+                // Non-empty cmdline is handled pre-dispatch above; here cmdline is always empty.
+                let files = self.active_panel().op_files();
+                if !files.is_empty() {
+                    self.modal = Modal::Confirm(ConfirmState {
+                        op: ConfirmOp::Delete,
+                        files,
+                        dst: None,
+                    });
                 }
             }
             KeyCode::Left if event.modifiers == KeyModifiers::NONE => {
@@ -825,10 +833,20 @@ impl App {
                 self.cmdline.move_right();
             }
             KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
-                self.cmdline.move_home();
+                if !self.cmdline.is_empty() {
+                    self.cmdline.move_home();
+                } else {
+                    let vh = self.active_vh();
+                    self.active_panel_mut().move_cursor(i32::MIN, vh);
+                }
             }
             KeyCode::End if event.modifiers == KeyModifiers::NONE => {
-                self.cmdline.move_end();
+                if !self.cmdline.is_empty() {
+                    self.cmdline.move_end();
+                } else {
+                    let vh = self.active_vh();
+                    self.active_panel_mut().move_cursor(i32::MAX / 2, vh);
+                }
             }
             KeyCode::Up if event.modifiers == KeyModifiers::NONE => {
                 let vh = self.active_vh();
@@ -845,14 +863,6 @@ impl App {
             KeyCode::PageDown if event.modifiers == KeyModifiers::NONE => {
                 let vh = self.active_vh();
                 self.active_panel_mut().move_cursor(vh as i32, vh);
-            }
-            KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
-                let vh = self.active_vh();
-                self.active_panel_mut().move_cursor(i32::MIN, vh);
-            }
-            KeyCode::End if event.modifiers == KeyModifiers::NONE => {
-                let vh = self.active_vh();
-                self.active_panel_mut().move_cursor(i32::MAX / 2, vh);
             }
             KeyCode::Enter if event.modifiers == KeyModifiers::NONE => {
                 if !self.cmdline.is_empty() {
@@ -873,10 +883,9 @@ impl App {
         }
     }
 
-    fn expand_menu_command(&self, template: &str) -> String {
+    fn expand_menu_command(&self, template: &str) -> crate::macros::ExpandResult {
         let active = self.active_panel();
         let inactive = self.inactive_panel();
-
         let active_ctx = PanelContext {
             current_file: active.current_name(),
             dir: active.path.0.clone(),
@@ -887,12 +896,8 @@ impl App {
             dir: inactive.path.0.clone(),
             tagged: inactive.tagged.iter().cloned().collect(),
         };
-        let ctx = MacroContext {
-            active: active_ctx,
-            inactive: inactive_ctx,
-        };
-        let result = crate::macros::expand(template, &ctx);
-        result.text
+        let ctx = MacroContext { active: active_ctx, inactive: inactive_ctx };
+        crate::macros::expand(template, &ctx)
     }
 
     fn handle_mouse_event(&mut self, mouse: MouseEvent) {

@@ -3,14 +3,12 @@ use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
 
-fn to_color(c: crate::config::Color) -> Color {
-    Color::Rgb(c.0, c.1, c.2)
-}
+use super::to_color;
 
 fn first_fkey(bindings: &ActionBindings) -> Option<u8> {
     for b in bindings {

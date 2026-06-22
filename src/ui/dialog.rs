@@ -7,9 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap},
 };
 
-fn to_color(c: crate::config::Color) -> Color {
-    Color::Rgb(c.0, c.1, c.2)
-}
+use super::to_color;
 
 #[derive(Debug, Clone)]
 pub enum ConfirmOp {

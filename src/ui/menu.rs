@@ -2,14 +2,12 @@ use crate::config::{ColorScheme, MenuItem};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, StatefulWidget, Widget},
 };
 
-fn to_color(c: crate::config::Color) -> Color {
-    Color::Rgb(c.0, c.1, c.2)
-}
+use super::to_color;
 
 pub struct UserMenuState {
     pub items: Vec<MenuItem>,
