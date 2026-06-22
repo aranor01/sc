@@ -46,6 +46,20 @@ impl<'a> ButtonBarWidget<'a> {
         items.sort_by_key(|(n, _)| *n);
         items
     }
+
+    /// Returns the F-key number of the button whose area contains `pos`,
+    /// given that the button bar starts at column `bb_x`.
+    pub fn button_at(kb: &KeyBindings, bb_x: u16, pos: Position) -> Option<u8> {
+        let mut x = bb_x;
+        for (n, label) in Self::buttons(kb) {
+            let w = (format!("F{}", n).len() + label.len() + 1) as u16;
+            if pos.x >= x && pos.x < x + w {
+                return Some(n);
+            }
+            x += w;
+        }
+        None
+    }
 }
 
 impl<'a> Widget for ButtonBarWidget<'a> {
@@ -63,10 +77,10 @@ impl<'a> Widget for ButtonBarWidget<'a> {
             let fkey_len = fkey_str.len() as u16;
             let label_len = label_str.len() as u16;
 
-            // pressed if the mouse Down is anywhere in the full button (fkey + label)
             let pressed = self.press
-                .filter(|p| p.y == area.y && p.x >= x && p.x < x + fkey_len + label_len)
-                .is_some();
+                .filter(|p| p.y == area.y)
+                .map(|p| Self::button_at(self.kb, area.x, p) == Some(*n))
+                .unwrap_or(false);
 
             // Fn number: rendered directly with button_bar_butt colors
             let fkey_style = if pressed {

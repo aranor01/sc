@@ -14,7 +14,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Style},
     widgets::Block,
     Frame, Terminal,
@@ -288,7 +288,7 @@ pub struct App {
     menu_list_area: Cell<Rect>,
     menu_list_offset: Cell<usize>,
     // Pending left-button press for down+up click detection
-    mouse_pressed: Option<(u16, u16)>,
+    mouse_pressed: Option<Position>,
     should_quit: bool,
     mouse: bool,
 }
@@ -928,7 +928,7 @@ impl App {
     fn handle_modal_down(&mut self, col: u16, row: u16) {
         let list_area = self.menu_list_area.get();
         let list_offset = self.menu_list_offset.get();
-        let pos = ratatui::layout::Position { x: col, y: row };
+        let pos = Position { x: col, y: row };
         if list_area.contains(pos) {
             let item_idx = (row - list_area.y) as usize + list_offset;
             if let Modal::UserMenu(ref mut s) = self.modal {
@@ -939,20 +939,25 @@ impl App {
         }
     }
 
-    // Called on confirmed click (Up on same cell as Down) inside a modal: fires actions.
-    fn handle_modal_click(&mut self, col: u16, row: u16) {
-        let pos = ratatui::layout::Position { x: col, y: row };
+    // Called on every Left-button Up inside a modal; fires actions only when
+    // `up` matches the stored Down position AND lands on a button (via Button::clicked).
+    fn handle_modal_click(&mut self, up: Position) {
         let yes_btn = self.confirm_yes_btn.get();
         let no_btn = self.confirm_no_btn.get();
         let ok_btn = self.error_ok_btn.get();
         let close_btn = self.menu_close_btn.get();
         let list_area = self.menu_list_area.get();
         let list_offset = self.menu_list_offset.get();
+        let down = self.mouse_pressed;
 
         // Pre-extract menu item command to avoid nested borrows.
         let menu_item_cmd: Option<String> =
-            if matches!(self.modal, Modal::UserMenu(_)) && list_area.contains(pos) && !close_btn.contains(pos) {
-                let item_idx = (row - list_area.y) as usize + list_offset;
+            if matches!(self.modal, Modal::UserMenu(_))
+                && down == Some(up)
+                && list_area.contains(up)
+                && !close_btn.contains(up)
+            {
+                let item_idx = (up.y - list_area.y) as usize + list_offset;
                 if let Modal::UserMenu(ref s) = self.modal {
                     s.items.get(item_idx).map(|i| i.command.clone())
                 } else {
@@ -965,23 +970,23 @@ impl App {
         match &mut self.modal {
             Modal::None => {}
             Modal::Confirm(_) => {
-                if yes_btn.contains(pos) {
+                if yes_btn.clicked(down, up) {
                     if let Modal::Confirm(state) =
                         std::mem::replace(&mut self.modal, Modal::None)
                     {
                         self.execute_file_op(state);
                     }
-                } else if no_btn.contains(pos) {
+                } else if no_btn.clicked(down, up) {
                     self.modal = Modal::None;
                 }
             }
             Modal::Error(_) => {
-                if ok_btn.contains(pos) {
+                if ok_btn.clicked(down, up) {
                     self.modal = Modal::None;
                 }
             }
             Modal::UserMenu(_) => {
-                if close_btn.contains(pos) {
+                if close_btn.clicked(down, up) {
                     self.modal = Modal::None;
                 } else if let Some(cmd_template) = menu_item_cmd {
                     self.modal = Modal::None;
@@ -1000,25 +1005,17 @@ impl App {
         }
     }
 
-    fn handle_button_bar_click(&mut self, col: u16) {
+    fn handle_button_bar_click(&mut self, pos: Position) {
         let bb_area = self.button_bar_area.get();
-        let buttons = ButtonBarWidget::buttons(&self.config.keybindings);
-        let mut x = bb_area.x;
-        for (n, label) in &buttons {
-            let btn_width = format!("F{}{} ", n, label).len() as u16;
-            if col >= x && col < x + btn_width {
-                let fkey_event = KeyEvent::new(KeyCode::F(*n), KeyModifiers::NONE);
-                self.handle_key_event(fkey_event);
-                return;
-            }
-            x += btn_width;
+        if let Some(n) = ButtonBarWidget::button_at(&self.config.keybindings, bb_area.x, pos) {
+            self.handle_key_event(KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE));
         }
     }
 
     fn handle_panel_down(&mut self, col: u16, row: u16, btn: MouseButton) {
         let left_area = self.left_area.get();
         let right_area = self.right_area.get();
-        let pos = ratatui::layout::Position { x: col, y: row };
+        let pos = Position { x: col, y: row };
 
         let (clicked_side, clicked_area) = if left_area.contains(pos) {
             (Side::Left, left_area)
@@ -1081,10 +1078,11 @@ impl App {
         let col = mouse.column;
         let row = mouse.row;
 
-        // Output overlay scroll support (unchanged — fires on Down)
+        let pos = Position { x: col, y: row };
+
+        // Output overlay scroll support (fires on Down)
         if self.show_output {
             let area = self.overlay_area.get();
-            let pos = ratatui::layout::Position { x: col, y: row };
             if area.contains(pos) {
                 match mouse.kind {
                     MouseEventKind::ScrollUp => {
@@ -1117,7 +1115,8 @@ impl App {
         }
 
         // Modals capture all mouse events.
-        // Down: store press + visual update; Up on same cell: fire action.
+        // Down: store press + visual update. Up: delegate to handle_modal_click
+        // unconditionally — Button::clicked enforces the Down==Up requirement.
         if !matches!(self.modal, Modal::None) {
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
@@ -1127,13 +1126,11 @@ impl App {
                     if let Modal::UserMenu(ref mut s) = self.modal { s.move_down(); }
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
-                    self.mouse_pressed = Some((col, row));
+                    self.mouse_pressed = Some(pos);
                     self.handle_modal_down(col, row);
                 }
                 MouseEventKind::Up(MouseButton::Left) => {
-                    if self.mouse_pressed == Some((col, row)) {
-                        self.handle_modal_click(col, row);
-                    }
+                    self.handle_modal_click(pos);
                     self.mouse_pressed = None;
                 }
                 _ => {}
@@ -1142,12 +1139,12 @@ impl App {
         }
 
         match mouse.kind {
-            // Button bar: Down records the press (for highlight); Up on same cell fires.
+            // Button bar: Down records the press (for highlight); Up fires via button_at.
             MouseEventKind::Down(MouseButton::Left) => {
                 if self.show_button_bar {
                     let bb = self.button_bar_area.get();
-                    if row == bb.y && col >= bb.x && col < bb.x + bb.width {
-                        self.mouse_pressed = Some((col, row));
+                    if bb.contains(pos) {
+                        self.mouse_pressed = Some(pos);
                         return;
                     }
                 }
@@ -1155,11 +1152,11 @@ impl App {
                 self.handle_panel_down(col, row, MouseButton::Left);
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                if self.mouse_pressed == Some((col, row)) {
+                if self.mouse_pressed == Some(pos) {
                     if self.show_button_bar {
                         let bb = self.button_bar_area.get();
-                        if row == bb.y && col >= bb.x && col < bb.x + bb.width {
-                            self.handle_button_bar_click(col);
+                        if bb.contains(pos) {
+                            self.handle_button_bar_click(pos);
                         }
                     }
                 }
@@ -1187,7 +1184,7 @@ impl App {
 
     fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        let press = self.mouse_pressed.map(|(c, r)| ratatui::layout::Position { x: c, y: r });
+        let press = self.mouse_pressed;
         let layout = AppLayout::compute(
             area,
             self.orientation,

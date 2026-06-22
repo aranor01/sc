@@ -51,6 +51,12 @@ impl Button {
         press.map(|p| self.area.contains(p)).unwrap_or(false)
     }
 
+    /// True when `down` and `up` are the same cell and `up` is inside this button.
+    /// Combines the "Down+Up on same cell" and "hit test" checks into one call.
+    pub fn clicked(self, down: Option<Position>, up: Position) -> bool {
+        down == Some(up) && self.area.contains(up)
+    }
+
     /// Render `label` at the button's position, detecting pressed from `press`.
     pub fn render(self, label: &str, buf: &mut Buffer, press: Option<Position>) {
         self.render_state(label, buf, self.is_pressed(press));
