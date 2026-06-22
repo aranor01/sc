@@ -1154,6 +1154,20 @@ impl App {
             MouseEventKind::Down(btn) => {
                 self.handle_panel_down(col, row, btn);
             }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let left_area = self.left_area.get();
+                let right_area = self.right_area.get();
+                let (panel, area) = if left_area.contains(pos) {
+                    (&mut self.left, left_area)
+                } else if right_area.contains(pos) {
+                    (&mut self.right, right_area)
+                } else {
+                    return;
+                };
+                let vh = area.height.saturating_sub(2).max(1) as usize;
+                let delta = if matches!(mouse.kind, MouseEventKind::ScrollUp) { -1 } else { 1 };
+                panel.move_cursor(delta, vh);
+            }
             _ => {}
         }
     }
