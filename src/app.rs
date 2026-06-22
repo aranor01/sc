@@ -927,6 +927,12 @@ impl App {
             KeyCode::Char('f') if event.modifiers == KeyModifiers::ALT => {
                 self.cmdline.move_word_right();
             }
+            KeyCode::Left if event.modifiers == KeyModifiers::CONTROL => {
+                self.cmdline.move_word_left();
+            }
+            KeyCode::Right if event.modifiers == KeyModifiers::CONTROL => {
+                self.cmdline.move_word_right();
+            }
             KeyCode::Char('y') if event.modifiers == KeyModifiers::CONTROL => {
                 self.cmdline.yank();
             }
