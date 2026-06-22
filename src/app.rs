@@ -1153,12 +1153,10 @@ impl App {
                 self.handle_panel_down(col, row, MouseButton::Left);
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                if self.mouse_pressed == Some(pos) {
-                    if self.show_button_bar {
-                        let bb = self.button_bar_area.get();
-                        if bb.contains(pos) {
-                            self.handle_button_bar_click(pos);
-                        }
+                if self.mouse_pressed == Some(pos) && self.show_button_bar {
+                    let bb = self.button_bar_area.get();
+                    if bb.contains(pos) {
+                        self.handle_button_bar_click(pos);
                     }
                 }
                 self.mouse_pressed = None;
