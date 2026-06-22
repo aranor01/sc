@@ -841,17 +841,6 @@ impl App {
             KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
                 self.cmdline.backspace();
             }
-            KeyCode::Delete if event.modifiers == KeyModifiers::NONE => {
-                // Non-empty cmdline is handled pre-dispatch above; here cmdline is always empty.
-                let files = self.active_panel().op_files();
-                if !files.is_empty() {
-                    self.modal = Modal::Confirm(ConfirmState {
-                        op: ConfirmOp::Delete,
-                        files,
-                        dst: None,
-                    });
-                }
-            }
             KeyCode::Left if event.modifiers == KeyModifiers::NONE => {
                 self.cmdline.move_left();
             }
