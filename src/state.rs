@@ -1,0 +1,89 @@
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Orientation {
+    Vertical,
+    Horizontal,
+}
+
+impl Default for Orientation {
+    fn default() -> Self {
+        Orientation::Vertical
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppState {
+    #[serde(default)]
+    pub orientation: Orientation,
+    #[serde(default = "default_true")]
+    pub show_cmdline: bool,
+    #[serde(default = "default_true")]
+    pub show_button_bar: bool,
+    #[serde(default = "default_home")]
+    pub left_path: String,
+    #[serde(default = "default_home")]
+    pub right_path: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_home() -> String {
+    dirs::home_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/".to_string())
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        AppState {
+            orientation: Orientation::Vertical,
+            show_cmdline: true,
+            show_button_bar: true,
+            left_path: default_home(),
+            right_path: default_home(),
+        }
+    }
+}
+
+fn state_path() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("sc")
+        .join("state.json")
+}
+
+pub fn history_path() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("sc")
+        .join("command_history")
+}
+
+impl AppState {
+    pub fn load() -> Self {
+        let path = state_path();
+        if !path.exists() {
+            return Self::default();
+        }
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self) -> Result<()> {
+        let path = state_path();
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        let json = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+}
