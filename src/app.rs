@@ -1303,6 +1303,9 @@ impl App {
                     }
                     Event::Mouse(mouse) => {
                         self.handle_mouse_event(mouse);
+                        if self.should_quit {
+                            break;
+                        }
                     }
                     Event::Resize(_, _) => {}
                     _ => {}
