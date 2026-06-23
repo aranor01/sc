@@ -19,6 +19,9 @@
 - A-, (Alt-comma)
        toggle panel layout between vertical and horizontal
 
+- A-i
+       open the same directory shown in the active panel in the inactive panel
+
 - Insert
        tag or untag the currently selected file and move to the next entry
 

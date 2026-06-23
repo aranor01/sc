@@ -155,6 +155,7 @@ pub struct KeyBindings {
     pub cmdline_history_prev: ActionBindings,
     pub cmdline_history_next: ActionBindings,
     pub reverse_search: ActionBindings,
+    pub sync_panels: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -207,6 +208,7 @@ impl Default for KeyBindings {
             cmdline_history_prev: vec![KeyBinding::Single(ke(Up, c))],
             cmdline_history_next: vec![KeyBinding::Single(ke(Down, c))],
             reverse_search: vec![KeyBinding::Single(ke(Char('r'), c))],
+            sync_panels: vec![KeyBinding::Single(ke(Char('i'), a))],
         }
     }
 }
@@ -349,6 +351,7 @@ impl Config {
                     "cmdline_history_prev" => cfg.keybindings.cmdline_history_prev = bindings,
                     "cmdline_history_next" => cfg.keybindings.cmdline_history_next = bindings,
                     "reverse_search" => cfg.keybindings.reverse_search = bindings,
+                    "sync_panels" => cfg.keybindings.sync_panels = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }

@@ -126,6 +126,7 @@ enum Action {
     CmdlineHistoryPrev,
     CmdlineHistoryNext,
     ReverseSearch,
+    SyncPanels,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -402,7 +403,7 @@ impl App {
         self.panel_visible_height(self.active)
     }
 
-    fn bindings_list(&self) -> [(&ActionBindings, Action); 22] {
+    fn bindings_list(&self) -> [(&ActionBindings, Action); 23] {
         let kb = &self.config.keybindings;
         [
             (&kb.switch_panel, Action::SwitchPanel),
@@ -427,6 +428,7 @@ impl App {
             (&kb.cmdline_history_prev, Action::CmdlineHistoryPrev),
             (&kb.cmdline_history_next, Action::CmdlineHistoryNext),
             (&kb.reverse_search, Action::ReverseSearch),
+            (&kb.sync_panels, Action::SyncPanels),
         ]
     }
 
@@ -611,6 +613,15 @@ impl App {
                 self.reverse_search = Some(ReverseSearchSession {
                     list: PopupListState { items, selected },
                 });
+            }
+            Action::SyncPanels => {
+                let path = self.active_panel().path.clone();
+                let inactive = self.inactive_panel_mut();
+                inactive.path = path;
+                inactive.cursor = 0;
+                inactive.scroll = 0;
+                inactive.tagged.clear();
+                inactive.refresh();
             }
         }
     }
