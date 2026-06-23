@@ -32,6 +32,7 @@ use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupListState, PopupListWidget};
 use crate::ui::dialog::{render_confirm, render_error, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
+use crate::ui::modal_event::ModalOutcome;
 use crate::ui::output_overlay::OutputOverlayWidget;
 use crate::ui::panel::{PanelState, PanelWidget};
 
@@ -872,47 +873,30 @@ impl App {
                 return;
             }
             Modal::Confirm(_) => {
-                let confirmed = matches!(
-                    event.code,
-                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter
-                );
-                let cancelled = matches!(
-                    event.code,
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc
-                );
-                if confirmed {
-                    if let Modal::Confirm(state) = std::mem::replace(&mut self.modal, Modal::None) {
-                        self.execute_file_op(state);
+                let outcome = if let Modal::Confirm(ref s) = self.modal {
+                    s.handle_key(&event)
+                } else { ModalOutcome::Consumed };
+                match outcome {
+                    ModalOutcome::Confirmed => {
+                        if let Modal::Confirm(state) = std::mem::replace(&mut self.modal, Modal::None) {
+                            self.execute_file_op(state);
+                        }
                     }
-                } else if cancelled {
-                    self.modal = Modal::None;
+                    ModalOutcome::Dismissed => self.modal = Modal::None,
+                    _ => {}
                 }
                 return;
             }
             Modal::UserMenu(_) => {
-                match event.code {
-                    KeyCode::Esc => {
+                let outcome = if let Modal::UserMenu(ref mut s) = self.modal {
+                    s.handle_key(&event)
+                } else { ModalOutcome::Consumed };
+                match outcome {
+                    ModalOutcome::Execute(cmd) => {
                         self.modal = Modal::None;
+                        self.execute_menu_item(cmd);
                     }
-                    KeyCode::Up => {
-                        if let Modal::UserMenu(ref mut s) = self.modal {
-                            s.move_up();
-                        }
-                    }
-                    KeyCode::Down => {
-                        if let Modal::UserMenu(ref mut s) = self.modal {
-                            s.move_down();
-                        }
-                    }
-                    KeyCode::Enter => {
-                        if let Modal::UserMenu(ref s) = self.modal {
-                            if let Some(item) = s.selected() {
-                                let cmd = item.command.clone();
-                                self.modal = Modal::None;
-                                self.execute_menu_item(cmd);
-                            }
-                        }
-                    }
+                    ModalOutcome::Dismissed => self.modal = Modal::None,
                     _ => {}
                 }
                 return;

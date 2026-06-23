@@ -1,4 +1,6 @@
 use crate::config::{ColorScheme, MenuItem};
+use crate::ui::modal_event::ModalOutcome;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -34,6 +36,22 @@ impl UserMenuState {
 
     pub fn selected(&self) -> Option<&MenuItem> {
         self.items.get(self.cursor)
+    }
+
+    pub fn handle_key(&mut self, event: &KeyEvent) -> ModalOutcome {
+        match event.code {
+            KeyCode::Esc => ModalOutcome::Dismissed,
+            KeyCode::Up => { self.move_up(); ModalOutcome::Consumed }
+            KeyCode::Down => { self.move_down(); ModalOutcome::Consumed }
+            KeyCode::Enter => {
+                if let Some(item) = self.selected() {
+                    ModalOutcome::Execute(item.command.clone())
+                } else {
+                    ModalOutcome::Consumed
+                }
+            }
+            _ => ModalOutcome::Consumed,
+        }
     }
 }
 

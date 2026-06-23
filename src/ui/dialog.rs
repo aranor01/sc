@@ -1,4 +1,6 @@
 use crate::config::ColorScheme;
+use crate::ui::modal_event::ModalOutcome;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -58,6 +60,16 @@ impl ConfirmState {
                     format!("Move {} files\nto '{}'?", self.files.len(), dst)
                 }
             }
+        }
+    }
+
+    pub fn handle_key(&self, event: &KeyEvent) -> ModalOutcome {
+        if matches!(event.code, KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter) {
+            ModalOutcome::Confirmed
+        } else if matches!(event.code, KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc) {
+            ModalOutcome::Dismissed
+        } else {
+            ModalOutcome::Consumed
         }
     }
 }
