@@ -704,6 +704,19 @@ impl App {
         session.list.selected = new_selected;
     }
 
+    fn execute_menu_item(&mut self, cmd_template: String) {
+        let result = self.expand_menu_command(&cmd_template);
+        if result.untag_active {
+            self.active_panel_mut().tagged.clear();
+        }
+        if result.untag_inactive {
+            self.inactive_panel_mut().tagged.clear();
+        }
+        self.cmdline.text = result.text;
+        self.cmdline.move_end();
+        self.execute_command();
+    }
+
     fn execute_command(&mut self) {
         let cmd = self.cmdline.text.clone();
         if cmd.is_empty() {
@@ -894,22 +907,26 @@ impl App {
                     KeyCode::Enter => {
                         if let Modal::UserMenu(ref s) = self.modal {
                             if let Some(item) = s.selected() {
-                                let cmd_template = item.command.clone();
+                                let cmd = item.command.clone();
                                 self.modal = Modal::None;
-                                let result = self.expand_menu_command(&cmd_template);
-                                if result.untag_active {
-                                    self.active_panel_mut().tagged.clear();
-                                }
-                                if result.untag_inactive {
-                                    self.inactive_panel_mut().tagged.clear();
-                                }
-                                self.cmdline.text = result.text;
-                                self.cmdline.move_end();
-                                self.execute_command();
+                                self.execute_menu_item(cmd);
                             }
                         }
                     }
-                    _ => {}
+                    _ => {
+                        // Shortcut key: find the first menu item whose `keys` matches
+                        let cmd = if let Modal::UserMenu(ref s) = self.modal {
+                            s.items.iter()
+                                .find(|item| menu_item_matches_key(item, &event))
+                                .map(|item| item.command.clone())
+                        } else {
+                            None
+                        };
+                        if let Some(cmd) = cmd {
+                            self.modal = Modal::None;
+                            self.execute_menu_item(cmd);
+                        }
+                    }
                 }
                 return;
             }
@@ -1093,7 +1110,16 @@ impl App {
                 self.pending_chord = Some(event);
                 return;
             }
-            KeyMatch::None => {}
+            KeyMatch::None => {
+                // Direct user menu shortcut: fire the matching item without opening the menu
+                let cmd = self.config.menu.iter()
+                    .find(|item| menu_item_matches_key(item, &event))
+                    .map(|item| item.command.clone());
+                if let Some(cmd) = cmd {
+                    self.execute_menu_item(cmd);
+                    return;
+                }
+            }
         }
 
         // Raw key handling
@@ -1692,6 +1718,15 @@ fn find_complete_script() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Returns true if the `keys` shortcut string of a menu item matches `event`.
+fn menu_item_matches_key(item: &crate::config::MenuItem, event: &KeyEvent) -> bool {
+    let Some(keys) = &item.keys else { return false };
+    match crate::config::parse_key_binding(keys) {
+        Ok(KeyBinding::Single(ke)) => ke == *event,
+        _ => false,
+    }
 }
 
 /// All history entries that contain `filter` as a substring, oldest first.
