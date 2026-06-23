@@ -56,7 +56,7 @@ impl PopupListState {
         self.items.get(self.selected).map(String::as_str)
     }
 
-    pub fn handle_key(&mut self, event: &KeyEvent) -> PopupOutcome {
+    pub fn handle_key(&mut self, event: &KeyEvent, visible_height: usize) -> PopupOutcome {
         match event.code {
             KeyCode::Enter | KeyCode::Tab if event.modifiers == KeyModifiers::NONE => {
                 match self.selected_item() {
@@ -78,10 +78,10 @@ impl PopupListState {
                 self.move_bottom(); PopupOutcome::Consumed
             }
             KeyCode::PageUp if event.modifiers == KeyModifiers::NONE => {
-                self.page_up(10); PopupOutcome::Consumed
+                self.page_up(visible_height.max(1)); PopupOutcome::Consumed
             }
             KeyCode::PageDown if event.modifiers == KeyModifiers::NONE => {
-                self.page_down(10); PopupOutcome::Consumed
+                self.page_down(visible_height.max(1)); PopupOutcome::Consumed
             }
             KeyCode::Char(c)
                 if event.modifiers == KeyModifiers::NONE
