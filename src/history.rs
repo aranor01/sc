@@ -94,6 +94,11 @@ impl CommandHistory {
         &self.draft
     }
 
+    /// Iterate all entries from oldest to newest.
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &str> {
+        self.entries.iter().map(String::as_str)
+    }
+
     /// Reset navigation state without changing entries.
     pub fn reset_cursor(&mut self) {
         self.cursor = None;

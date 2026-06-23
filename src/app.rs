@@ -29,7 +29,7 @@ use crate::state::{AppState, Orientation};
 use crate::ui::button::Button;
 use crate::ui::button_bar::ButtonBarWidget;
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
-use crate::ui::completion::{CompletionPopup, CompletionWidget};
+use crate::ui::popup_list::{PopupListState, PopupListWidget};
 use crate::ui::dialog::{render_confirm, render_error, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::OutputOverlayWidget;
@@ -125,6 +125,7 @@ enum Action {
     ToggleButtonBar,
     CmdlineHistoryPrev,
     CmdlineHistoryNext,
+    ReverseSearch,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -166,6 +167,17 @@ fn match_key(
 
 fn event_matches_bindings(bindings: &ActionBindings, event: &KeyEvent) -> bool {
     bindings.iter().any(|b| matches!(b, KeyBinding::Single(ke) if ke == event))
+}
+
+// ── Popup sessions ────────────────────────────────────────────────────────────
+
+struct CompletionSession {
+    list: PopupListState,
+    word_start: usize,
+}
+
+struct ReverseSearchSession {
+    list: PopupListState,
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
@@ -295,8 +307,8 @@ pub struct App {
     // True when cmdline is empty OR user pressed ESC to give panels focus temporarily.
     // Cleared after the first keystroke (if cmdline is non-empty).
     explicit_action_mode: bool,
-    /// Active completion popup, if any.
-    completion: Option<CompletionPopup>,
+    completion: Option<CompletionSession>,
+    reverse_search: Option<ReverseSearchSession>,
 }
 
 impl App {
@@ -341,6 +353,7 @@ impl App {
             mouse,
             explicit_action_mode: false,
             completion: None,
+            reverse_search: None,
             config,
         }
     }
@@ -389,7 +402,7 @@ impl App {
         self.panel_visible_height(self.active)
     }
 
-    fn bindings_list(&self) -> [(&ActionBindings, Action); 21] {
+    fn bindings_list(&self) -> [(&ActionBindings, Action); 22] {
         let kb = &self.config.keybindings;
         [
             (&kb.switch_panel, Action::SwitchPanel),
@@ -413,6 +426,7 @@ impl App {
             (&kb.toggle_button_bar, Action::ToggleButtonBar),
             (&kb.cmdline_history_prev, Action::CmdlineHistoryPrev),
             (&kb.cmdline_history_next, Action::CmdlineHistoryNext),
+            (&kb.reverse_search, Action::ReverseSearch),
         ]
     }
 
@@ -583,10 +597,20 @@ impl App {
                             self.apply_word_replacement(word_start, &c);
                         }
                         _ => {
-                            self.completion = Some(CompletionPopup::new(candidates, word_start));
+                            self.completion = Some(CompletionSession {
+                                list: PopupListState::new(candidates),
+                                word_start,
+                            });
                         }
                     }
                 }
+            }
+            Action::ReverseSearch => {
+                let items = history_matches(&self.history, &self.cmdline.text);
+                let selected = items.len().saturating_sub(1);
+                self.reverse_search = Some(ReverseSearchSession {
+                    list: PopupListState { items, selected },
+                });
             }
         }
     }
@@ -621,9 +645,9 @@ impl App {
 
     /// Apply the currently selected popup candidate and close the popup.
     fn apply_completion(&mut self) {
-        if let Some(popup) = self.completion.take() {
-            if let Some(candidate) = popup.candidates.get(popup.selected).cloned() {
-                self.apply_word_replacement(popup.word_start, &candidate);
+        if let Some(session) = self.completion.take() {
+            if let Some(candidate) = session.list.items.get(session.list.selected).cloned() {
+                self.apply_word_replacement(session.word_start, &candidate);
             }
         }
     }
@@ -647,13 +671,26 @@ impl App {
                 self.completion = None;
             }
             _ => {
-                if let Some(popup) = &mut self.completion {
-                    popup.candidates = candidates;
-                    popup.word_start = word_start;
-                    popup.selected = 0;
+                if let Some(session) = &mut self.completion {
+                    session.list.items = candidates;
+                    session.word_start = word_start;
+                    session.list.selected = 0;
                 }
             }
         }
+    }
+
+    /// Re-filter history after a cmdline edit during reverse-search.
+    /// Preserves the highlighted entry if it still appears in the new list.
+    fn update_reverse_search(&mut self) {
+        let Some(session) = &mut self.reverse_search else { return };
+        let prev = session.list.items.get(session.list.selected).cloned();
+        let new_items = history_matches(&self.history, &self.cmdline.text);
+        let new_selected = prev
+            .and_then(|p| new_items.iter().rposition(|s| *s == p))
+            .unwrap_or_else(|| new_items.len().saturating_sub(1));
+        session.list.items = new_items;
+        session.list.selected = new_selected;
     }
 
     fn execute_command(&mut self) {
@@ -881,27 +918,27 @@ impl App {
                     return;
                 }
                 KeyCode::Up if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().move_up();
+                    self.completion.as_mut().unwrap().list.move_up();
                     return;
                 }
                 KeyCode::Down if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().move_down();
+                    self.completion.as_mut().unwrap().list.move_down();
                     return;
                 }
                 KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().move_top();
+                    self.completion.as_mut().unwrap().list.move_top();
                     return;
                 }
                 KeyCode::End if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().move_bottom();
+                    self.completion.as_mut().unwrap().list.move_bottom();
                     return;
                 }
                 KeyCode::PageUp if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().page_up(10);
+                    self.completion.as_mut().unwrap().list.page_up(10);
                     return;
                 }
                 KeyCode::PageDown if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().page_down(10);
+                    self.completion.as_mut().unwrap().list.page_down(10);
                     return;
                 }
                 KeyCode::Char(c)
@@ -931,6 +968,66 @@ impl App {
                 _ => {
                     // Any other key: close popup, fall through to normal handling
                     self.completion = None;
+                }
+            }
+        }
+
+        // Reverse-search popup: intercept keys while active.
+        if self.reverse_search.is_some() {
+            match event.code {
+                KeyCode::Enter | KeyCode::Tab if event.modifiers == KeyModifiers::NONE => {
+                    if let Some(session) = self.reverse_search.take() {
+                        if let Some(entry) = session.list.items.get(session.list.selected) {
+                            self.cmdline.text = entry.clone();
+                            self.cmdline.move_end();
+                        }
+                    }
+                    return;
+                }
+                KeyCode::Esc if event.modifiers == KeyModifiers::NONE => {
+                    self.reverse_search = None;
+                    return;
+                }
+                KeyCode::Up if event.modifiers == KeyModifiers::NONE => {
+                    self.reverse_search.as_mut().unwrap().list.move_up();
+                    return;
+                }
+                KeyCode::Down if event.modifiers == KeyModifiers::NONE => {
+                    self.reverse_search.as_mut().unwrap().list.move_down();
+                    return;
+                }
+                KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
+                    self.reverse_search.as_mut().unwrap().list.move_top();
+                    return;
+                }
+                KeyCode::End if event.modifiers == KeyModifiers::NONE => {
+                    self.reverse_search.as_mut().unwrap().list.move_bottom();
+                    return;
+                }
+                KeyCode::PageUp if event.modifiers == KeyModifiers::NONE => {
+                    self.reverse_search.as_mut().unwrap().list.page_up(10);
+                    return;
+                }
+                KeyCode::PageDown if event.modifiers == KeyModifiers::NONE => {
+                    self.reverse_search.as_mut().unwrap().list.page_down(10);
+                    return;
+                }
+                KeyCode::Char(c)
+                    if event.modifiers == KeyModifiers::NONE
+                        || event.modifiers == KeyModifiers::SHIFT =>
+                {
+                    self.cmdline.insert_char(c);
+                    self.update_reverse_search();
+                    return;
+                }
+                KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
+                    self.cmdline.backspace();
+                    self.update_reverse_search();
+                    return;
+                }
+                _ => {
+                    self.reverse_search = None;
+                    // fall through to normal handling
                 }
             }
         }
@@ -1390,7 +1487,8 @@ impl App {
 
         // Build the cmdline widget early so we can query needed_lines() before layout.
         let am = self.action_mode();
-        let cmdline_widget = CmdLineWidget { cs: &cs, prompt: "$ ", active: !am };
+        let prompt = if self.reverse_search.is_some() { "(reverse-i-search): " } else { "$ " };
+        let cmdline_widget = CmdLineWidget { cs: &cs, prompt, active: !am };
         let cmdline_height = if self.show_cmdline {
             cmdline_widget.needed_lines(&self.cmdline, area.width)
         } else {
@@ -1455,20 +1553,28 @@ impl App {
             }
         }
 
-        // Completion popup (floats above panels, shown when no modal/overlay active)
-        if let Some(popup) = self.completion.as_ref() {
-            if matches!(self.modal, Modal::None) && !self.show_output {
-                if let Some(cmdline_area) = layout.cmdline {
-                    let width = cmdline_area.width as usize;
+        // Popup list rendering (completion & reverse-search); shown only without modal/overlay
+        if matches!(self.modal, Modal::None) && !self.show_output {
+            if let Some(cmdline_area) = layout.cmdline {
+                let width = cmdline_area.width as usize;
+
+                if let Some(session) = self.completion.as_ref() {
                     if width > 0 {
+                        let prompt_len = prompt.chars().count();
                         let anchor_byte = word_anchor_byte(&self.cmdline.text);
                         let anchor_chars = self.cmdline.text[..anchor_byte].chars().count();
-                        let total_col = 2 + anchor_chars; // 2 = len("$ ")
+                        let total_col = prompt_len + anchor_chars;
                         let anchor_x = cmdline_area.x + (total_col % width) as u16;
                         let anchor_y = cmdline_area.y + (total_col / width) as u16;
-                        CompletionWidget { cs: &cs, popup }
+                        PopupListWidget { cs: &cs, state: &session.list }
                             .render_at(area, frame.buffer_mut(), anchor_x, anchor_y);
                     }
+                }
+
+                if let Some(session) = self.reverse_search.as_ref() {
+                    // Anchor at the left edge of the cmdline row; popup fills available width
+                    PopupListWidget { cs: &cs, state: &session.list }
+                        .render_at(area, frame.buffer_mut(), cmdline_area.x, cmdline_area.y);
                 }
             }
         }
@@ -1575,6 +1681,16 @@ fn find_complete_script() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// All history entries that contain `filter` as a substring, oldest first.
+/// If `filter` is empty, all entries are returned.
+fn history_matches(history: &crate::history::CommandHistory, filter: &str) -> Vec<String> {
+    if filter.is_empty() {
+        history.entries().map(String::from).collect()
+    } else {
+        history.entries().filter(|s| s.contains(filter)).map(String::from).collect()
+    }
 }
 
 /// Byte offset of the start of the last word in `text`.

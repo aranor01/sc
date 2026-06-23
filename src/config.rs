@@ -154,6 +154,7 @@ pub struct KeyBindings {
     pub toggle_button_bar: ActionBindings,
     pub cmdline_history_prev: ActionBindings,
     pub cmdline_history_next: ActionBindings,
+    pub reverse_search: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -205,6 +206,7 @@ impl Default for KeyBindings {
             toggle_button_bar: vec![KeyBinding::Single(ke(Char('b'), a))],
             cmdline_history_prev: vec![KeyBinding::Single(ke(Up, c))],
             cmdline_history_next: vec![KeyBinding::Single(ke(Down, c))],
+            reverse_search: vec![KeyBinding::Single(ke(Char('r'), c))],
         }
     }
 }
@@ -346,6 +348,7 @@ impl Config {
                     "toggle_button_bar" => cfg.keybindings.toggle_button_bar = bindings,
                     "cmdline_history_prev" => cfg.keybindings.cmdline_history_prev = bindings,
                     "cmdline_history_next" => cfg.keybindings.cmdline_history_next = bindings,
+                    "reverse_search" => cfg.keybindings.reverse_search = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }

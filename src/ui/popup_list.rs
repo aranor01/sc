@@ -9,17 +9,15 @@ use ratatui::{
 
 use super::to_color;
 
-/// State for the completion popup (candidates + selected index + anchor).
-pub struct CompletionPopup {
-    pub candidates: Vec<String>,
+/// Generic selectable list state used by both completion and reverse-i-search popups.
+pub struct PopupListState {
+    pub items: Vec<String>,
     pub selected: usize,
-    /// Byte offset in cmdline.text marking the start of the word being completed.
-    pub word_start: usize,
 }
 
-impl CompletionPopup {
-    pub fn new(candidates: Vec<String>, word_start: usize) -> Self {
-        CompletionPopup { candidates, selected: 0, word_start }
+impl PopupListState {
+    pub fn new(items: Vec<String>) -> Self {
+        PopupListState { items, selected: 0 }
     }
 
     pub fn move_up(&mut self) {
@@ -27,7 +25,7 @@ impl CompletionPopup {
     }
 
     pub fn move_down(&mut self) {
-        if !self.candidates.is_empty() && self.selected + 1 < self.candidates.len() {
+        if !self.items.is_empty() && self.selected + 1 < self.items.len() {
             self.selected += 1;
         }
     }
@@ -37,8 +35,8 @@ impl CompletionPopup {
     }
 
     pub fn move_bottom(&mut self) {
-        if !self.candidates.is_empty() {
-            self.selected = self.candidates.len() - 1;
+        if !self.items.is_empty() {
+            self.selected = self.items.len() - 1;
         }
     }
 
@@ -47,25 +45,25 @@ impl CompletionPopup {
     }
 
     pub fn page_down(&mut self, page: usize) {
-        if !self.candidates.is_empty() {
-            self.selected = (self.selected + page).min(self.candidates.len() - 1);
+        if !self.items.is_empty() {
+            self.selected = (self.selected + page).min(self.items.len() - 1);
         }
     }
 
-    pub fn selected_candidate(&self) -> Option<&str> {
-        self.candidates.get(self.selected).map(String::as_str)
+    pub fn selected_item(&self) -> Option<&str> {
+        self.items.get(self.selected).map(String::as_str)
     }
 }
 
-/// Renders `popup` as a bordered list anchored just above (`anchor_x`, `anchor_y`).
-/// `area` is the full terminal area used to clamp coordinates.
-/// Returns the actual Rect drawn (Rect::default() if nothing was rendered).
-pub struct CompletionWidget<'a> {
+/// Renders a `PopupListState` as a bordered, scrollable list anchored just above
+/// `(anchor_x, anchor_y)`.  `area` is the full terminal area used to clamp coordinates.
+/// Returns the drawn `Rect` (or `Rect::default()` if nothing was rendered).
+pub struct PopupListWidget<'a> {
     pub cs: &'a ColorScheme,
-    pub popup: &'a CompletionPopup,
+    pub state: &'a PopupListState,
 }
 
-impl<'a> CompletionWidget<'a> {
+impl<'a> PopupListWidget<'a> {
     pub fn render_at(
         &self,
         area: Rect,
@@ -73,25 +71,23 @@ impl<'a> CompletionWidget<'a> {
         anchor_x: u16,
         anchor_y: u16,
     ) -> Rect {
-        let n = self.popup.candidates.len();
-        // Need at least one row above anchor_y for the popup
+        let n = self.state.items.len();
         if n == 0 || anchor_y == 0 || area.width == 0 {
             return Rect::default();
         }
 
-        let max_len = self.popup.candidates.iter().map(|s| s.len()).max().unwrap_or(0);
+        let max_len = self.state.items.iter().map(|s| s.chars().count()).max().unwrap_or(0);
         // +2 for left/right border
         let popup_width = ((max_len + 2) as u16).max(10).min(area.width);
-        // +2 for top/bottom border; cap height at 15 rows or rows available above anchor
+        // +2 for top/bottom border; cap at 15 rows or space available above anchor
         let popup_height = (n as u16 + 2).min(15).min(anchor_y);
 
         if popup_height < 3 {
-            return Rect::default(); // not enough space even for 1 item + borders
+            return Rect::default();
         }
 
         // Move left if popup would overflow the right edge
         let popup_x = anchor_x.min(area.width.saturating_sub(popup_width));
-        // Popup sits immediately above anchor_y
         let popup_y = anchor_y - popup_height;
 
         let popup_area = Rect { x: popup_x, y: popup_y, width: popup_width, height: popup_height };
@@ -106,13 +102,23 @@ impl<'a> CompletionWidget<'a> {
         let inner = block.inner(popup_area);
         block.render(popup_area, buf);
 
+        let inner_w = inner.width as usize;
+
         let items: Vec<ListItem> = self
-            .popup
-            .candidates
+            .state
+            .items
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                let style = if i == self.popup.selected {
+                // Truncate long entries: replace the last visible char with '…'
+                let display = if s.chars().count() > inner_w && inner_w > 1 {
+                    let truncated: String = s.chars().take(inner_w - 1).collect();
+                    format!("{truncated}\u{2026}")
+                } else {
+                    s.clone()
+                };
+
+                let style = if i == self.state.selected {
                     Style::default()
                         .fg(to_color(self.cs.selected_fg))
                         .bg(to_color(self.cs.selected_bg))
@@ -122,12 +128,12 @@ impl<'a> CompletionWidget<'a> {
                         .fg(to_color(self.cs.dialog_fg))
                         .bg(to_color(self.cs.dialog_bg))
                 };
-                ListItem::new(Line::from(Span::styled(s.as_str(), style)))
+                ListItem::new(Line::from(Span::styled(display, style)))
             })
             .collect();
 
         let mut list_state = ListState::default();
-        list_state.select(Some(self.popup.selected));
+        list_state.select(Some(self.state.selected));
 
         let list = List::new(items).highlight_style(
             Style::default()

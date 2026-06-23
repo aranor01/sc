@@ -1,8 +1,8 @@
 pub mod button;
 pub mod button_bar;
 pub mod cmdline;
-pub mod completion;
 pub mod dialog;
+pub mod popup_list;
 pub mod menu;
 pub mod output_overlay;
 pub mod panel;
