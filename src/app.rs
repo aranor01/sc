@@ -359,7 +359,7 @@ impl App {
     }
 
     fn action_mode(&self) -> bool {
-        self.cmdline.is_empty() || self.explicit_action_mode
+        self.cmdline.is_empty() || self.explicit_action_mode || self.pending_chord.is_some()
     }
 
     fn active_panel(&self) -> &PanelState {
