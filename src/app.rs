@@ -311,6 +311,9 @@ pub struct App {
     menu_close_btn: Cell<Button>,
     menu_list_area: Cell<Rect>,
     menu_list_offset: Cell<usize>,
+    // Popup list hit-test areas (reset each frame when popup is not visible)
+    completion_popup_area: Cell<Rect>,
+    rev_search_popup_area: Cell<Rect>,
     // Pending left-button press for down+up click detection
     mouse_pressed: Option<Position>,
     should_quit: bool,
@@ -359,6 +362,8 @@ impl App {
             menu_close_btn: Cell::new(Button::default()),
             menu_list_area: Cell::new(Rect::default()),
             menu_list_offset: Cell::new(0),
+            completion_popup_area: Cell::new(Rect::default()),
+            rev_search_popup_area: Cell::new(Rect::default()),
             mouse_pressed: None,
             should_quit: false,
             mouse,
@@ -877,8 +882,9 @@ impl App {
                 return;
             }
             Modal::UserMenu(_) => {
+                let vh = self.menu_list_area.get().height as usize;
                 let outcome = if let Modal::UserMenu(ref mut s) = self.modal {
-                    s.handle_key(&event)
+                    s.handle_key(&event, vh)
                 } else { ModalOutcome::Consumed };
                 match outcome {
                     ModalOutcome::Execute(cmd) => {
@@ -1261,6 +1267,52 @@ impl App {
             return;
         }
 
+        // Popup lists (completion / reverse-i-search) intercept mouse events while visible.
+        // Down outside the popup dismisses it (= ESC) and swallows the click.
+        {
+            let completion_area = self.completion_popup_area.get();
+            let rev_search_area = self.rev_search_popup_area.get();
+
+            match mouse.kind {
+                MouseEventKind::Down(_) => {
+                    if self.completion.is_some() && completion_area.width > 0 {
+                        if !completion_area.contains(pos) {
+                            self.completion = None;
+                        }
+                        return;
+                    }
+                    if self.reverse_search.is_some() && rev_search_area.width > 0 {
+                        if !rev_search_area.contains(pos) {
+                            self.reverse_search = None;
+                        }
+                        return;
+                    }
+                }
+                MouseEventKind::Up(_) => {
+                    if self.completion.is_some() || self.reverse_search.is_some() {
+                        self.mouse_pressed = None;
+                        return;
+                    }
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    let is_up = matches!(mouse.kind, MouseEventKind::ScrollUp);
+                    if let Some(session) = self.completion.as_mut() {
+                        if completion_area.width > 0 && completion_area.contains(pos) {
+                            if is_up { session.list.move_up() } else { session.list.move_down() }
+                            return;
+                        }
+                    }
+                    if let Some(session) = self.reverse_search.as_mut() {
+                        if rev_search_area.width > 0 && rev_search_area.contains(pos) {
+                            if is_up { session.list.move_up() } else { session.list.move_down() }
+                            return;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
         match mouse.kind {
             // Button bar: Down records the press (for highlight); Up fires via button_at.
             MouseEventKind::Down(MouseButton::Left) => {
@@ -1405,15 +1457,20 @@ impl App {
                         let total_col = prompt_len + anchor_chars;
                         let anchor_x = cmdline_area.x + (total_col % width) as u16;
                         let anchor_y = cmdline_area.y + (total_col / width) as u16;
-                        PopupListWidget { cs: &cs, state: &session.list }
+                        let r = PopupListWidget { cs: &cs, state: &session.list }
                             .render_at(area, frame.buffer_mut(), anchor_x, anchor_y);
+                        self.completion_popup_area.set(r);
                     }
+                } else {
+                    self.completion_popup_area.set(Rect::default());
                 }
 
                 if let Some(session) = self.reverse_search.as_ref() {
-                    // Anchor at the left edge of the cmdline row; popup fills available width
-                    PopupListWidget { cs: &cs, state: &session.list }
+                    let r = PopupListWidget { cs: &cs, state: &session.list }
                         .render_at(area, frame.buffer_mut(), cmdline_area.x, cmdline_area.y);
+                    self.rev_search_popup_area.set(r);
+                } else {
+                    self.rev_search_popup_area.set(Rect::default());
                 }
             }
         }

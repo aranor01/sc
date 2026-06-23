@@ -34,15 +34,39 @@ impl UserMenuState {
         }
     }
 
+    pub fn move_top(&mut self) {
+        self.cursor = 0;
+    }
+
+    pub fn move_bottom(&mut self) {
+        if !self.items.is_empty() {
+            self.cursor = self.items.len() - 1;
+        }
+    }
+
+    pub fn page_up(&mut self, n: usize) {
+        self.cursor = self.cursor.saturating_sub(n);
+    }
+
+    pub fn page_down(&mut self, n: usize) {
+        if !self.items.is_empty() {
+            self.cursor = (self.cursor + n).min(self.items.len() - 1);
+        }
+    }
+
     pub fn selected(&self) -> Option<&MenuItem> {
         self.items.get(self.cursor)
     }
 
-    pub fn handle_key(&mut self, event: &KeyEvent) -> ModalOutcome {
+    pub fn handle_key(&mut self, event: &KeyEvent, visible_height: usize) -> ModalOutcome {
         match event.code {
             KeyCode::Esc => ModalOutcome::Dismissed,
             KeyCode::Up => { self.move_up(); ModalOutcome::Consumed }
             KeyCode::Down => { self.move_down(); ModalOutcome::Consumed }
+            KeyCode::Home => { self.move_top(); ModalOutcome::Consumed }
+            KeyCode::End => { self.move_bottom(); ModalOutcome::Consumed }
+            KeyCode::PageUp => { self.page_up(visible_height.max(1)); ModalOutcome::Consumed }
+            KeyCode::PageDown => { self.page_down(visible_height.max(1)); ModalOutcome::Consumed }
             KeyCode::Enter => {
                 if let Some(item) = self.selected() {
                     ModalOutcome::Execute(item.command.clone())
