@@ -1,4 +1,6 @@
 use crate::config::ColorScheme;
+use crate::ui::modal_event::PopupOutcome;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -52,6 +54,44 @@ impl PopupListState {
 
     pub fn selected_item(&self) -> Option<&str> {
         self.items.get(self.selected).map(String::as_str)
+    }
+
+    pub fn handle_key(&mut self, event: &KeyEvent) -> PopupOutcome {
+        match event.code {
+            KeyCode::Enter | KeyCode::Tab if event.modifiers == KeyModifiers::NONE => {
+                match self.selected_item() {
+                    Some(s) => PopupOutcome::Accept(s.to_string()),
+                    None => PopupOutcome::Dismissed,
+                }
+            }
+            KeyCode::Esc if event.modifiers == KeyModifiers::NONE => PopupOutcome::Dismissed,
+            KeyCode::Up if event.modifiers == KeyModifiers::NONE => {
+                self.move_up(); PopupOutcome::Consumed
+            }
+            KeyCode::Down if event.modifiers == KeyModifiers::NONE => {
+                self.move_down(); PopupOutcome::Consumed
+            }
+            KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
+                self.move_top(); PopupOutcome::Consumed
+            }
+            KeyCode::End if event.modifiers == KeyModifiers::NONE => {
+                self.move_bottom(); PopupOutcome::Consumed
+            }
+            KeyCode::PageUp if event.modifiers == KeyModifiers::NONE => {
+                self.page_up(10); PopupOutcome::Consumed
+            }
+            KeyCode::PageDown if event.modifiers == KeyModifiers::NONE => {
+                self.page_down(10); PopupOutcome::Consumed
+            }
+            KeyCode::Char(c)
+                if event.modifiers == KeyModifiers::NONE
+                    || event.modifiers == KeyModifiers::SHIFT =>
+            {
+                PopupOutcome::InsertChar(c)
+            }
+            KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => PopupOutcome::Backspace,
+            _ => PopupOutcome::Passthrough,
+        }
     }
 }
 

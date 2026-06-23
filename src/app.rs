@@ -32,7 +32,7 @@ use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupListState, PopupListWidget};
 use crate::ui::dialog::{render_confirm, render_error, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
-use crate::ui::modal_event::ModalOutcome;
+use crate::ui::modal_event::{ModalOutcome, PopupOutcome};
 use crate::ui::output_overlay::OutputOverlayWidget;
 use crate::ui::panel::{PanelState, PanelWidget};
 
@@ -178,8 +178,20 @@ struct CompletionSession {
     word_start: usize,
 }
 
+impl CompletionSession {
+    fn handle_key(&mut self, event: &KeyEvent) -> PopupOutcome {
+        self.list.handle_key(event)
+    }
+}
+
 struct ReverseSearchSession {
     list: PopupListState,
+}
+
+impl ReverseSearchSession {
+    fn handle_key(&mut self, event: &KeyEvent) -> PopupOutcome {
+        self.list.handle_key(event)
+    }
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
@@ -903,58 +915,23 @@ impl App {
             }
         }
 
-        // Chord handling
         // Completion popup: intercept keys while a candidate list is visible.
-        // The `_` arm closes the popup and falls through to normal key handling.
-        if self.completion.is_some() {
-            match event.code {
-                KeyCode::Enter | KeyCode::Tab if event.modifiers == KeyModifiers::NONE => {
-                    self.apply_completion();
-                    return;
-                }
-                KeyCode::Esc if event.modifiers == KeyModifiers::NONE => {
-                    self.completion = None;
-                    return;
-                }
-                KeyCode::Up if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().list.move_up();
-                    return;
-                }
-                KeyCode::Down if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().list.move_down();
-                    return;
-                }
-                KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().list.move_top();
-                    return;
-                }
-                KeyCode::End if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().list.move_bottom();
-                    return;
-                }
-                KeyCode::PageUp if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().list.page_up(10);
-                    return;
-                }
-                KeyCode::PageDown if event.modifiers == KeyModifiers::NONE => {
-                    self.completion.as_mut().unwrap().list.page_down(10);
-                    return;
-                }
-                KeyCode::Char(c)
-                    if event.modifiers == KeyModifiers::NONE
-                        || event.modifiers == KeyModifiers::SHIFT =>
-                {
+        if let Some(ref mut session) = self.completion {
+            match session.handle_key(&event) {
+                PopupOutcome::Accept(_) => { self.apply_completion(); return; }
+                PopupOutcome::Dismissed => { self.completion = None; return; }
+                PopupOutcome::Consumed => return,
+                PopupOutcome::InsertChar(c) => {
                     self.cmdline.insert_char(c);
                     self.refresh_completion();
                     return;
                 }
-                KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
+                PopupOutcome::Backspace => {
                     let last_was_space = self.cmdline.text.ends_with(' ');
                     self.cmdline.backspace();
                     if last_was_space || self.cmdline.text.trim().is_empty() {
                         self.completion = None;
                     } else {
-                        // After backspace inside a word: check if the word was wiped
                         let ws = last_word_start(&self.cmdline.text);
                         if ws >= self.cmdline.text.len() {
                             self.completion = None;
@@ -964,70 +941,32 @@ impl App {
                     }
                     return;
                 }
-                _ => {
-                    // Any other key: close popup, fall through to normal handling
-                    self.completion = None;
-                }
+                PopupOutcome::Passthrough => { self.completion = None; }
             }
         }
 
         // Reverse-search popup: intercept keys while active.
-        if self.reverse_search.is_some() {
-            match event.code {
-                KeyCode::Enter | KeyCode::Tab if event.modifiers == KeyModifiers::NONE => {
-                    if let Some(session) = self.reverse_search.take() {
-                        if let Some(entry) = session.list.items.get(session.list.selected) {
-                            self.cmdline.text = entry.clone();
-                            self.cmdline.move_end();
-                        }
-                    }
-                    return;
-                }
-                KeyCode::Esc if event.modifiers == KeyModifiers::NONE => {
+        if let Some(ref mut session) = self.reverse_search {
+            match session.handle_key(&event) {
+                PopupOutcome::Accept(entry) => {
+                    self.cmdline.text = entry;
+                    self.cmdline.move_end();
                     self.reverse_search = None;
                     return;
                 }
-                KeyCode::Up if event.modifiers == KeyModifiers::NONE => {
-                    self.reverse_search.as_mut().unwrap().list.move_up();
-                    return;
-                }
-                KeyCode::Down if event.modifiers == KeyModifiers::NONE => {
-                    self.reverse_search.as_mut().unwrap().list.move_down();
-                    return;
-                }
-                KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
-                    self.reverse_search.as_mut().unwrap().list.move_top();
-                    return;
-                }
-                KeyCode::End if event.modifiers == KeyModifiers::NONE => {
-                    self.reverse_search.as_mut().unwrap().list.move_bottom();
-                    return;
-                }
-                KeyCode::PageUp if event.modifiers == KeyModifiers::NONE => {
-                    self.reverse_search.as_mut().unwrap().list.page_up(10);
-                    return;
-                }
-                KeyCode::PageDown if event.modifiers == KeyModifiers::NONE => {
-                    self.reverse_search.as_mut().unwrap().list.page_down(10);
-                    return;
-                }
-                KeyCode::Char(c)
-                    if event.modifiers == KeyModifiers::NONE
-                        || event.modifiers == KeyModifiers::SHIFT =>
-                {
+                PopupOutcome::Dismissed => { self.reverse_search = None; return; }
+                PopupOutcome::Consumed => return,
+                PopupOutcome::InsertChar(c) => {
                     self.cmdline.insert_char(c);
                     self.update_reverse_search();
                     return;
                 }
-                KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
+                PopupOutcome::Backspace => {
                     self.cmdline.backspace();
                     self.update_reverse_search();
                     return;
                 }
-                _ => {
-                    self.reverse_search = None;
-                    // fall through to normal handling
-                }
+                PopupOutcome::Passthrough => { self.reverse_search = None; }
             }
         }
 
