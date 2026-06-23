@@ -14,6 +14,17 @@ pub enum OverlayOutcome {
     Passthrough,
 }
 
+pub enum CmdlineOutcome {
+    /// Key was handled; cmdline state is updated
+    Consumed,
+    /// Ctrl+P: caller should load the previous history entry
+    HistoryPrev,
+    /// Ctrl+N: caller should load the next history entry
+    HistoryNext,
+    /// Key not handled by the cmdline
+    Passthrough,
+}
+
 pub enum PanelOutcome {
     /// Navigation key was handled
     Consumed,

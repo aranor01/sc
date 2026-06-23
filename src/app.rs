@@ -33,7 +33,7 @@ use crate::ui::popup_list::{PopupListState, PopupListWidget};
 use crate::ui::dialog::{render_confirm, render_error, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
-use crate::ui::modal_event::{ModalOutcome, OverlayOutcome, PanelOutcome, PopupOutcome};
+use crate::ui::modal_event::{CmdlineOutcome, ModalOutcome, OverlayOutcome, PanelOutcome, PopupOutcome};
 use crate::ui::panel::{PanelState, PanelWidget};
 
 // ── Mode enums ────────────────────────────────────────────────────────────────
@@ -1023,69 +1023,11 @@ impl App {
             PanelOutcome::Passthrough => {}
         }
 
-        // Cmdline raw key handling
-        match event.code {
-            KeyCode::Char(c) if event.modifiers == KeyModifiers::NONE
-                || event.modifiers == KeyModifiers::SHIFT =>
-            {
-                self.cmdline.insert_char(c);
-            }
-            KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
-                self.cmdline.backspace();
-            }
-            KeyCode::Left if event.modifiers == KeyModifiers::NONE => {
-                self.cmdline.move_left();
-            }
-            KeyCode::Right if event.modifiers == KeyModifiers::NONE => {
-                self.cmdline.move_right();
-            }
-            KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
-                self.cmdline.move_home();
-            }
-            KeyCode::End if event.modifiers == KeyModifiers::NONE => {
-                self.cmdline.move_end();
-            }
-            // Bash readline shortcuts
-            KeyCode::Char('a') if event.modifiers == KeyModifiers::CONTROL => {
-                self.cmdline.move_home();
-            }
-            KeyCode::Char('e') if event.modifiers == KeyModifiers::CONTROL => {
-                self.cmdline.move_end();
-            }
-            KeyCode::Char('k') if event.modifiers == KeyModifiers::CONTROL => {
-                self.cmdline.kill_to_end();
-            }
-            KeyCode::Char('u') if event.modifiers == KeyModifiers::CONTROL => {
-                self.cmdline.kill_to_start();
-            }
-            KeyCode::Char('w') if event.modifiers == KeyModifiers::CONTROL => {
-                self.cmdline.kill_word_left();
-            }
-            KeyCode::Backspace if event.modifiers == KeyModifiers::ALT => {
-                self.cmdline.kill_word_left();
-            }
-            KeyCode::Char('d') if event.modifiers == KeyModifiers::ALT => {
-                self.cmdline.kill_word_right();
-            }
-            KeyCode::Char('f') if event.modifiers == KeyModifiers::ALT => {
-                self.cmdline.move_word_right();
-            }
-            KeyCode::Left if event.modifiers == KeyModifiers::CONTROL => {
-                self.cmdline.move_word_left();
-            }
-            KeyCode::Right if event.modifiers == KeyModifiers::CONTROL => {
-                self.cmdline.move_word_right();
-            }
-            KeyCode::Char('y') if event.modifiers == KeyModifiers::CONTROL => {
-                self.cmdline.yank();
-            }
-            KeyCode::Char('p') if event.modifiers == KeyModifiers::CONTROL => {
-                self.handle_action(Action::CmdlineHistoryPrev);
-            }
-            KeyCode::Char('n') if event.modifiers == KeyModifiers::CONTROL => {
-                self.handle_action(Action::CmdlineHistoryNext);
-            }
-            _ => {}
+        // Cmdline key handling
+        match self.cmdline.handle_key(&event) {
+            CmdlineOutcome::HistoryPrev => self.handle_action(Action::CmdlineHistoryPrev),
+            CmdlineOutcome::HistoryNext => self.handle_action(Action::CmdlineHistoryNext),
+            CmdlineOutcome::Consumed | CmdlineOutcome::Passthrough => {}
         }
     }
 

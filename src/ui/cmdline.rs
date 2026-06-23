@@ -1,4 +1,6 @@
 use crate::config::ColorScheme;
+use crate::ui::modal_event::CmdlineOutcome;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -144,6 +146,85 @@ impl CmdLineState {
     pub fn yank(&mut self) {
         let s = self.kill_ring.clone();
         if !s.is_empty() { self.insert_str(&s); }
+    }
+
+    pub fn handle_key(&mut self, event: &KeyEvent) -> CmdlineOutcome {
+        match event.code {
+            KeyCode::Char(c)
+                if event.modifiers == KeyModifiers::NONE
+                    || event.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.insert_char(c);
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
+                self.backspace();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Left if event.modifiers == KeyModifiers::NONE => {
+                self.move_left();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Right if event.modifiers == KeyModifiers::NONE => {
+                self.move_right();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
+                self.move_home();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::End if event.modifiers == KeyModifiers::NONE => {
+                self.move_end();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Char('a') if event.modifiers == KeyModifiers::CONTROL => {
+                self.move_home();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Char('e') if event.modifiers == KeyModifiers::CONTROL => {
+                self.move_end();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Char('k') if event.modifiers == KeyModifiers::CONTROL => {
+                self.kill_to_end();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Char('u') if event.modifiers == KeyModifiers::CONTROL => {
+                self.kill_to_start();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Char('w') if event.modifiers == KeyModifiers::CONTROL => {
+                self.kill_word_left();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Backspace if event.modifiers == KeyModifiers::ALT => {
+                self.kill_word_left();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Char('d') if event.modifiers == KeyModifiers::ALT => {
+                self.kill_word_right();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Char('f') if event.modifiers == KeyModifiers::ALT => {
+                self.move_word_right();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Left if event.modifiers == KeyModifiers::CONTROL => {
+                self.move_word_left();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Right if event.modifiers == KeyModifiers::CONTROL => {
+                self.move_word_right();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Char('y') if event.modifiers == KeyModifiers::CONTROL => {
+                self.yank();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Char('p') if event.modifiers == KeyModifiers::CONTROL => CmdlineOutcome::HistoryPrev,
+            KeyCode::Char('n') if event.modifiers == KeyModifiers::CONTROL => CmdlineOutcome::HistoryNext,
+            _ => CmdlineOutcome::Passthrough,
+        }
     }
 
     /// Return the display column of the cursor (byte offset == char offset for ASCII).
