@@ -917,7 +917,7 @@ impl App {
                         // Shortcut key: find the first menu item whose `keys` matches
                         let cmd = if let Modal::UserMenu(ref s) = self.modal {
                             s.items.iter()
-                                .find(|item| menu_item_matches_key(item, &event))
+                                .find(|item| menu_item_matches_key(item, None, &event))
                                 .map(|item| item.command.clone())
                         } else {
                             None
@@ -1111,12 +1111,17 @@ impl App {
                 return;
             }
             KeyMatch::None => {
-                // Direct user menu shortcut: fire the matching item without opening the menu
+                // User menu shortcuts (single-key and chord) fire from the main screen.
                 let cmd = self.config.menu.iter()
-                    .find(|item| menu_item_matches_key(item, &event))
+                    .find(|item| menu_item_matches_key(item, pending.as_ref(), &event))
                     .map(|item| item.command.clone());
                 if let Some(cmd) = cmd {
                     self.execute_menu_item(cmd);
+                    return;
+                }
+                // If no chord completed, check if this key starts a user menu chord.
+                if pending.is_none() && menu_item_is_chord_start(&self.config.menu, &event) {
+                    self.pending_chord = Some(event);
                     return;
                 }
             }
@@ -1721,12 +1726,37 @@ fn find_complete_script() -> Option<PathBuf> {
 }
 
 /// Returns true if the `keys` shortcut string of a menu item matches `event`.
-fn menu_item_matches_key(item: &crate::config::MenuItem, event: &KeyEvent) -> bool {
+/// Returns true when `item.keys` matches the given key event.
+/// `pending` is the first key of an in-progress chord, if any.
+/// - `Single(ke)`:  matches when pending is None and event == ke
+/// - `Chord(f, s)`: matches when pending == Some(f) and event == s
+fn menu_item_matches_key(
+    item: &crate::config::MenuItem,
+    pending: Option<&KeyEvent>,
+    event: &KeyEvent,
+) -> bool {
     let Some(keys) = &item.keys else { return false };
     match crate::config::parse_key_binding(keys) {
-        Ok(KeyBinding::Single(ke)) => ke == *event,
+        Ok(KeyBinding::Single(ke)) => pending.is_none() && ke == *event,
+        Ok(KeyBinding::Chord(f, s)) => {
+            (pending == Some(&f)) && s == *event
+        }
         _ => false,
     }
+}
+
+/// Returns true when `event` is the first key of a chord shortcut defined in any menu item.
+fn menu_item_is_chord_start(
+    items: &[crate::config::MenuItem],
+    event: &KeyEvent,
+) -> bool {
+    items.iter().any(|item| {
+        let Some(keys) = &item.keys else { return false };
+        matches!(
+            crate::config::parse_key_binding(keys),
+            Ok(KeyBinding::Chord(f, _)) if f == *event
+        )
+    })
 }
 
 /// All history entries that contain `filter` as a substring, oldest first.
