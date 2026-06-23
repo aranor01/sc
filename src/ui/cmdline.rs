@@ -3,8 +3,6 @@ use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
     style::Style,
-    text::{Line, Span},
-    widgets::{Paragraph, Widget},
 };
 
 pub struct CmdLineState {
@@ -163,12 +161,26 @@ pub struct CmdLineWidget<'a> {
 }
 
 impl<'a> CmdLineWidget<'a> {
+    /// How many terminal rows this cmdline needs at the given width.
+    /// Always at least 1 (even when text is empty, the prompt occupies a row).
+    pub fn needed_lines(&self, state: &CmdLineState, width: u16) -> u16 {
+        if width == 0 {
+            return 1;
+        }
+        let total = self.prompt.chars().count() + state.text.chars().count();
+        total.max(1).div_ceil(width as usize) as u16
+    }
+
     pub fn render_with_cursor(
         &self,
         area: Rect,
         buf: &mut Buffer,
         state: &CmdLineState,
     ) -> Option<Position> {
+        if area.height == 0 || area.width == 0 {
+            return None;
+        }
+
         let (fg, bg) = if self.active {
             (to_color(self.cs.cmdline_fg), to_color(self.cs.cmdline_bg))
         } else {
@@ -176,15 +188,34 @@ impl<'a> CmdLineWidget<'a> {
         };
         let style = Style::default().fg(fg).bg(bg);
 
-        let prompt_len = self.prompt.chars().count() as u16;
-        let display = format!("{}{}", self.prompt, state.text);
-        let para = Paragraph::new(Line::from(Span::styled(display, style)));
-        Widget::render(para, area, buf);
+        let width = area.width as usize;
+        let prompt_len = self.prompt.chars().count();
+        let all_chars: Vec<char> = self.prompt.chars().chain(state.text.chars()).collect();
 
-        if area.height > 0 {
-            let col = area.x + prompt_len + state.display_cursor_col();
-            let col = col.min(area.x + area.width.saturating_sub(1));
-            Some(Position { x: col, y: area.y })
+        // Fill entire area with the cmdline background first
+        let blank = " ".repeat(width);
+        for row in 0..area.height {
+            buf.set_string(area.x, area.y + row, &blank, style);
+        }
+
+        // Render character chunks, one per visual row (character-level wrapping)
+        for (row_idx, chunk) in all_chars.chunks(width).enumerate() {
+            let y = area.y + row_idx as u16;
+            if y >= area.y + area.height {
+                break;
+            }
+            let s: String = chunk.iter().collect();
+            buf.set_string(area.x, y, &s, style);
+        }
+
+        // Cursor position: split total char offset into (row, col)
+        let cursor_total = prompt_len + state.display_cursor_col() as usize;
+        let cursor_row = (cursor_total / width) as u16;
+        let cursor_col = (cursor_total % width) as u16;
+        let pos = Position { x: area.x + cursor_col, y: area.y + cursor_row };
+
+        if pos.y < area.y + area.height {
+            Some(pos)
         } else {
             None
         }

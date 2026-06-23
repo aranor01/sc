@@ -196,10 +196,10 @@ struct AppLayout {
 }
 
 impl AppLayout {
-    fn compute(area: Rect, orientation: Orientation, show_cmdline: bool, show_button_bar: bool) -> Self {
+    fn compute(area: Rect, orientation: Orientation, show_cmdline: bool, show_button_bar: bool, cmdline_height: u16) -> Self {
         let mut constraints = vec![Constraint::Fill(1)];
         if show_cmdline {
-            constraints.push(Constraint::Length(1));
+            constraints.push(Constraint::Length(cmdline_height));
         }
         if show_button_bar {
             constraints.push(Constraint::Length(1));
@@ -1271,18 +1271,29 @@ impl App {
     fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let press = self.mouse_pressed;
+
+        // Clone colorscheme so we can borrow panel states mutably without aliasing issues.
+        let cs = self.config.colorscheme.clone();
+
+        // Build the cmdline widget early so we can query needed_lines() before layout.
+        let am = self.action_mode();
+        let cmdline_widget = CmdLineWidget { cs: &cs, prompt: "$ ", active: !am };
+        let cmdline_height = if self.show_cmdline {
+            cmdline_widget.needed_lines(&self.cmdline, area.width)
+        } else {
+            0
+        };
+
         let layout = AppLayout::compute(
             area,
             self.orientation,
             self.show_cmdline,
             self.show_button_bar,
+            cmdline_height,
         );
 
         self.left_area.set(layout.left);
         self.right_area.set(layout.right);
-
-        // Clone colorscheme so we can borrow panel states mutably without aliasing issues.
-        let cs = self.config.colorscheme.clone();
 
         // Background
         let bg = Color::Rgb(cs.panel_bg.0, cs.panel_bg.1, cs.panel_bg.2);
@@ -1322,10 +1333,8 @@ impl App {
 
         // CmdLine
         if let Some(cmdline_area) = layout.cmdline {
-            let am = self.action_mode();
-            let widget = CmdLineWidget { cs: &cs, prompt: "$ ", active: !am };
             let buf = frame.buffer_mut();
-            let cursor_pos = widget.render_with_cursor(cmdline_area, buf, &self.cmdline);
+            let cursor_pos = cmdline_widget.render_with_cursor(cmdline_area, buf, &self.cmdline);
             if let Some(pos) = cursor_pos {
                 if matches!(self.modal, Modal::None) && !self.show_output && !am {
                     frame.set_cursor_position(pos);
