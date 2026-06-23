@@ -104,14 +104,17 @@ pub struct PopupListWidget<'a> {
 }
 
 impl<'a> PopupListWidget<'a> {
-    /// Returns `(popup_rect, scroll_offset)`. The offset is needed to map a
-    /// click row back to the correct item index when the list is scrolled.
+    /// Returns `(popup_rect, scroll_offset)`. `initial_offset` is the offset
+    /// from the previous frame; Ratatui keeps it when the selected item is
+    /// already visible and only scrolls when it is not (e.g. first appearance
+    /// or keyboard navigation past the visible window).
     pub fn render_at(
         &self,
         area: Rect,
         buf: &mut Buffer,
         anchor_x: u16,
         anchor_y: u16,
+        initial_offset: usize,
     ) -> (Rect, usize) {
         let n = self.state.items.len();
         if n == 0 || anchor_y == 0 || area.width == 0 {
@@ -176,6 +179,7 @@ impl<'a> PopupListWidget<'a> {
 
         let mut list_state = ListState::default();
         list_state.select(Some(self.state.selected));
+        *list_state.offset_mut() = initial_offset;
 
         let list = List::new(items).highlight_style(
             Style::default()
