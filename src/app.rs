@@ -311,9 +311,11 @@ pub struct App {
     menu_close_btn: Cell<Button>,
     menu_list_area: Cell<Rect>,
     menu_list_offset: Cell<usize>,
-    // Popup list hit-test areas (reset each frame when popup is not visible)
+    // Popup list hit-test areas and scroll offsets (reset each frame when not visible)
     completion_popup_area: Cell<Rect>,
+    completion_popup_offset: Cell<usize>,
     rev_search_popup_area: Cell<Rect>,
+    rev_search_popup_offset: Cell<usize>,
     // Pending left-button press for down+up click detection
     mouse_pressed: Option<Position>,
     should_quit: bool,
@@ -363,7 +365,9 @@ impl App {
             menu_list_area: Cell::new(Rect::default()),
             menu_list_offset: Cell::new(0),
             completion_popup_area: Cell::new(Rect::default()),
+            completion_popup_offset: Cell::new(0),
             rev_search_popup_area: Cell::new(Rect::default()),
+            rev_search_popup_offset: Cell::new(0),
             mouse_pressed: None,
             should_quit: false,
             mouse,
@@ -1276,21 +1280,60 @@ impl App {
             match mouse.kind {
                 MouseEventKind::Down(_) => {
                     if self.completion.is_some() && completion_area.width > 0 {
-                        if !completion_area.contains(pos) {
+                        if completion_area.contains(pos) {
+                            let inner_y = completion_area.y + 1;
+                            if pos.y >= inner_y {
+                                let row = (pos.y - inner_y) as usize;
+                                let idx = self.completion_popup_offset.get() + row;
+                                if let Some(s) = self.completion.as_mut() {
+                                    if idx < s.list.items.len() { s.list.selected = idx; }
+                                }
+                            }
+                            self.mouse_pressed = Some(pos);
+                        } else {
                             self.completion = None;
                         }
                         return;
                     }
                     if self.reverse_search.is_some() && rev_search_area.width > 0 {
-                        if !rev_search_area.contains(pos) {
+                        if rev_search_area.contains(pos) {
+                            let inner_y = rev_search_area.y + 1;
+                            if pos.y >= inner_y {
+                                let row = (pos.y - inner_y) as usize;
+                                let idx = self.rev_search_popup_offset.get() + row;
+                                if let Some(s) = self.reverse_search.as_mut() {
+                                    if idx < s.list.items.len() { s.list.selected = idx; }
+                                }
+                            }
+                            self.mouse_pressed = Some(pos);
+                        } else {
                             self.reverse_search = None;
                         }
                         return;
                     }
                 }
                 MouseEventKind::Up(_) => {
-                    if self.completion.is_some() || self.reverse_search.is_some() {
+                    if self.completion.is_some() && completion_area.width > 0 {
+                        let was_click = self.mouse_pressed == Some(pos);
                         self.mouse_pressed = None;
+                        if was_click && completion_area.contains(pos) {
+                            self.apply_completion();
+                        }
+                        return;
+                    }
+                    if self.reverse_search.is_some() && rev_search_area.width > 0 {
+                        let was_click = self.mouse_pressed == Some(pos);
+                        self.mouse_pressed = None;
+                        if was_click && rev_search_area.contains(pos) {
+                            if let Some(entry) = self.reverse_search.as_ref()
+                                .and_then(|s| s.list.selected_item())
+                                .map(String::from)
+                            {
+                                self.cmdline.text = entry;
+                                self.cmdline.move_end();
+                            }
+                            self.reverse_search = None;
+                        }
                         return;
                     }
                 }
@@ -1457,20 +1500,24 @@ impl App {
                         let total_col = prompt_len + anchor_chars;
                         let anchor_x = cmdline_area.x + (total_col % width) as u16;
                         let anchor_y = cmdline_area.y + (total_col / width) as u16;
-                        let r = PopupListWidget { cs: &cs, state: &session.list }
+                        let (r, offset) = PopupListWidget { cs: &cs, state: &session.list }
                             .render_at(area, frame.buffer_mut(), anchor_x, anchor_y);
                         self.completion_popup_area.set(r);
+                        self.completion_popup_offset.set(offset);
                     }
                 } else {
                     self.completion_popup_area.set(Rect::default());
+                    self.completion_popup_offset.set(0);
                 }
 
                 if let Some(session) = self.reverse_search.as_ref() {
-                    let r = PopupListWidget { cs: &cs, state: &session.list }
+                    let (r, offset) = PopupListWidget { cs: &cs, state: &session.list }
                         .render_at(area, frame.buffer_mut(), cmdline_area.x, cmdline_area.y);
                     self.rev_search_popup_area.set(r);
+                    self.rev_search_popup_offset.set(offset);
                 } else {
                     self.rev_search_popup_area.set(Rect::default());
+                    self.rev_search_popup_offset.set(0);
                 }
             }
         }

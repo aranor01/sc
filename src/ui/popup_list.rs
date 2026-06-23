@@ -104,16 +104,18 @@ pub struct PopupListWidget<'a> {
 }
 
 impl<'a> PopupListWidget<'a> {
+    /// Returns `(popup_rect, scroll_offset)`. The offset is needed to map a
+    /// click row back to the correct item index when the list is scrolled.
     pub fn render_at(
         &self,
         area: Rect,
         buf: &mut Buffer,
         anchor_x: u16,
         anchor_y: u16,
-    ) -> Rect {
+    ) -> (Rect, usize) {
         let n = self.state.items.len();
         if n == 0 || anchor_y == 0 || area.width == 0 {
-            return Rect::default();
+            return (Rect::default(), 0);
         }
 
         let max_len = self.state.items.iter().map(|s| s.chars().count()).max().unwrap_or(0);
@@ -123,7 +125,7 @@ impl<'a> PopupListWidget<'a> {
         let popup_height = (n as u16 + 2).min(15).min(anchor_y);
 
         if popup_height < 3 {
-            return Rect::default();
+            return (Rect::default(), 0);
         }
 
         // Move left if popup would overflow the right edge
@@ -184,6 +186,6 @@ impl<'a> PopupListWidget<'a> {
 
         StatefulWidget::render(list, inner, buf, &mut list_state);
 
-        popup_area
+        (popup_area, list_state.offset())
     }
 }
