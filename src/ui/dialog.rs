@@ -64,7 +64,7 @@ impl ConfirmState {
     }
 
     pub fn handle_key(&self, event: &KeyEvent) -> ModalOutcome {
-        if matches!(event.code, KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter) {
+        if matches!(event.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
             ModalOutcome::Confirmed
         } else if matches!(event.code, KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc) {
             ModalOutcome::Dismissed
