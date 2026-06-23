@@ -159,6 +159,7 @@ use super::to_color;
 pub struct CmdLineWidget<'a> {
     pub cs: &'a ColorScheme,
     pub prompt: &'a str,
+    pub active: bool,
 }
 
 impl<'a> CmdLineWidget<'a> {
@@ -168,9 +169,12 @@ impl<'a> CmdLineWidget<'a> {
         buf: &mut Buffer,
         state: &CmdLineState,
     ) -> Option<Position> {
-        let style = Style::default()
-            .fg(to_color(self.cs.cmdline_fg))
-            .bg(to_color(self.cs.cmdline_bg));
+        let (fg, bg) = if self.active {
+            (to_color(self.cs.cmdline_fg), to_color(self.cs.cmdline_bg))
+        } else {
+            (to_color(self.cs.cmdline_inactive_fg), to_color(self.cs.cmdline_inactive_bg))
+        };
+        let style = Style::default().fg(fg).bg(bg);
 
         let prompt_len = self.prompt.chars().count() as u16;
         let display = format!("{}{}", self.prompt, state.text);

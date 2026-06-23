@@ -291,6 +291,9 @@ pub struct App {
     mouse_pressed: Option<Position>,
     should_quit: bool,
     mouse: bool,
+    // True when cmdline is empty OR user pressed ESC to give panels focus temporarily.
+    // Cleared after the first keystroke (if cmdline is non-empty).
+    explicit_action_mode: bool,
 }
 
 impl App {
@@ -333,8 +336,13 @@ impl App {
             mouse_pressed: None,
             should_quit: false,
             mouse,
+            explicit_action_mode: false,
             config,
         }
+    }
+
+    fn action_mode(&self) -> bool {
+        self.cmdline.is_empty() || self.explicit_action_mode
     }
 
     fn active_panel(&self) -> &PanelState {
@@ -442,11 +450,7 @@ impl App {
                 self.active_panel_mut().tag_toggle(vh);
             }
             Action::InvertTags => {
-                if self.cmdline.is_empty() {
-                    self.active_panel_mut().invert_tags();
-                } else {
-                    self.cmdline.insert_char('*');
-                }
+                self.active_panel_mut().invert_tags();
             }
             Action::Copy => {
                 let files = self.active_panel().op_files();
@@ -709,6 +713,16 @@ impl App {
     }
 
     fn handle_key_event(&mut self, event: KeyEvent) {
+        let was_explicit = self.explicit_action_mode;
+        self.handle_key_event_inner(event);
+        // One-shot: clear ESC-triggered action mode after the first key is processed,
+        // but only if there is text in the cmdline (empty cmdline keeps auto-action-mode).
+        if was_explicit && !self.cmdline.is_empty() {
+            self.explicit_action_mode = false;
+        }
+    }
+
+    fn handle_key_event_inner(&mut self, event: KeyEvent) {
         // Output overlay active — handle scroll keys
         if self.show_output {
             let dismiss = event.code == KeyCode::Esc
@@ -808,20 +822,40 @@ impl App {
         }
 
         // Chord handling
-        // Pre-dispatch: plain Delete on a non-empty cmdline is text editing, not a file op.
-        if event.code == KeyCode::Delete
+        // ESC: toggle explicit action mode when cmdline has text (one-shot panel focus).
+        if event.code == KeyCode::Esc
             && event.modifiers == KeyModifiers::NONE
+            && !self.show_output
             && !self.cmdline.is_empty()
         {
-            self.cmdline.delete_char();
+            self.explicit_action_mode = !self.explicit_action_mode;
             return;
+        }
+
+        // When cmdline is active (not action mode), route printable chars and Delete
+        // directly to the cmdline, preventing action bindings from intercepting them.
+        if !self.action_mode() {
+            match event.code {
+                KeyCode::Char(c)
+                    if event.modifiers == KeyModifiers::NONE
+                        || event.modifiers == KeyModifiers::SHIFT =>
+                {
+                    self.cmdline.insert_char(c);
+                    return;
+                }
+                KeyCode::Delete if event.modifiers == KeyModifiers::NONE => {
+                    self.cmdline.delete_char();
+                    return;
+                }
+                _ => {}
+            }
         }
 
         // Alt+B: move word left when cmdline has text; otherwise the action binding
         // (toggle_button_bar) fires from match_key below.
         if event.code == KeyCode::Char('b')
             && event.modifiers == KeyModifiers::ALT
-            && !self.cmdline.is_empty()
+            && !self.action_mode()
         {
             self.cmdline.move_word_left();
             return;
@@ -858,19 +892,19 @@ impl App {
                 self.cmdline.move_right();
             }
             KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
-                if !self.cmdline.is_empty() {
-                    self.cmdline.move_home();
-                } else {
+                if self.action_mode() {
                     let vh = self.active_vh();
                     self.active_panel_mut().move_cursor(i32::MIN, vh);
+                } else {
+                    self.cmdline.move_home();
                 }
             }
             KeyCode::End if event.modifiers == KeyModifiers::NONE => {
-                if !self.cmdline.is_empty() {
-                    self.cmdline.move_end();
-                } else {
+                if self.action_mode() {
                     let vh = self.active_vh();
                     self.active_panel_mut().move_cursor(i32::MAX / 2, vh);
+                } else {
+                    self.cmdline.move_end();
                 }
             }
             KeyCode::Up if event.modifiers == KeyModifiers::NONE => {
@@ -890,13 +924,13 @@ impl App {
                 self.active_panel_mut().move_cursor(vh as i32, vh);
             }
             KeyCode::Enter if event.modifiers == KeyModifiers::NONE => {
-                if !self.cmdline.is_empty() {
-                    self.execute_command();
-                } else {
+                if self.action_mode() {
                     let entry = self.active_panel().current_entry();
                     if entry.map(|e| e.kind == NodeKind::Dir).unwrap_or(false) {
                         self.active_panel_mut().enter_dir();
                     }
+                } else {
+                    self.execute_command();
                 }
             }
             KeyCode::Esc if event.modifiers == KeyModifiers::NONE && self.show_output => {
@@ -1288,11 +1322,12 @@ impl App {
 
         // CmdLine
         if let Some(cmdline_area) = layout.cmdline {
-            let widget = CmdLineWidget { cs: &cs, prompt: "$ " };
+            let am = self.action_mode();
+            let widget = CmdLineWidget { cs: &cs, prompt: "$ ", active: !am };
             let buf = frame.buffer_mut();
             let cursor_pos = widget.render_with_cursor(cmdline_area, buf, &self.cmdline);
             if let Some(pos) = cursor_pos {
-                if matches!(self.modal, Modal::None) && !self.show_output {
+                if matches!(self.modal, Modal::None) && !self.show_output && !am {
                     frame.set_cursor_position(pos);
                 }
             }
