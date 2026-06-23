@@ -32,8 +32,8 @@ use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupListState, PopupListWidget};
 use crate::ui::dialog::{render_confirm, render_error, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
-use crate::ui::modal_event::{ModalOutcome, PopupOutcome};
-use crate::ui::output_overlay::OutputOverlayWidget;
+use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
+use crate::ui::modal_event::{ModalOutcome, OverlayOutcome, PopupOutcome};
 use crate::ui::panel::{PanelState, PanelWidget};
 
 // ── Mode enums ────────────────────────────────────────────────────────────────
@@ -167,9 +167,6 @@ fn match_key(
     KeyMatch::None
 }
 
-fn event_matches_bindings(bindings: &ActionBindings, event: &KeyEvent) -> bool {
-    bindings.iter().any(|b| matches!(b, KeyBinding::Single(ke) if ke == event))
-}
 
 // ── Popup sessions ────────────────────────────────────────────────────────────
 
@@ -298,7 +295,7 @@ pub struct App {
     history: CommandHistory,
     last_output: Option<String>,
     show_output: bool,
-    output_scroll: u16,
+    overlay: OutputOverlayState,
     modal: Modal,
     pending_chord: Option<KeyEvent>,
     last_click: Option<(Instant, u16, u16)>,
@@ -348,7 +345,7 @@ impl App {
             history: hist,
             last_output: None,
             show_output: false,
-            output_scroll: 0,
+            overlay: OutputOverlayState::new(),
             modal: Modal::None,
             pending_chord: None,
             last_click: None,
@@ -763,12 +760,12 @@ impl App {
                 }
                 self.last_output = Some(combined);
                 self.show_output = true;
-                self.output_scroll = 0;
+                self.overlay = OutputOverlayState::new();
             }
             Err(e) => {
                 self.last_output = Some(format!("Error running command: {}", e));
                 self.show_output = true;
-                self.output_scroll = 0;
+                self.overlay = OutputOverlayState::new();
             }
         }
 
@@ -845,30 +842,10 @@ impl App {
     fn handle_key_event_inner(&mut self, event: KeyEvent) {
         // Output overlay active — handle scroll keys
         if self.show_output {
-            let dismiss = event.code == KeyCode::Esc
-                || event_matches_bindings(&self.config.keybindings.toggle_shell, &event);
-            if dismiss {
-                self.show_output = false;
-                return;
-            }
-            match event.code {
-                KeyCode::Up => {
-                    self.output_scroll = self.output_scroll.saturating_sub(1);
-                    return;
-                }
-                KeyCode::Down => {
-                    self.output_scroll = self.output_scroll.saturating_add(1);
-                    return;
-                }
-                KeyCode::PageUp => {
-                    self.output_scroll = self.output_scroll.saturating_sub(20);
-                    return;
-                }
-                KeyCode::PageDown => {
-                    self.output_scroll = self.output_scroll.saturating_add(20);
-                    return;
-                }
-                _ => {}
+            match self.overlay.handle_key(&event, &self.config.keybindings.toggle_shell) {
+                OverlayOutcome::Dismissed => { self.show_output = false; return; }
+                OverlayOutcome::Consumed => return,
+                OverlayOutcome::Passthrough => {}
             }
         }
 
@@ -1095,9 +1072,6 @@ impl App {
                     self.execute_command();
                 }
             }
-            KeyCode::Esc if event.modifiers == KeyModifiers::NONE && self.show_output => {
-                self.show_output = false;
-            }
             // Bash readline shortcuts
             KeyCode::Char('a') if event.modifiers == KeyModifiers::CONTROL => {
                 self.cmdline.move_home();
@@ -1318,26 +1292,24 @@ impl App {
             if area.contains(pos) {
                 match mouse.kind {
                     MouseEventKind::ScrollUp => {
-                        self.output_scroll = self.output_scroll.saturating_sub(3);
+                        self.overlay.scroll_by(-3);
                         return;
                     }
                     MouseEventKind::ScrollDown => {
-                        self.output_scroll = self.output_scroll.saturating_add(3);
+                        self.overlay.scroll_by(3);
                         return;
                     }
                     MouseEventKind::Down(MouseButton::Left) => {
-                        let inner_x = area.x + 1;
                         let inner_y = area.y + 1;
                         let inner_w = area.width.saturating_sub(2);
-                        let inner_h = area.height.saturating_sub(2);
-                        let scrollbar_col = inner_x + inner_w;
-                        if col == scrollbar_col.saturating_sub(1) && inner_h > 0 {
+                        let inner_h = area.height.saturating_sub(2) as usize;
+                        let scrollbar_col = area.x + 1 + inner_w;
+                        if col == scrollbar_col.saturating_sub(1) {
                             let total_lines = self.last_output.as_deref()
                                 .map(|t| t.lines().count())
                                 .unwrap_or(0);
                             let track_row = row.saturating_sub(inner_y) as usize;
-                            let new_pos = track_row * total_lines / inner_h as usize;
-                            self.output_scroll = new_pos as u16;
+                            self.overlay.scrollbar_click(track_row, inner_h, total_lines);
                         }
                         return;
                     }
@@ -1488,7 +1460,7 @@ impl App {
                 let overlay = OutputOverlayWidget {
                     cs: &cs,
                     text,
-                    scroll: self.output_scroll,
+                    scroll: self.overlay.scroll,
                 };
                 frame.render_widget(overlay, layout.panel_area);
             }

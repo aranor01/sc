@@ -42,6 +42,10 @@ pub enum KeyBinding {
 /// All alternative bindings for one action (any one triggers the action).
 pub type ActionBindings = Vec<KeyBinding>;
 
+pub fn bindings_match_event(bindings: &ActionBindings, event: &KeyEvent) -> bool {
+    bindings.iter().any(|b| matches!(b, KeyBinding::Single(ke) if ke == event))
+}
+
 fn ke(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
     KeyEvent::new(code, mods)
 }

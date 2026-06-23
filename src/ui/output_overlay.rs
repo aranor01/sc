@@ -1,4 +1,6 @@
-use crate::config::ColorScheme;
+use crate::config::{ActionBindings, ColorScheme, bindings_match_event};
+use crate::ui::modal_event::OverlayOutcome;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -11,6 +13,43 @@ use ratatui::{
 };
 
 use super::to_color;
+
+pub struct OutputOverlayState {
+    pub scroll: u16,
+}
+
+impl OutputOverlayState {
+    pub fn new() -> Self {
+        Self { scroll: 0 }
+    }
+
+    pub fn handle_key(&mut self, event: &KeyEvent, dismiss_bindings: &ActionBindings) -> OverlayOutcome {
+        if event.code == KeyCode::Esc || bindings_match_event(dismiss_bindings, event) {
+            return OverlayOutcome::Dismissed;
+        }
+        match event.code {
+            KeyCode::Up => { self.scroll = self.scroll.saturating_sub(1); OverlayOutcome::Consumed }
+            KeyCode::Down => { self.scroll = self.scroll.saturating_add(1); OverlayOutcome::Consumed }
+            KeyCode::PageUp => { self.scroll = self.scroll.saturating_sub(20); OverlayOutcome::Consumed }
+            KeyCode::PageDown => { self.scroll = self.scroll.saturating_add(20); OverlayOutcome::Consumed }
+            _ => OverlayOutcome::Passthrough,
+        }
+    }
+
+    pub fn scroll_by(&mut self, delta: i16) {
+        if delta < 0 {
+            self.scroll = self.scroll.saturating_sub((-delta) as u16);
+        } else {
+            self.scroll = self.scroll.saturating_add(delta as u16);
+        }
+    }
+
+    pub fn scrollbar_click(&mut self, track_row: usize, inner_h: usize, total_lines: usize) {
+        if let Some(pos) = (track_row * total_lines).checked_div(inner_h) {
+            self.scroll = pos as u16;
+        }
+    }
+}
 
 pub struct OutputOverlayWidget<'a> {
     pub cs: &'a ColorScheme,

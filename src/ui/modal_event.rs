@@ -5,6 +5,15 @@ pub enum ModalOutcome {
     Execute(String),
 }
 
+pub enum OverlayOutcome {
+    /// Overlay should close
+    Dismissed,
+    /// Key was consumed (scroll etc.)
+    Consumed,
+    /// Key was not handled; let it fall through to normal handling
+    Passthrough,
+}
+
 pub enum PopupOutcome {
     /// Key consumed by the popup (navigation etc.)
     Consumed,
