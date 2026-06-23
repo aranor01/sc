@@ -913,20 +913,7 @@ impl App {
                             }
                         }
                     }
-                    _ => {
-                        // Shortcut key: find the first menu item whose `keys` matches
-                        let cmd = if let Modal::UserMenu(ref s) = self.modal {
-                            s.items.iter()
-                                .find(|item| menu_item_matches_key(item, None, &event))
-                                .map(|item| item.command.clone())
-                        } else {
-                            None
-                        };
-                        if let Some(cmd) = cmd {
-                            self.modal = Modal::None;
-                            self.execute_menu_item(cmd);
-                        }
-                    }
+                    _ => {}
                 }
                 return;
             }
