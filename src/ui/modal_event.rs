@@ -14,6 +14,15 @@ pub enum OverlayOutcome {
     Passthrough,
 }
 
+pub enum PanelOutcome {
+    /// Navigation key was handled
+    Consumed,
+    /// Enter in non-action-mode: caller should execute the command line
+    ExecuteCommand,
+    /// Key is not a panel navigation key; caller should handle it
+    Passthrough,
+}
+
 pub enum PopupOutcome {
     /// Key consumed by the popup (navigation etc.)
     Consumed,

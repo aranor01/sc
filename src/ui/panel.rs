@@ -1,5 +1,7 @@
 use crate::config::ColorScheme;
 use crate::provider::{NodeEntry, NodeKind, NodePath, TreeProvider};
+use crate::ui::modal_event::PanelOutcome;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use chrono::{DateTime, Local};
 use ratatui::{
     buffer::Buffer,
@@ -116,6 +118,28 @@ impl PanelState {
             self.scroll = self.cursor;
         } else if self.cursor >= self.scroll + vh {
             self.scroll = self.cursor + 1 - vh;
+        }
+    }
+
+    pub fn handle_key(&mut self, event: &KeyEvent, visible_height: usize, action_mode: bool) -> PanelOutcome {
+        if event.modifiers != KeyModifiers::NONE {
+            return PanelOutcome::Passthrough;
+        }
+        match event.code {
+            KeyCode::Up => { self.move_cursor(-1, visible_height); PanelOutcome::Consumed }
+            KeyCode::Down => { self.move_cursor(1, visible_height); PanelOutcome::Consumed }
+            KeyCode::PageUp => { self.move_cursor(-(visible_height as i32), visible_height); PanelOutcome::Consumed }
+            KeyCode::PageDown => { self.move_cursor(visible_height as i32, visible_height); PanelOutcome::Consumed }
+            KeyCode::Home if action_mode => { self.move_cursor(i32::MIN, visible_height); PanelOutcome::Consumed }
+            KeyCode::End if action_mode => { self.move_cursor(i32::MAX / 2, visible_height); PanelOutcome::Consumed }
+            KeyCode::Enter if action_mode => {
+                if self.current_entry().map(|e| e.kind == NodeKind::Dir).unwrap_or(false) {
+                    self.enter_dir();
+                }
+                PanelOutcome::Consumed
+            }
+            KeyCode::Enter => PanelOutcome::ExecuteCommand,
+            _ => PanelOutcome::Passthrough,
         }
     }
 

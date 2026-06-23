@@ -33,7 +33,7 @@ use crate::ui::popup_list::{PopupListState, PopupListWidget};
 use crate::ui::dialog::{render_confirm, render_error, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
-use crate::ui::modal_event::{ModalOutcome, OverlayOutcome, PopupOutcome};
+use crate::ui::modal_event::{ModalOutcome, OverlayOutcome, PanelOutcome, PopupOutcome};
 use crate::ui::panel::{PanelState, PanelWidget};
 
 // ── Mode enums ────────────────────────────────────────────────────────────────
@@ -1014,7 +1014,16 @@ impl App {
             }
         }
 
-        // Raw key handling
+        // Panel navigation keys are always intercepted first.
+        let am = self.action_mode();
+        let vh = self.active_vh();
+        match self.active_panel_mut().handle_key(&event, vh, am) {
+            PanelOutcome::Consumed => return,
+            PanelOutcome::ExecuteCommand => { self.execute_command(); return; }
+            PanelOutcome::Passthrough => {}
+        }
+
+        // Cmdline raw key handling
         match event.code {
             KeyCode::Char(c) if event.modifiers == KeyModifiers::NONE
                 || event.modifiers == KeyModifiers::SHIFT =>
@@ -1031,46 +1040,10 @@ impl App {
                 self.cmdline.move_right();
             }
             KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
-                if self.action_mode() {
-                    let vh = self.active_vh();
-                    self.active_panel_mut().move_cursor(i32::MIN, vh);
-                } else {
-                    self.cmdline.move_home();
-                }
+                self.cmdline.move_home();
             }
             KeyCode::End if event.modifiers == KeyModifiers::NONE => {
-                if self.action_mode() {
-                    let vh = self.active_vh();
-                    self.active_panel_mut().move_cursor(i32::MAX / 2, vh);
-                } else {
-                    self.cmdline.move_end();
-                }
-            }
-            KeyCode::Up if event.modifiers == KeyModifiers::NONE => {
-                let vh = self.active_vh();
-                self.active_panel_mut().move_cursor(-1, vh);
-            }
-            KeyCode::Down if event.modifiers == KeyModifiers::NONE => {
-                let vh = self.active_vh();
-                self.active_panel_mut().move_cursor(1, vh);
-            }
-            KeyCode::PageUp if event.modifiers == KeyModifiers::NONE => {
-                let vh = self.active_vh();
-                self.active_panel_mut().move_cursor(-(vh as i32), vh);
-            }
-            KeyCode::PageDown if event.modifiers == KeyModifiers::NONE => {
-                let vh = self.active_vh();
-                self.active_panel_mut().move_cursor(vh as i32, vh);
-            }
-            KeyCode::Enter if event.modifiers == KeyModifiers::NONE => {
-                if self.action_mode() {
-                    let entry = self.active_panel().current_entry();
-                    if entry.map(|e| e.kind == NodeKind::Dir).unwrap_or(false) {
-                        self.active_panel_mut().enter_dir();
-                    }
-                } else {
-                    self.execute_command();
-                }
+                self.cmdline.move_end();
             }
             // Bash readline shortcuts
             KeyCode::Char('a') if event.modifiers == KeyModifiers::CONTROL => {
