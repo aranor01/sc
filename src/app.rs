@@ -29,6 +29,7 @@ use crate::state::{AppState, Orientation};
 use crate::ui::button::Button;
 use crate::ui::button_bar::ButtonBarWidget;
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
+use crate::ui::completion::{CompletionPopup, CompletionWidget};
 use crate::ui::dialog::{render_confirm, render_error, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::OutputOverlayWidget;
@@ -294,6 +295,8 @@ pub struct App {
     // True when cmdline is empty OR user pressed ESC to give panels focus temporarily.
     // Cleared after the first keystroke (if cmdline is non-empty).
     explicit_action_mode: bool,
+    /// Active completion popup, if any.
+    completion: Option<CompletionPopup>,
 }
 
 impl App {
@@ -337,6 +340,7 @@ impl App {
             should_quit: false,
             mouse,
             explicit_action_mode: false,
+            completion: None,
             config,
         }
     }
@@ -569,42 +573,84 @@ impl App {
                 }
             }
             Action::CmdlineComplete => {
-                self.run_completion();
+                if !self.cmdline.text.trim().is_empty() {
+                    let candidates = self.collect_candidates();
+                    let word_start = last_word_start(&self.cmdline.text);
+                    match candidates.len() {
+                        0 => {}
+                        1 => {
+                            let c = candidates[0].clone();
+                            self.apply_word_replacement(word_start, &c);
+                        }
+                        _ => {
+                            self.completion = Some(CompletionPopup::new(candidates, word_start));
+                        }
+                    }
+                }
             }
         }
     }
 
-    fn run_completion(&mut self) {
-        let script = find_complete_script();
-        let Some(script) = script else { return };
-        let cmdline = self.cmdline.text.clone();
-        let cursor = self.cmdline.cursor;
-        if let Ok(out) = std::process::Command::new("bash")
+    /// Call the completion script with the current cmdline text and return all candidates.
+    fn collect_candidates(&self) -> Vec<String> {
+        if self.cmdline.text.trim().is_empty() {
+            return vec![];
+        }
+        let Some(script) = find_complete_script() else { return vec![]; };
+        match std::process::Command::new("bash")
             .arg(&script)
-            .arg(&cmdline)
-            .arg(cursor.to_string())
+            .arg(&self.cmdline.text)
             .output()
         {
-            if out.status.success() {
-                let completions: Vec<&str> = std::str::from_utf8(&out.stdout)
-                    .unwrap_or("")
-                    .lines()
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if completions.len() == 1 {
-                    // Replace word under cursor
-                    let word_start = cmdline[..cursor].rfind(' ').map(|i| i + 1).unwrap_or(0);
-                    let mut new_text = cmdline[..word_start].to_string();
-                    new_text.push_str(completions[0]);
-                    let new_cursor = new_text.len();
-                    new_text.push_str(&cmdline[cursor..]);
-                    self.cmdline.text = new_text;
-                    self.cmdline.cursor = new_cursor;
-                } else if completions.len() > 1 {
-                    let output = completions.join("\n");
-                    self.last_output = Some(output);
-                    self.show_output = true;
-                    self.output_scroll = 0;
+            Ok(out) => std::str::from_utf8(&out.stdout)
+                .unwrap_or("")
+                .lines()
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
+            Err(_) => vec![],
+        }
+    }
+
+    /// Replace the last word in the cmdline with `candidate`.
+    fn apply_word_replacement(&mut self, word_start: usize, candidate: &str) {
+        self.cmdline.text.truncate(word_start);
+        self.cmdline.cursor = word_start;
+        self.cmdline.insert_str(candidate);
+    }
+
+    /// Apply the currently selected popup candidate and close the popup.
+    fn apply_completion(&mut self) {
+        if let Some(popup) = self.completion.take() {
+            if let Some(candidate) = popup.candidates.get(popup.selected).cloned() {
+                self.apply_word_replacement(popup.word_start, &candidate);
+            }
+        }
+    }
+
+    /// Re-run completion after a cmdline edit while the popup is open.
+    /// Keeps the popup open (updating candidates) or closes it as needed.
+    fn refresh_completion(&mut self) {
+        if self.cmdline.text.trim().is_empty() {
+            self.completion = None;
+            return;
+        }
+        let candidates = self.collect_candidates();
+        let word_start = last_word_start(&self.cmdline.text);
+        match candidates.len() {
+            0 => {
+                self.completion = None;
+            }
+            1 => {
+                let candidate = candidates[0].clone();
+                self.apply_word_replacement(word_start, &candidate);
+                self.completion = None;
+            }
+            _ => {
+                if let Some(popup) = &mut self.completion {
+                    popup.candidates = candidates;
+                    popup.word_start = word_start;
+                    popup.selected = 0;
                 }
             }
         }
@@ -822,6 +868,73 @@ impl App {
         }
 
         // Chord handling
+        // Completion popup: intercept keys while a candidate list is visible.
+        // The `_` arm closes the popup and falls through to normal key handling.
+        if self.completion.is_some() {
+            match event.code {
+                KeyCode::Enter | KeyCode::Tab if event.modifiers == KeyModifiers::NONE => {
+                    self.apply_completion();
+                    return;
+                }
+                KeyCode::Esc if event.modifiers == KeyModifiers::NONE => {
+                    self.completion = None;
+                    return;
+                }
+                KeyCode::Up if event.modifiers == KeyModifiers::NONE => {
+                    self.completion.as_mut().unwrap().move_up();
+                    return;
+                }
+                KeyCode::Down if event.modifiers == KeyModifiers::NONE => {
+                    self.completion.as_mut().unwrap().move_down();
+                    return;
+                }
+                KeyCode::Home if event.modifiers == KeyModifiers::NONE => {
+                    self.completion.as_mut().unwrap().move_top();
+                    return;
+                }
+                KeyCode::End if event.modifiers == KeyModifiers::NONE => {
+                    self.completion.as_mut().unwrap().move_bottom();
+                    return;
+                }
+                KeyCode::PageUp if event.modifiers == KeyModifiers::NONE => {
+                    self.completion.as_mut().unwrap().page_up(10);
+                    return;
+                }
+                KeyCode::PageDown if event.modifiers == KeyModifiers::NONE => {
+                    self.completion.as_mut().unwrap().page_down(10);
+                    return;
+                }
+                KeyCode::Char(c)
+                    if event.modifiers == KeyModifiers::NONE
+                        || event.modifiers == KeyModifiers::SHIFT =>
+                {
+                    self.cmdline.insert_char(c);
+                    self.refresh_completion();
+                    return;
+                }
+                KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
+                    let last_was_space = self.cmdline.text.ends_with(' ');
+                    self.cmdline.backspace();
+                    if last_was_space || self.cmdline.text.trim().is_empty() {
+                        self.completion = None;
+                    } else {
+                        // After backspace inside a word: check if the word was wiped
+                        let ws = last_word_start(&self.cmdline.text);
+                        if ws >= self.cmdline.text.len() {
+                            self.completion = None;
+                        } else {
+                            self.refresh_completion();
+                        }
+                    }
+                    return;
+                }
+                _ => {
+                    // Any other key: close popup, fall through to normal handling
+                    self.completion = None;
+                }
+            }
+        }
+
         // ESC: toggle explicit action mode when cmdline has text (one-shot panel focus).
         if event.code == KeyCode::Esc
             && event.modifiers == KeyModifiers::NONE
@@ -1342,6 +1455,24 @@ impl App {
             }
         }
 
+        // Completion popup (floats above panels, shown when no modal/overlay active)
+        if let Some(popup) = self.completion.as_ref() {
+            if matches!(self.modal, Modal::None) && !self.show_output {
+                if let Some(cmdline_area) = layout.cmdline {
+                    let width = cmdline_area.width as usize;
+                    if width > 0 {
+                        let anchor_byte = word_anchor_byte(&self.cmdline.text);
+                        let anchor_chars = self.cmdline.text[..anchor_byte].chars().count();
+                        let total_col = 2 + anchor_chars; // 2 = len("$ ")
+                        let anchor_x = cmdline_area.x + (total_col % width) as u16;
+                        let anchor_y = cmdline_area.y + (total_col / width) as u16;
+                        CompletionWidget { cs: &cs, popup }
+                            .render_at(area, frame.buffer_mut(), anchor_x, anchor_y);
+                    }
+                }
+            }
+        }
+
         // Button bar
         if let Some(bb_area) = layout.button_bar {
             self.button_bar_area.set(bb_area);
@@ -1427,10 +1558,14 @@ impl App {
 }
 
 fn find_complete_script() -> Option<PathBuf> {
-    let dev = Path::new("scripts/sc-complete");
-    if dev.exists() {
-        return Some(dev.to_path_buf());
+    // Development build: look for scripts/sc-complete or scripts/complete.sh under CWD
+    for name in &["scripts/sc-complete", "scripts/complete.sh"] {
+        let p = Path::new(name);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
     }
+    // Installed: look next to the binary
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let p = dir.join("sc-complete");
@@ -1440,6 +1575,29 @@ fn find_complete_script() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Byte offset of the start of the last word in `text`.
+/// Returns `text.len()` when the text ends with a space (empty current word).
+fn last_word_start(text: &str) -> usize {
+    if text.ends_with(' ') {
+        text.len()
+    } else {
+        text.rfind(' ').map(|i| i + 1).unwrap_or(0)
+    }
+}
+
+/// Byte offset used to anchor the completion popup:
+/// - Start of the last word when text ends with a non-space character.
+/// - Position of the last character (the space) when text ends with a space.
+fn word_anchor_byte(text: &str) -> usize {
+    if text.is_empty() {
+        0
+    } else if text.ends_with(' ') {
+        text.len() - 1 // ' '.len_utf8() == 1
+    } else {
+        last_word_start(text)
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
