@@ -162,6 +162,8 @@ pub struct KeyBindings {
     pub sync_panels: ActionBindings,
     pub rename: ActionBindings,
     pub sort_panel: ActionBindings,
+    pub quicksearch: ActionBindings,
+    pub quicksearch_alt: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -217,6 +219,8 @@ impl Default for KeyBindings {
             sync_panels: vec![KeyBinding::Single(ke(Char('i'), a))],
             rename: vec![KeyBinding::Single(ke(F(6), M::SHIFT))],
             sort_panel: vec![KeyBinding::Single(ke(Char('s'), c))],
+            quicksearch: vec![KeyBinding::Single(ke(Char('/'), n))],
+            quicksearch_alt: vec![KeyBinding::Single(ke(Char('s'), a))],
         }
     }
 }
@@ -404,6 +408,8 @@ impl Config {
                     "sync_panels" => cfg.keybindings.sync_panels = bindings,
                     "rename" => cfg.keybindings.rename = bindings,
                     "sort_panel" => cfg.keybindings.sort_panel = bindings,
+                    "quicksearch" => cfg.keybindings.quicksearch = bindings,
+                    "quicksearch_alt" => cfg.keybindings.quicksearch_alt = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }

@@ -130,6 +130,8 @@ enum Action {
     SyncPanels,
     Rename,
     SortPanel,
+    Quicksearch,
+    QuicksearchAlt,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -325,6 +327,7 @@ pub struct App {
     explicit_action_mode: bool,
     completion: Option<CompletionSession>,
     reverse_search: Option<ReverseSearchSession>,
+    quicksearch: Option<String>,
 }
 
 impl App {
@@ -378,6 +381,7 @@ impl App {
             explicit_action_mode: false,
             completion: None,
             reverse_search: None,
+            quicksearch: None,
             config,
         };
         // Restore saved sort state and re-sort panels
@@ -463,6 +467,8 @@ impl App {
             (&kb.sync_panels, Action::SyncPanels),
             (&kb.rename, Action::Rename),
             (&kb.sort_panel, Action::SortPanel),
+            (&kb.quicksearch, Action::Quicksearch),
+            (&kb.quicksearch_alt, Action::QuicksearchAlt),
         ]
     }
 
@@ -700,6 +706,24 @@ impl App {
                 let popup = PopupListState { items: Self::sort_popup_items(), selected };
                 self.modal = Modal::SortPopup(popup, self.active);
             }
+            Action::Quicksearch | Action::QuicksearchAlt => {
+                self.quicksearch = Some(String::new());
+            }
+        }
+    }
+
+    fn quicksearch_jump(&mut self, pattern: &str) {
+        if pattern.is_empty() {
+            return;
+        }
+        let lc = pattern.to_lowercase();
+        let found = self.active_panel().entries.iter().position(|e| {
+            e.name != ".." && e.name.to_lowercase().starts_with(&lc)
+        });
+        if let Some(idx) = found {
+            let current = self.active_panel().cursor as i32;
+            let vh = self.active_vh();
+            self.active_panel_mut().move_cursor(idx as i32 - current, vh);
         }
     }
 
@@ -1095,6 +1119,42 @@ impl App {
                 }
                 PopupOutcome::Passthrough => { self.reverse_search = None; }
             }
+        }
+
+        // Quicksearch: intercept keys while active
+        if self.quicksearch.is_some() {
+            match event.code {
+                // Navigation keys: dismiss then execute
+                KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+                | KeyCode::Home | KeyCode::End => {
+                    self.quicksearch = None;
+                    let am = self.action_mode();
+                    let vh = self.active_vh();
+                    self.active_panel_mut().handle_key(&event, vh, am);
+                }
+                KeyCode::Enter | KeyCode::Esc => {
+                    self.quicksearch = None;
+                }
+                KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
+                    if let Some(ref mut qs) = self.quicksearch {
+                        qs.pop();
+                        let pattern = qs.clone();
+                        self.quicksearch_jump(&pattern);
+                    }
+                }
+                KeyCode::Char(c)
+                    if event.modifiers == KeyModifiers::NONE
+                        || event.modifiers == KeyModifiers::SHIFT =>
+                {
+                    if let Some(ref mut qs) = self.quicksearch {
+                        qs.push(c);
+                        let pattern = qs.clone();
+                        self.quicksearch_jump(&pattern);
+                    }
+                }
+                _ => { self.quicksearch = None; }
+            }
+            return;
         }
 
         // ESC: toggle explicit action mode when cmdline has text (one-shot panel focus).
@@ -1663,7 +1723,13 @@ impl App {
 
         // Build the cmdline widget early so we can query needed_lines() before layout.
         let am = self.action_mode();
-        let prompt = if self.reverse_search.is_some() { "(reverse-i-search): " } else { "$ " };
+        let prompt = if self.reverse_search.is_some() {
+            "(reverse-i-search): "
+        } else if self.quicksearch.is_some() {
+            "Search: "
+        } else {
+            "$ "
+        };
         let cmdline_widget = CmdLineWidget { cs: &cs, prompt, active: !am };
         let cmdline_height = if self.show_cmdline {
             cmdline_widget.needed_lines(&self.cmdline, area.width)
@@ -1721,9 +1787,22 @@ impl App {
         // CmdLine
         if let Some(cmdline_area) = layout.cmdline {
             let buf = frame.buffer_mut();
-            let cursor_pos = cmdline_widget.render_with_cursor(cmdline_area, buf, &self.cmdline);
+            // When quicksearch is active, show the search pattern instead of cmdline text
+            let qs_state;
+            let render_state = if let Some(ref pattern) = self.quicksearch {
+                qs_state = {
+                    let mut s = CmdLineState::new();
+                    s.text = pattern.clone();
+                    s.cursor = pattern.len();
+                    s
+                };
+                &qs_state
+            } else {
+                &self.cmdline
+            };
+            let cursor_pos = cmdline_widget.render_with_cursor(cmdline_area, buf, render_state);
             if let Some(pos) = cursor_pos {
-                if matches!(self.modal, Modal::None) && !self.show_output && !am {
+                if matches!(self.modal, Modal::None) && !self.show_output && (!am || self.quicksearch.is_some()) {
                     frame.set_cursor_position(pos);
                 }
             }
