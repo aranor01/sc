@@ -1668,7 +1668,7 @@ impl App {
 
     fn handle_button_bar_click(&mut self, pos: Position) {
         let bb_area = self.button_bar_area.get();
-        if let Some(n) = ButtonBarWidget::button_at(&self.config.keybindings, bb_area, pos) {
+        if let Some(n) = ButtonBarWidget::button_at(&self.config.keybindings, &self.config.menu, bb_area, pos) {
             self.handle_key_event(KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE));
         }
     }
@@ -2144,7 +2144,7 @@ impl App {
         if let Some(bb_area) = layout.button_bar {
             self.button_bar_area.set(bb_area);
             frame.render_widget(
-                ButtonBarWidget { cs: &cs, kb: &self.config.keybindings, press },
+                ButtonBarWidget { cs: &cs, kb: &self.config.keybindings, menu: &self.config.menu, press },
                 bb_area,
             );
         }

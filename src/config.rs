@@ -55,7 +55,10 @@ fn parse_key_event(s: &str) -> Result<KeyEvent> {
     let mut mods = KeyModifiers::NONE;
 
     loop {
-        if remaining.starts_with("C-") {
+        if remaining.starts_with("Ctrl-") {
+            mods |= KeyModifiers::CONTROL;
+            remaining = &remaining[5..];
+        } else if remaining.starts_with("C-") {
             mods |= KeyModifiers::CONTROL;
             remaining = &remaining[2..];
         } else if remaining.starts_with("Alt-") {
@@ -64,6 +67,9 @@ fn parse_key_event(s: &str) -> Result<KeyEvent> {
         } else if remaining.starts_with("A-") {
             mods |= KeyModifiers::ALT;
             remaining = &remaining[2..];
+        } else if remaining.starts_with("Shift-") {
+            mods |= KeyModifiers::SHIFT;
+            remaining = &remaining[6..];
         } else if remaining.starts_with("S-") {
             mods |= KeyModifiers::SHIFT;
             remaining = &remaining[2..];
@@ -115,6 +121,35 @@ pub fn parse_key_binding(s: &str) -> Result<KeyBinding> {
     Ok(KeyBinding::Single(
         parse_key_event(s).with_context(|| format!("parsing key {:?}", s))?,
     ))
+}
+
+/// Format a KeyEvent into a human-readable label like "F5", "Ctrl-Alt-F5", "C-s".
+pub fn format_key(event: &KeyEvent) -> String {
+    let mut s = String::new();
+    if event.modifiers.contains(KeyModifiers::CONTROL) { s.push_str("C-"); }
+    if event.modifiers.contains(KeyModifiers::ALT)     { s.push_str("A-"); }
+    if event.modifiers.contains(KeyModifiers::SHIFT)   { s.push_str("S-"); }
+    let code = match event.code {
+        KeyCode::F(n) => format!("F{n}"),
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::Backspace => "BS".to_string(),
+        KeyCode::Delete => "Del".to_string(),
+        KeyCode::Insert => "Ins".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "PgUp".to_string(),
+        KeyCode::PageDown => "PgDn".to_string(),
+        KeyCode::Up => "Up".to_string(),
+        KeyCode::Down => "Dn".to_string(),
+        KeyCode::Left => "Left".to_string(),
+        KeyCode::Right => "Rght".to_string(),
+        _ => "?".to_string(),
+    };
+    s.push_str(&code);
+    s
 }
 
 fn parse_action_bindings(v: &serde_json::Value) -> Result<ActionBindings> {
@@ -249,6 +284,8 @@ pub struct MenuItem {
     pub command: String,
     #[serde(default)]
     pub keys: Option<String>,
+    #[serde(default)]
+    pub add_to_bar: bool,
 }
 
 // ── ColorScheme ───────────────────────────────────────────────────────────────
