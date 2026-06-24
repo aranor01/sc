@@ -133,6 +133,8 @@ enum Action {
     Quicksearch,
     QuicksearchAlt,
     ToggleHidden,
+    BookmarkOpen,
+    BookmarkAdd,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -195,6 +197,7 @@ enum Modal {
     Error(String),
     InputDialog(InputDialogState),
     SortPopup(PopupListState, Side),
+    BookmarkList(PopupListState),
 }
 
 // ── ModalAreas ────────────────────────────────────────────────────────────────
@@ -206,6 +209,7 @@ enum ModalAreas {
     Error(ErrorButtonArea),
     InputDialog(InputDialogAreas, Option<Position>),
     SortPopup(Rect, usize),
+    BookmarkList(Rect, usize),
 }
 
 // ── AppLayout ─────────────────────────────────────────────────────────────────
@@ -319,6 +323,9 @@ pub struct App {
     rev_search_popup_offset: Cell<usize>,
     sort_popup_area: Cell<Rect>,
     sort_popup_offset: Cell<usize>,
+    bookmark_popup_area: Cell<Rect>,
+    bookmark_popup_offset: Cell<usize>,
+    bookmarks: Vec<String>,
     // Pending left-button press for down+up click detection
     mouse_pressed: Option<Position>,
     should_quit: bool,
@@ -376,6 +383,9 @@ impl App {
             rev_search_popup_offset: Cell::new(0),
             sort_popup_area: Cell::new(Rect::default()),
             sort_popup_offset: Cell::new(0),
+            bookmark_popup_area: Cell::new(Rect::default()),
+            bookmark_popup_offset: Cell::new(0),
+            bookmarks: crate::bookmarks::load(),
             mouse_pressed: None,
             should_quit: false,
             mouse,
@@ -473,6 +483,8 @@ impl App {
             (&kb.quicksearch, Action::Quicksearch),
             (&kb.quicksearch_alt, Action::QuicksearchAlt),
             (&kb.toggle_hidden, Action::ToggleHidden),
+            (&kb.bookmark_open, Action::BookmarkOpen),
+            (&kb.bookmark_add, Action::BookmarkAdd),
         ]
     }
 
@@ -718,7 +730,37 @@ impl App {
                 panel.show_hidden = !panel.show_hidden;
                 panel.refresh();
             }
+            Action::BookmarkOpen => {
+                if self.bookmarks.is_empty() {
+                    self.modal = Modal::Error("No bookmarks saved. Use C-b to add one.".to_string());
+                } else {
+                    let popup = PopupListState::new(self.bookmarks.clone());
+                    self.modal = Modal::BookmarkList(popup);
+                }
+            }
+            Action::BookmarkAdd => {
+                let path = self.active_panel().path.0.clone();
+                if !self.bookmarks.contains(&path) {
+                    self.bookmarks.push(path);
+                    let _ = crate::bookmarks::save(&self.bookmarks);
+                }
+            }
         }
+    }
+
+    fn navigate_to_bookmark(&mut self, path: &str) {
+        if !std::path::Path::new(path).exists() {
+            self.bookmarks.retain(|b| b != path);
+            let _ = crate::bookmarks::save(&self.bookmarks);
+            self.modal = Modal::Error(format!("Path no longer exists: {path}"));
+            return;
+        }
+        let panel = self.active_panel_mut();
+        panel.path = crate::provider::NodePath(path.to_string());
+        panel.cursor = 0;
+        panel.scroll = 0;
+        panel.tagged.clear();
+        panel.refresh();
     }
 
     fn quicksearch_jump(&mut self, pattern: &str) {
@@ -1046,6 +1088,21 @@ impl App {
                 }
                 return;
             }
+            Modal::BookmarkList(_) => {
+                let vh = self.bookmark_popup_area.get().height.saturating_sub(2) as usize;
+                let outcome = if let Modal::BookmarkList(ref mut s) = self.modal {
+                    s.handle_key(&event, vh)
+                } else { PopupOutcome::Dismissed };
+                match outcome {
+                    PopupOutcome::Accept(path) => {
+                        self.modal = Modal::None;
+                        self.navigate_to_bookmark(&path);
+                    }
+                    PopupOutcome::Dismissed => self.modal = Modal::None,
+                    _ => {}
+                }
+                return;
+            }
             Modal::SortPopup(_, _) => {
                 let vh = self.sort_popup_area.get().height.saturating_sub(2) as usize;
                 let outcome = if let Modal::SortPopup(ref mut s, _) = self.modal {
@@ -1338,6 +1395,29 @@ impl App {
                     self.modal = Modal::None;
                 }
             }
+            Modal::BookmarkList(_) => {
+                let area = self.bookmark_popup_area.get();
+                let offset = self.bookmark_popup_offset.get();
+                if area.width > 0 {
+                    let inner_y = area.y + 1;
+                    let inner_bottom = area.y + area.height.saturating_sub(1);
+                    if down == Some(up) && area.contains(up) && up.y >= inner_y && up.y < inner_bottom {
+                        let idx = offset + (up.y - inner_y) as usize;
+                        if let Modal::BookmarkList(ref mut s) = self.modal {
+                            if idx < s.items.len() { s.selected = idx; }
+                        }
+                        let path = if let Modal::BookmarkList(ref s) = self.modal {
+                            s.selected_item().map(String::from)
+                        } else { None };
+                        self.modal = Modal::None;
+                        if let Some(p) = path {
+                            self.navigate_to_bookmark(&p);
+                        }
+                    } else if !area.contains(up) {
+                        self.modal = Modal::None;
+                    }
+                }
+            }
             Modal::SortPopup(_, _) => {
                 let area = self.sort_popup_area.get();
                 let offset = self.sort_popup_offset.get();
@@ -1553,6 +1633,7 @@ impl App {
                     match &mut self.modal {
                         Modal::UserMenu(s) => s.move_up(),
                         Modal::SortPopup(s, _) => s.move_up(),
+                        Modal::BookmarkList(s) => s.move_up(),
                         _ => {}
                     }
                 }
@@ -1560,6 +1641,7 @@ impl App {
                     match &mut self.modal {
                         Modal::UserMenu(s) => s.move_down(),
                         Modal::SortPopup(s, _) => s.move_down(),
+                        Modal::BookmarkList(s) => s.move_down(),
                         _ => {}
                     }
                 }
@@ -1897,6 +1979,18 @@ impl App {
                     .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
                 ModalAreas::SortPopup(r, new_offset)
             }
+            Modal::BookmarkList(state) => {
+                let panel_area = match self.active {
+                    Side::Left => self.left_area.get(),
+                    Side::Right => self.right_area.get(),
+                };
+                let anchor_x = panel_area.x + 2;
+                let anchor_y = panel_area.y + panel_area.height.saturating_sub(1);
+                let offset = self.bookmark_popup_offset.get();
+                let (r, new_offset) = PopupListWidget { cs: &cs, state }
+                    .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
+                ModalAreas::BookmarkList(r, new_offset)
+            }
         };
         // Borrow of self.modal released; store areas for mouse hit-testing
         match modal_areas {
@@ -1921,6 +2015,10 @@ impl App {
             ModalAreas::SortPopup(r, offset) => {
                 self.sort_popup_area.set(r);
                 self.sort_popup_offset.set(offset);
+            }
+            ModalAreas::BookmarkList(r, offset) => {
+                self.bookmark_popup_area.set(r);
+                self.bookmark_popup_offset.set(offset);
             }
         }
         if let Some(pos) = input_dialog_cursor {

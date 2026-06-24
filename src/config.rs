@@ -165,6 +165,8 @@ pub struct KeyBindings {
     pub quicksearch: ActionBindings,
     pub quicksearch_alt: ActionBindings,
     pub toggle_hidden: ActionBindings,
+    pub bookmark_open: ActionBindings,
+    pub bookmark_add: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -223,6 +225,8 @@ impl Default for KeyBindings {
             quicksearch: vec![KeyBinding::Single(ke(Char('/'), n))],
             quicksearch_alt: vec![KeyBinding::Single(ke(Char('s'), a))],
             toggle_hidden: vec![KeyBinding::Single(ke(Char('.'), a))],
+            bookmark_open: vec![KeyBinding::Single(ke(Char('\\'), c))],
+            bookmark_add: vec![KeyBinding::Single(ke(Char('b'), c))],
         }
     }
 }
@@ -413,6 +417,8 @@ impl Config {
                     "quicksearch" => cfg.keybindings.quicksearch = bindings,
                     "quicksearch_alt" => cfg.keybindings.quicksearch_alt = bindings,
                     "toggle_hidden" => cfg.keybindings.toggle_hidden = bindings,
+                    "bookmark_open" => cfg.keybindings.bookmark_open = bindings,
+                    "bookmark_add" => cfg.keybindings.bookmark_add = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }

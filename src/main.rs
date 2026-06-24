@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod app;
+mod bookmarks;
 mod config;
 mod history;
 mod macros;
