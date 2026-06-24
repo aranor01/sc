@@ -98,7 +98,21 @@ impl Subshell {
         enable_raw_mode()?;
 
         let master = self.master_fd;
-        let result = passthrough_loop(master);
+        let result = passthrough_loop(master, false);
+
+        disable_raw_mode()?;
+        result
+    }
+
+    /// Like `start_passthrough`, but also exits automatically when the shell
+    /// sentinel prompt is detected in PTY output (i.e. the command has finished).
+    pub fn start_passthrough_until_prompt(&self) -> Result<()> {
+        use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+        enable_raw_mode()?;
+
+        let master = self.master_fd;
+        let result = passthrough_loop(master, true);
 
         disable_raw_mode()?;
         result
@@ -108,6 +122,12 @@ impl Subshell {
     pub fn sync_cwd(&self, path: &Path) {
         let cmd = format!("cd {}", shell_escape(path.to_string_lossy().as_ref()));
         let _ = self.run_command(&cmd);
+    }
+
+    /// Send a line to the PTY without waiting for the sentinel prompt.
+    /// Use this before entering passthrough for interactive commands.
+    pub fn send_line(&self, line: &str) -> Result<()> {
+        write_fd(self.master_fd, format!("{line}\n").as_bytes())
     }
 
     /// Check if the child process is still alive.
@@ -126,6 +146,107 @@ impl Drop for Subshell {
             libc::kill(self.child_pid, libc::SIGTERM);
             libc::close(self.master_fd);
         }
+    }
+}
+
+// ── PTY capture (stateless command execution) ─────────────────────────────────
+
+/// Run `cmd` (via `sh -c`) in a fresh PTY, forwarding the user's terminal
+/// bidirectionally so both interactive and non-interactive programs work.
+/// Returns all raw bytes that came out of the PTY (may include ANSI sequences).
+/// The caller must have already left the alternate screen and disabled raw mode.
+pub fn run_with_pty_capture(cmd: &str, cwd: &str) -> Vec<u8> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    unsafe {
+        let mut master_fd: RawFd = -1;
+        let mut slave_fd: RawFd = -1;
+
+        // Inherit the current terminal dimensions for the new PTY.
+        let mut ws: libc::winsize = std::mem::zeroed();
+        libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws);
+
+        let ret = libc::openpty(
+            &mut master_fd,
+            &mut slave_fd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            if ws.ws_col > 0 { &ws } else { std::ptr::null() },
+        );
+        if ret != 0 {
+            return Vec::new();
+        }
+
+        let child_pid = libc::fork();
+        if child_pid < 0 {
+            libc::close(slave_fd);
+            libc::close(master_fd);
+            return Vec::new();
+        }
+
+        if child_pid == 0 {
+            // Child: set the PTY slave as controlling terminal, then exec.
+            libc::close(master_fd);
+            libc::setsid();
+            libc::ioctl(slave_fd, libc::TIOCSCTTY, 0);
+            libc::dup2(slave_fd, libc::STDIN_FILENO);
+            libc::dup2(slave_fd, libc::STDOUT_FILENO);
+            libc::dup2(slave_fd, libc::STDERR_FILENO);
+            if slave_fd > 2 {
+                libc::close(slave_fd);
+            }
+            if let Ok(c) = std::ffi::CString::new(cwd) {
+                libc::chdir(c.as_ptr());
+            }
+            if let (Ok(sh), Ok(flag), Ok(cmd_c)) = (
+                std::ffi::CString::new("sh"),
+                std::ffi::CString::new("-c"),
+                std::ffi::CString::new(cmd),
+            ) {
+                let argv: [*const libc::c_char; 4] =
+                    [sh.as_ptr(), flag.as_ptr(), cmd_c.as_ptr(), std::ptr::null()];
+                libc::execvp(sh.as_ptr(), argv.as_ptr());
+            }
+            libc::_exit(1);
+        }
+
+        // Parent: close slave, then run passthrough + capture.
+        libc::close(slave_fd);
+        let _ = enable_raw_mode();
+
+        let mut capture: Vec<u8> = Vec::new();
+        let mut buf = [0u8; 4096];
+
+        loop {
+            let mut fds = [
+                libc::pollfd { fd: libc::STDIN_FILENO, events: libc::POLLIN, revents: 0 },
+                libc::pollfd { fd: master_fd,          events: libc::POLLIN, revents: 0 },
+            ];
+            if libc::poll(fds.as_mut_ptr(), 2, -1) < 0 {
+                break;
+            }
+
+            if fds[0].revents & libc::POLLIN != 0 {
+                let n = libc::read(libc::STDIN_FILENO, buf.as_mut_ptr() as *mut _, buf.len());
+                if n <= 0 { break; }
+                libc::write(master_fd, buf.as_ptr() as *const _, n as usize);
+            }
+
+            if fds[1].revents & libc::POLLIN != 0 {
+                let n = libc::read(master_fd, buf.as_mut_ptr() as *mut _, buf.len());
+                if n <= 0 { break; } // EIO when child exits and slave closes
+                libc::write(libc::STDOUT_FILENO, buf.as_ptr() as *const _, n as usize);
+                capture.extend_from_slice(&buf[..n as usize]);
+            } else if fds[1].revents & (libc::POLLHUP | libc::POLLERR) != 0 {
+                break;
+            }
+        }
+
+        let _ = disable_raw_mode();
+        libc::waitpid(child_pid, std::ptr::null_mut(), 0);
+        libc::close(master_fd);
+
+        capture
     }
 }
 
@@ -195,10 +316,14 @@ fn read_until_sentinel(fd: RawFd) -> Result<Vec<u8>> {
 }
 
 /// Passthrough loop: copies stdin→master and master→stdout until Ctrl+O or EOF.
-fn passthrough_loop(master: RawFd) -> Result<()> {
+/// If `exit_on_sentinel` is true, also exits when the shell sentinel prompt is
+/// detected in PTY output (i.e. a non-interactive command has finished).
+fn passthrough_loop(master: RawFd, exit_on_sentinel: bool) -> Result<()> {
     let stdin_fd = libc::STDIN_FILENO;
     let stdout_fd = libc::STDOUT_FILENO;
     let mut buf = [0u8; 4096];
+    // Rolling window to detect the sentinel across read boundaries
+    let mut tail: Vec<u8> = Vec::with_capacity(SENTINEL.len() * 2);
 
     loop {
         let mut fds = [
@@ -222,7 +347,18 @@ fn passthrough_loop(master: RawFd) -> Result<()> {
         if fds[1].revents & libc::POLLIN != 0 {
             let n = unsafe { libc::read(master, buf.as_mut_ptr() as *mut _, buf.len()) };
             if n <= 0 { break; }
-            let _ = unsafe { libc::write(stdout_fd, buf.as_ptr() as *const _, n as usize) };
+            let data = &buf[..n as usize];
+            let _ = unsafe { libc::write(stdout_fd, data.as_ptr() as *const _, data.len()) };
+            if exit_on_sentinel {
+                tail.extend_from_slice(data);
+                // Keep only enough bytes to detect a cross-boundary sentinel
+                if tail.len() > SENTINEL.len() * 2 {
+                    tail.drain(..tail.len() - SENTINEL.len());
+                }
+                if tail.windows(SENTINEL.len()).any(|w| w == SENTINEL.as_bytes()) {
+                    break;
+                }
+            }
         }
     }
     Ok(())

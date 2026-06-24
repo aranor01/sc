@@ -69,7 +69,7 @@ impl UserMenuState {
             KeyCode::PageDown => { self.page_down(visible_height.max(1)); ModalOutcome::Consumed }
             KeyCode::Enter => {
                 if let Some(item) = self.selected() {
-                    ModalOutcome::Execute(item.command.clone())
+                    ModalOutcome::Execute(item.command.clone(), item.interactive)
                 } else {
                     ModalOutcome::Consumed
                 }

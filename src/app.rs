@@ -350,10 +350,26 @@ pub struct App {
     reverse_search: Option<ReverseSearchSession>,
     quicksearch: Option<String>,
     shell_mode: ShellMode,
+    needs_full_redraw: bool,
 }
 
 fn shell_escape_path(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Strip ANSI/VT100 escape sequences and bare carriage returns from PTY output
+/// so it can be displayed cleanly in the output overlay.
+fn strip_ansi(bytes: &[u8]) -> String {
+    let s = String::from_utf8_lossy(bytes);
+    // PTY converts \n → \r\n; remove the bare \r.
+    let s = s.replace('\r', "");
+    // Remove CSI sequences (ESC [ ... letter), simple 2-char ESC sequences,
+    // and OSC sequences (ESC ] ... BEL/ST).
+    let re = regex::Regex::new(
+        r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))",
+    )
+    .unwrap();
+    re.replace_all(&s, "").into_owned()
 }
 
 
@@ -418,6 +434,7 @@ impl App {
             reverse_search: None,
             quicksearch: None,
             shell_mode: ShellMode::Stateless,
+            needs_full_redraw: false,
             config,
         };
         // Try to spawn subshell if configured
@@ -1076,7 +1093,7 @@ impl App {
         session.list.selected = new_selected;
     }
 
-    fn execute_menu_item(&mut self, cmd_template: String) {
+    fn execute_menu_item(&mut self, cmd_template: String, interactive: bool) {
         let result = self.expand_menu_command(&cmd_template);
         if result.untag_active {
             self.active_panel_mut().tagged.clear();
@@ -1084,9 +1101,13 @@ impl App {
         if result.untag_inactive {
             self.inactive_panel_mut().tagged.clear();
         }
-        self.cmdline.text = result.text;
-        self.cmdline.move_end();
-        self.execute_command();
+        if interactive {
+            self.run_command_interactively(&result.text);
+        } else {
+            self.cmdline.text = result.text;
+            self.cmdline.move_end();
+            self.execute_command();
+        }
     }
 
     fn execute_command(&mut self) {
@@ -1100,45 +1121,43 @@ impl App {
 
         let cwd = self.active_panel().path.0.clone();
 
-        let output = match &self.shell_mode {
+        // Tear down TUI so any spawned process (interactive or not) gets a real terminal.
+        if self.mouse {
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        } else {
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen);
+        }
+        let _ = disable_raw_mode();
+
+        let captured: Option<String> = match &self.shell_mode {
             ShellMode::Subshell(sub) => {
-                // Sync cwd, then run command
                 let cd_cmd = format!("cd {}", shell_escape_path(&cwd));
                 let _ = sub.run_command(&cd_cmd);
-                match sub.run_command(&cmd) {
-                    Ok(bytes) => {
-                        let s = String::from_utf8_lossy(&bytes).into_owned();
-                        if s.trim().is_empty() { "(no output)".to_string() } else { s }
-                    }
-                    Err(e) => format!("Error: {e}"),
-                }
+                let _ = sub.send_line(&cmd);
+                let _ = sub.start_passthrough_until_prompt();
+                None
             }
             ShellMode::Stateless => {
-                match std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(&cmd)
-                    .current_dir(&cwd)
-                    .output()
-                {
-                    Ok(out) => {
-                        let mut combined = String::new();
-                        let stdout = String::from_utf8_lossy(&out.stdout);
-                        let stderr = String::from_utf8_lossy(&out.stderr);
-                        if !stdout.is_empty() { combined.push_str(&stdout); }
-                        if !stderr.is_empty() {
-                            if !combined.is_empty() { combined.push_str("\n--- stderr ---\n"); }
-                            combined.push_str(&stderr);
-                        }
-                        if combined.is_empty() { "(no output)".to_string() } else { combined }
-                    }
-                    Err(e) => format!("Error running command: {e}"),
-                }
+                // Run in a fresh PTY so the child sees a real tty on stdout —
+                // interactive programs work correctly and non-interactive output
+                // is captured for the C-o overlay.
+                let raw = crate::subshell::run_with_pty_capture(&cmd, &cwd);
+                let text = strip_ansi(&raw);
+                if text.trim().is_empty() { None } else { Some(text) }
             }
         };
 
-        self.last_output = Some(output);
-        self.show_output = true;
-        self.overlay = OutputOverlayState::new();
+        let _ = enable_raw_mode();
+        if self.mouse {
+            let _ = crossterm::execute!(stdout(), EnterAlternateScreen, EnableMouseCapture);
+        } else {
+            let _ = crossterm::execute!(stdout(), EnterAlternateScreen);
+        }
+
+        // Update stored output but don't auto-show; user presses C-o to view it.
+        self.last_output = captured;
+        self.show_output = false;
+        self.needs_full_redraw = true;
         self.left.refresh();
         self.right.refresh();
     }
@@ -1252,9 +1271,9 @@ impl App {
                     s.handle_key(&event, vh)
                 } else { ModalOutcome::Consumed };
                 match outcome {
-                    ModalOutcome::Execute(cmd) => {
+                    ModalOutcome::Execute(cmd, interactive) => {
                         self.modal = Modal::None;
-                        self.execute_menu_item(cmd);
+                        self.execute_menu_item(cmd, interactive);
                     }
                     ModalOutcome::Dismissed => self.modal = Modal::None,
                     _ => {}
@@ -1480,11 +1499,11 @@ impl App {
             }
             KeyMatch::None => {
                 // User menu shortcuts (single-key and chord) fire from the main screen.
-                let cmd = self.config.menu.iter()
+                let menu_match = self.config.menu.iter()
                     .find(|item| menu_item_matches_key(item, pending.as_ref(), &event))
-                    .map(|item| item.command.clone());
-                if let Some(cmd) = cmd {
-                    self.execute_menu_item(cmd);
+                    .map(|item| (item.command.clone(), item.interactive));
+                if let Some((cmd, interactive)) = menu_match {
+                    self.execute_menu_item(cmd, interactive);
                     return;
                 }
                 // If no chord completed, check if this key starts a user menu chord.
@@ -2027,6 +2046,42 @@ impl App {
         }
     }
 
+    fn run_command_interactively(&mut self, cmd: &str) {
+        let cwd = self.active_panel().path.0.clone();
+
+        if self.mouse {
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        } else {
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen);
+        }
+        let _ = disable_raw_mode();
+
+        match &self.shell_mode {
+            ShellMode::Stateless => {
+                let _ = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(cmd)
+                    .current_dir(&cwd)
+                    .status();
+            }
+            ShellMode::Subshell(sub) => {
+                sub.sync_cwd(std::path::Path::new(&cwd));
+                let _ = sub.send_line(cmd);
+                let _ = sub.start_passthrough();
+            }
+        }
+
+        let _ = enable_raw_mode();
+        if self.mouse {
+            let _ = crossterm::execute!(stdout(), EnterAlternateScreen, EnableMouseCapture);
+        } else {
+            let _ = crossterm::execute!(stdout(), EnterAlternateScreen);
+        }
+        self.needs_full_redraw = true;
+        self.left.refresh();
+        self.right.refresh();
+    }
+
     fn run_subshell_passthrough(&mut self) {
         // Leave alternate screen so the subshell renders in the normal terminal
         if self.mouse {
@@ -2051,6 +2106,7 @@ impl App {
             let _ = crossterm::execute!(stdout(), EnterAlternateScreen);
         }
         // Refresh panels in case the subshell changed the filesystem
+        self.needs_full_redraw = true;
         self.left.refresh();
         self.right.refresh();
     }
@@ -2322,6 +2378,10 @@ impl App {
         let mut terminal = Terminal::new(backend)?;
 
         loop {
+            if self.needs_full_redraw {
+                self.needs_full_redraw = false;
+                terminal.clear()?;
+            }
             terminal.draw(|frame| self.render(frame))?;
 
             if event::poll(Duration::from_millis(50))? {

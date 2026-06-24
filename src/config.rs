@@ -288,6 +288,8 @@ pub struct MenuItem {
     pub keys: Option<String>,
     #[serde(default)]
     pub add_to_bar: bool,
+    #[serde(default)]
+    pub interactive: bool,
 }
 
 // ── ColorScheme ───────────────────────────────────────────────────────────────
