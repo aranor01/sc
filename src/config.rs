@@ -207,6 +207,7 @@ pub struct KeyBindings {
     pub filter: ActionBindings,
     pub select_group: ActionBindings,
     pub unselect_group: ActionBindings,
+    pub refresh_panel: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -272,6 +273,7 @@ impl Default for KeyBindings {
             filter: vec![KeyBinding::Single(ke(Char('f'), c))],
             select_group: vec![KeyBinding::Single(ke(Char('+'), n))],
             unselect_group: vec![KeyBinding::Single(ke(Char('-'), n))],
+            refresh_panel: vec![KeyBinding::Single(ke(Char('r'), a))],
         }
     }
 }
@@ -478,6 +480,7 @@ impl Config {
                     "filter" => cfg.keybindings.filter = bindings,
                     "select_group" => cfg.keybindings.select_group = bindings,
                     "unselect_group" => cfg.keybindings.unselect_group = bindings,
+                    "refresh_panel" => cfg.keybindings.refresh_panel = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }

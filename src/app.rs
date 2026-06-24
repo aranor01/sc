@@ -141,6 +141,7 @@ enum Action {
     Filter,
     SelectGroup,
     UnselectGroup,
+    RefreshPanel,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -525,6 +526,7 @@ impl App {
             (&kb.filter, Action::Filter),
             (&kb.select_group, Action::SelectGroup),
             (&kb.unselect_group, Action::UnselectGroup),
+            (&kb.refresh_panel, Action::RefreshPanel),
         ]
     }
 
@@ -813,6 +815,9 @@ impl App {
             Action::UnselectGroup => {
                 let state = InputDialogState::new(InputDialogAction::UnselectGroup, " Unselect group ", "");
                 self.modal = Modal::InputDialog(state);
+            }
+            Action::RefreshPanel => {
+                self.active_panel_mut().refresh();
             }
             Action::BookmarkAdd => {
                 let path = self.active_panel().path.0.clone();
@@ -1134,7 +1139,8 @@ impl App {
         self.last_output = Some(output);
         self.show_output = true;
         self.overlay = OutputOverlayState::new();
-        self.active_panel_mut().refresh();
+        self.left.refresh();
+        self.right.refresh();
     }
 
     fn execute_file_op(&mut self, state: ConfirmState) {

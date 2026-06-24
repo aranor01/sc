@@ -78,6 +78,9 @@
        highlighted entry (replacing the whole command line); ESC closes the popup without
        changing the command line.
 
+- A-r
+       force-refresh the active panel's directory listing (re-reads the directory from disk)
+
 - C-Up
        go to the previous command in the history, if any
 
