@@ -26,6 +26,43 @@ pub enum SortKey {
     Unsorted,
 }
 
+/// A compiled filter/select-group pattern. Patterns starting with `/` are regex;
+/// others are shell globs.
+#[derive(Debug, Clone)]
+pub struct FilterPattern {
+    pub raw: String,
+    is_regex: bool,
+    regex: Option<regex::Regex>,
+    glob: Option<glob::Pattern>,
+}
+
+impl FilterPattern {
+    pub fn matches(&self, name: &str) -> bool {
+        if self.is_regex {
+            self.regex.as_ref().map_or(false, |r| r.is_match(name))
+        } else {
+            self.glob.as_ref().map_or(false, |g| g.matches(name))
+        }
+    }
+}
+
+/// Validate and compile a filter/select pattern.
+/// Returns `Err(description)` on invalid patterns.
+pub fn validate_filter_pattern(input: &str) -> Result<FilterPattern, String> {
+    if input.starts_with('/') {
+        let re_src = &input[1..];
+        match regex::Regex::new(re_src) {
+            Ok(r) => Ok(FilterPattern { raw: input.to_string(), is_regex: true, regex: Some(r), glob: None }),
+            Err(e) => Err(format!("Invalid regex: {e}")),
+        }
+    } else {
+        match glob::Pattern::new(input) {
+            Ok(g) => Ok(FilterPattern { raw: input.to_string(), is_regex: false, regex: None, glob: Some(g) }),
+            Err(e) => Err(format!("Invalid glob: {e}")),
+        }
+    }
+}
+
 fn sort_entries(entries: &mut [NodeEntry], key: SortKey, asc: bool) {
     entries.sort_by(|a, b| {
         let dk = match (&a.kind, &b.kind) {
@@ -60,6 +97,7 @@ pub struct PanelState {
     pub sort_key: SortKey,
     pub sort_asc: bool,
     pub show_hidden: bool,
+    pub filter: Option<FilterPattern>,
 }
 
 impl PanelState {
@@ -75,6 +113,7 @@ impl PanelState {
             sort_key: SortKey::Name,
             sort_asc: true,
             show_hidden: false,
+            filter: None,
         };
         s.refresh();
         s
@@ -101,6 +140,15 @@ impl PanelState {
                     entries.retain(|e| e.name == ".." || !e.name.starts_with('.'));
                     // Untag any entries that are now hidden
                     self.tagged.retain(|n| !n.starts_with('.'));
+                }
+                // Apply filter pattern (always keep "..")
+                if let Some(ref pat) = self.filter {
+                    let hidden: HashSet<String> = entries.iter()
+                        .filter(|e| e.name != ".." && !pat.matches(&e.name))
+                        .map(|e| e.name.clone())
+                        .collect();
+                    self.tagged.retain(|n| !hidden.contains(n));
+                    entries.retain(|e| e.name == ".." || pat.matches(&e.name));
                 }
                 // Keep ".." at position 0, sort the rest
                 let sort_start = if entries.first().map(|e| e.name == "..").unwrap_or(false) { 1 } else { 0 };
@@ -363,7 +411,11 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
             let icon = |active: bool| -> &'static str {
                 if !active { " " } else if state.sort_asc { "▲" } else { "▼" }
             };
-            let name_label = format!("Name{}", icon(name_active));
+            let name_label = if let Some(ref pat) = state.filter {
+                format!("Name{} [{}]", icon(name_active), pat.raw)
+            } else {
+                format!("Name{}", icon(name_active))
+            };
             let name_hdr = truncate_str(&name_label, name_width);
             let size_label = format!("  Size{} ", icon(size_active));  // 8 chars
             let size_hdr = format!("{:<8}", size_label);

@@ -34,7 +34,7 @@ use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, Confi
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
 use crate::ui::modal_event::{CmdlineOutcome, ModalOutcome, OverlayOutcome, PanelOutcome, PopupOutcome};
-use crate::ui::panel::{PanelState, PanelWidget, SortKey};
+use crate::ui::panel::{validate_filter_pattern, PanelState, PanelWidget, SortKey};
 
 // ── Mode enums ────────────────────────────────────────────────────────────────
 
@@ -137,6 +137,9 @@ enum Action {
     BookmarkAdd,
     Mkdir,
     PathHistory,
+    Filter,
+    SelectGroup,
+    UnselectGroup,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -503,6 +506,9 @@ impl App {
             (&kb.bookmark_add, Action::BookmarkAdd),
             (&kb.mkdir, Action::Mkdir),
             (&kb.path_history, Action::PathHistory),
+            (&kb.filter, Action::Filter),
+            (&kb.select_group, Action::SelectGroup),
+            (&kb.unselect_group, Action::UnselectGroup),
         ]
     }
 
@@ -772,6 +778,19 @@ impl App {
                     self.modal = Modal::PathHistoryList(popup);
                 }
             }
+            Action::Filter => {
+                let current = self.active_panel().filter.as_ref().map(|p| p.raw.clone()).unwrap_or_default();
+                let state = InputDialogState::new(InputDialogAction::Filter, " Filter ", &current);
+                self.modal = Modal::InputDialog(state);
+            }
+            Action::SelectGroup => {
+                let state = InputDialogState::new(InputDialogAction::SelectGroup, " Select group ", "");
+                self.modal = Modal::InputDialog(state);
+            }
+            Action::UnselectGroup => {
+                let state = InputDialogState::new(InputDialogAction::UnselectGroup, " Unselect group ", "");
+                self.modal = Modal::InputDialog(state);
+            }
             Action::BookmarkAdd => {
                 let path = self.active_panel().path.0.clone();
                 if !self.bookmarks.contains(&path) {
@@ -896,8 +915,57 @@ impl App {
                     }
                 }
             }
-            // Filter, SelectGroup, UnselectGroup handled in later features
-            _ => {}
+            InputDialogAction::Filter => {
+                if new_text.is_empty() {
+                    self.active_panel_mut().filter = None;
+                    self.active_panel_mut().refresh();
+                } else {
+                    match validate_filter_pattern(&new_text) {
+                        Ok(pat) => {
+                            self.active_panel_mut().filter = Some(pat);
+                            self.active_panel_mut().refresh();
+                        }
+                        Err(e) => {
+                            if let Modal::InputDialog(ref mut s) = self.modal {
+                                s.error = Some(e);
+                            }
+                            return; // keep dialog open
+                        }
+                    }
+                }
+            }
+            InputDialogAction::SelectGroup => {
+                match validate_filter_pattern(&new_text) {
+                    Ok(pat) => {
+                        let names: Vec<String> = self.active_panel().entries.iter()
+                            .filter(|e| e.name != ".." && pat.matches(&e.name))
+                            .map(|e| e.name.clone())
+                            .collect();
+                        let panel = self.active_panel_mut();
+                        for name in names { panel.tagged.insert(name); }
+                    }
+                    Err(e) => {
+                        if let Modal::InputDialog(ref mut s) = self.modal {
+                            s.error = Some(e);
+                        }
+                        return;
+                    }
+                }
+            }
+            InputDialogAction::UnselectGroup => {
+                match validate_filter_pattern(&new_text) {
+                    Ok(pat) => {
+                        let panel = self.active_panel_mut();
+                        panel.tagged.retain(|n| !pat.matches(n));
+                    }
+                    Err(e) => {
+                        if let Modal::InputDialog(ref mut s) = self.modal {
+                            s.error = Some(e);
+                        }
+                        return;
+                    }
+                }
+            }
         }
     }
 

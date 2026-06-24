@@ -169,6 +169,9 @@ pub struct KeyBindings {
     pub bookmark_add: ActionBindings,
     pub mkdir: ActionBindings,
     pub path_history: ActionBindings,
+    pub filter: ActionBindings,
+    pub select_group: ActionBindings,
+    pub unselect_group: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -231,6 +234,9 @@ impl Default for KeyBindings {
             bookmark_add: vec![KeyBinding::Single(ke(Char('b'), c))],
             mkdir: vec![KeyBinding::Single(ke(F(7), n))],
             path_history: vec![KeyBinding::Single(ke(Char('H'), a))],
+            filter: vec![KeyBinding::Single(ke(Char('f'), c))],
+            select_group: vec![KeyBinding::Single(ke(Char('+'), n))],
+            unselect_group: vec![KeyBinding::Single(ke(Char('-'), n))],
         }
     }
 }
@@ -425,6 +431,9 @@ impl Config {
                     "bookmark_add" => cfg.keybindings.bookmark_add = bindings,
                     "mkdir" => cfg.keybindings.mkdir = bindings,
                     "path_history" => cfg.keybindings.path_history = bindings,
+                    "filter" => cfg.keybindings.filter = bindings,
+                    "select_group" => cfg.keybindings.select_group = bindings,
+                    "unselect_group" => cfg.keybindings.unselect_group = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }
