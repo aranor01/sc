@@ -135,6 +135,7 @@ enum Action {
     ToggleHidden,
     BookmarkOpen,
     BookmarkAdd,
+    Mkdir,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -485,6 +486,7 @@ impl App {
             (&kb.toggle_hidden, Action::ToggleHidden),
             (&kb.bookmark_open, Action::BookmarkOpen),
             (&kb.bookmark_add, Action::BookmarkAdd),
+            (&kb.mkdir, Action::Mkdir),
         ]
     }
 
@@ -738,6 +740,10 @@ impl App {
                     self.modal = Modal::BookmarkList(popup);
                 }
             }
+            Action::Mkdir => {
+                let state = InputDialogState::new(InputDialogAction::Mkdir, " Create directory ", "");
+                self.modal = Modal::InputDialog(state);
+            }
             Action::BookmarkAdd => {
                 let path = self.active_panel().path.0.clone();
                 if !self.bookmarks.contains(&path) {
@@ -811,7 +817,34 @@ impl App {
                     }
                 }
             }
-            // Mkdir, Filter, SelectGroup, UnselectGroup handled in later features
+            InputDialogAction::Mkdir => {
+                if new_text.is_empty() { return; }
+                let result = {
+                    let panel = self.active_panel();
+                    panel.provider.mkdir(&panel.path, &new_text)
+                };
+                match result {
+                    Ok(()) => {
+                        self.active_panel_mut().refresh();
+                        let idx = self.active_panel().entries.iter()
+                            .position(|e| e.name == new_text)
+                            .unwrap_or(0);
+                        let vh = self.active_vh();
+                        let panel = self.active_panel_mut();
+                        panel.cursor = idx.min(panel.entries.len().saturating_sub(1));
+                        let scroll = panel.scroll;
+                        if panel.cursor < scroll {
+                            panel.scroll = panel.cursor;
+                        } else if panel.cursor >= scroll + vh.max(1) {
+                            panel.scroll = panel.cursor + 1 - vh.max(1);
+                        }
+                    }
+                    Err(e) => {
+                        self.modal = Modal::Error(e.to_string());
+                    }
+                }
+            }
+            // Filter, SelectGroup, UnselectGroup handled in later features
             _ => {}
         }
     }

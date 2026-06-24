@@ -101,6 +101,12 @@ impl TreeProvider for FilesystemProvider {
         .with_context(|| format!("deleting {:?}", p))
     }
 
+    fn mkdir(&self, parent: &NodePath, name: &str) -> Result<()> {
+        let path = Path::new(&parent.0).join(name);
+        std::fs::create_dir(&path)
+            .with_context(|| format!("creating directory {:?}", path))
+    }
+
     fn rename(&self, path: &NodePath, new_name: &str) -> Result<()> {
         let src = Path::new(&path.0);
         let dst = src
