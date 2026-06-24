@@ -160,6 +160,8 @@ pub struct KeyBindings {
     pub cmdline_history_next: ActionBindings,
     pub reverse_search: ActionBindings,
     pub sync_panels: ActionBindings,
+    pub rename: ActionBindings,
+    pub sort_panel: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -213,6 +215,8 @@ impl Default for KeyBindings {
             cmdline_history_next: vec![KeyBinding::Single(ke(Down, c))],
             reverse_search: vec![KeyBinding::Single(ke(Char('r'), c))],
             sync_panels: vec![KeyBinding::Single(ke(Char('i'), a))],
+            rename: vec![KeyBinding::Single(ke(F(6), M::SHIFT))],
+            sort_panel: vec![KeyBinding::Single(ke(Char('s'), c))],
         }
     }
 }
@@ -356,6 +360,8 @@ impl Config {
                     "cmdline_history_next" => cfg.keybindings.cmdline_history_next = bindings,
                     "reverse_search" => cfg.keybindings.reverse_search = bindings,
                     "sync_panels" => cfg.keybindings.sync_panels = bindings,
+                    "rename" => cfg.keybindings.rename = bindings,
+                    "sort_panel" => cfg.keybindings.sort_panel = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }

@@ -30,11 +30,11 @@ use crate::ui::button::Button;
 use crate::ui::button_bar::ButtonBarWidget;
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupListState, PopupListWidget};
-use crate::ui::dialog::{render_confirm, render_error, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea};
+use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
 use crate::ui::modal_event::{CmdlineOutcome, ModalOutcome, OverlayOutcome, PanelOutcome, PopupOutcome};
-use crate::ui::panel::{PanelState, PanelWidget};
+use crate::ui::panel::{PanelState, PanelWidget, SortKey};
 
 // ── Mode enums ────────────────────────────────────────────────────────────────
 
@@ -128,6 +128,8 @@ enum Action {
     CmdlineHistoryNext,
     ReverseSearch,
     SyncPanels,
+    Rename,
+    SortPanel,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -188,6 +190,8 @@ enum Modal {
     UserMenu(UserMenuState),
     Confirm(ConfirmState),
     Error(String),
+    InputDialog(InputDialogState),
+    SortPopup(PopupListState, Side),
 }
 
 // ── ModalAreas ────────────────────────────────────────────────────────────────
@@ -197,6 +201,8 @@ enum ModalAreas {
     Confirm(ConfirmButtonAreas),
     UserMenu(UserMenuAreas),
     Error(ErrorButtonArea),
+    InputDialog(InputDialogAreas, Option<Position>),
+    SortPopup(Rect, usize),
 }
 
 // ── AppLayout ─────────────────────────────────────────────────────────────────
@@ -299,6 +305,8 @@ pub struct App {
     confirm_no_btn: Cell<Button>,
     error_ok_btn: Cell<Button>,
     menu_close_btn: Cell<Button>,
+    input_ok_btn: Cell<Button>,
+    input_cancel_btn: Cell<Button>,
     menu_list_area: Cell<Rect>,
     menu_list_offset: Cell<usize>,
     // Popup list hit-test areas and scroll offsets (reset each frame when not visible)
@@ -306,6 +314,8 @@ pub struct App {
     completion_popup_offset: Cell<usize>,
     rev_search_popup_area: Cell<Rect>,
     rev_search_popup_offset: Cell<usize>,
+    sort_popup_area: Cell<Rect>,
+    sort_popup_offset: Cell<usize>,
     // Pending left-button press for down+up click detection
     mouse_pressed: Option<Position>,
     should_quit: bool,
@@ -329,7 +339,7 @@ impl App {
             CommandHistory::new()
         };
 
-        App {
+        let mut app = App {
             orientation: state.orientation,
             show_cmdline: state.show_cmdline,
             show_button_bar: state.show_button_bar,
@@ -352,12 +362,16 @@ impl App {
             confirm_no_btn: Cell::new(Button::default()),
             error_ok_btn: Cell::new(Button::default()),
             menu_close_btn: Cell::new(Button::default()),
+            input_ok_btn: Cell::new(Button::default()),
+            input_cancel_btn: Cell::new(Button::default()),
             menu_list_area: Cell::new(Rect::default()),
             menu_list_offset: Cell::new(0),
             completion_popup_area: Cell::new(Rect::default()),
             completion_popup_offset: Cell::new(0),
             rev_search_popup_area: Cell::new(Rect::default()),
             rev_search_popup_offset: Cell::new(0),
+            sort_popup_area: Cell::new(Rect::default()),
+            sort_popup_offset: Cell::new(0),
             mouse_pressed: None,
             should_quit: false,
             mouse,
@@ -365,7 +379,15 @@ impl App {
             completion: None,
             reverse_search: None,
             config,
-        }
+        };
+        // Restore saved sort state and re-sort panels
+        app.left.sort_key = state.left_sort_key;
+        app.left.sort_asc = state.left_sort_asc;
+        app.right.sort_key = state.right_sort_key;
+        app.right.sort_asc = state.right_sort_asc;
+        app.left.refresh();
+        app.right.refresh();
+        app
     }
 
     fn action_mode(&self) -> bool {
@@ -405,16 +427,17 @@ impl App {
             Side::Left => self.left_area.get(),
             Side::Right => self.right_area.get(),
         };
-        area.height.saturating_sub(2).max(1) as usize
+        // 2 borders + 1 header row = 3 overhead rows
+        area.height.saturating_sub(3).max(1) as usize
     }
 
     fn active_vh(&self) -> usize {
         self.panel_visible_height(self.active)
     }
 
-    fn bindings_list(&self) -> [(&ActionBindings, Action); 23] {
+    fn bindings_list(&self) -> Vec<(&ActionBindings, Action)> {
         let kb = &self.config.keybindings;
-        [
+        vec![
             (&kb.switch_panel, Action::SwitchPanel),
             (&kb.toggle_layout, Action::ToggleLayout),
             (&kb.tag_file, Action::TagFile),
@@ -438,7 +461,39 @@ impl App {
             (&kb.cmdline_history_next, Action::CmdlineHistoryNext),
             (&kb.reverse_search, Action::ReverseSearch),
             (&kb.sync_panels, Action::SyncPanels),
+            (&kb.rename, Action::Rename),
+            (&kb.sort_panel, Action::SortPanel),
         ]
+    }
+
+    fn sort_popup_items() -> Vec<String> {
+        vec![
+            "Name ▲".to_string(), "Name ▼".to_string(),
+            "Extension ▲".to_string(), "Extension ▼".to_string(),
+            "Size ▲".to_string(), "Size ▼".to_string(),
+            "Modified ▲".to_string(), "Modified ▼".to_string(),
+            "Unsorted".to_string(),
+        ]
+    }
+
+    fn sort_item_index(key: SortKey, asc: bool) -> usize {
+        match (key, asc) {
+            (SortKey::Name, true) => 0, (SortKey::Name, false) => 1,
+            (SortKey::Extension, true) => 2, (SortKey::Extension, false) => 3,
+            (SortKey::Size, true) => 4, (SortKey::Size, false) => 5,
+            (SortKey::Modified, true) => 6, (SortKey::Modified, false) => 7,
+            _ => 8,
+        }
+    }
+
+    fn sort_item_to_key(idx: usize) -> (SortKey, bool) {
+        match idx {
+            0 => (SortKey::Name, true), 1 => (SortKey::Name, false),
+            2 => (SortKey::Extension, true), 3 => (SortKey::Extension, false),
+            4 => (SortKey::Size, true), 5 => (SortKey::Size, false),
+            6 => (SortKey::Modified, true), 7 => (SortKey::Modified, false),
+            _ => (SortKey::Unsorted, true),
+        }
     }
 
     fn handle_action(&mut self, action: Action) {
@@ -632,6 +687,57 @@ impl App {
                 inactive.tagged.clear();
                 inactive.refresh();
             }
+            Action::Rename => {
+                let name = self.active_panel().current_name();
+                if !name.is_empty() && name != ".." {
+                    let state = InputDialogState::new(InputDialogAction::Rename, " Rename ", &name);
+                    self.modal = Modal::InputDialog(state);
+                }
+            }
+            Action::SortPanel => {
+                let panel = self.active_panel();
+                let selected = Self::sort_item_index(panel.sort_key, panel.sort_asc);
+                let popup = PopupListState { items: Self::sort_popup_items(), selected };
+                self.modal = Modal::SortPopup(popup, self.active);
+            }
+        }
+    }
+
+    fn execute_input_dialog(&mut self, state: InputDialogState) {
+        let new_text = state.input.text.trim().to_string();
+        match state.action {
+            InputDialogAction::Rename => {
+                if new_text.is_empty() { return; }
+                let current = self.active_panel().current_name();
+                if current.is_empty() || current == ".." { return; }
+                let result = {
+                    let panel = self.active_panel();
+                    let src = panel.provider.join(&panel.path, &current);
+                    panel.provider.rename(&src, &new_text)
+                };
+                match result {
+                    Ok(()) => {
+                        self.active_panel_mut().refresh();
+                        let idx = self.active_panel().entries.iter()
+                            .position(|e| e.name == new_text)
+                            .unwrap_or(0);
+                        let vh = self.active_vh();
+                        let panel = self.active_panel_mut();
+                        panel.cursor = idx.min(panel.entries.len().saturating_sub(1));
+                        let scroll = panel.scroll;
+                        if panel.cursor < scroll {
+                            panel.scroll = panel.cursor;
+                        } else if panel.cursor >= scroll + vh.max(1) {
+                            panel.scroll = panel.cursor + 1 - vh.max(1);
+                        }
+                    }
+                    Err(e) => {
+                        self.modal = Modal::Error(e.to_string());
+                    }
+                }
+            }
+            // Mkdir, Filter, SelectGroup, UnselectGroup handled in later features
+            _ => {}
         }
     }
 
@@ -890,6 +996,48 @@ impl App {
                 }
                 return;
             }
+            Modal::InputDialog(_) => {
+                let outcome = if let Modal::InputDialog(ref mut s) = self.modal {
+                    s.handle_key(&event)
+                } else { ModalOutcome::Consumed };
+                match outcome {
+                    ModalOutcome::Confirmed => {
+                        if let Modal::InputDialog(state) =
+                            std::mem::replace(&mut self.modal, Modal::None)
+                        {
+                            self.execute_input_dialog(state);
+                        }
+                    }
+                    ModalOutcome::Dismissed => self.modal = Modal::None,
+                    _ => {}
+                }
+                return;
+            }
+            Modal::SortPopup(_, _) => {
+                let vh = self.sort_popup_area.get().height.saturating_sub(2) as usize;
+                let outcome = if let Modal::SortPopup(ref mut s, _) = self.modal {
+                    s.handle_key(&event, vh)
+                } else { PopupOutcome::Dismissed };
+                match outcome {
+                    PopupOutcome::Accept(_) => {
+                        if let Modal::SortPopup(state, side) =
+                            std::mem::replace(&mut self.modal, Modal::None)
+                        {
+                            let (key, asc) = Self::sort_item_to_key(state.selected);
+                            let panel = match side {
+                                Side::Left => &mut self.left,
+                                Side::Right => &mut self.right,
+                            };
+                            panel.sort_key = key;
+                            panel.sort_asc = asc;
+                            panel.refresh();
+                        }
+                    }
+                    PopupOutcome::Dismissed => self.modal = Modal::None,
+                    _ => {}
+                }
+                return;
+            }
         }
 
         // Completion popup: intercept keys while a candidate list is visible.
@@ -1089,6 +1237,9 @@ impl App {
                 None
             };
 
+        let input_ok = self.input_ok_btn.get();
+        let input_cancel = self.input_cancel_btn.get();
+
         match &mut self.modal {
             Modal::None => {}
             Modal::Confirm(_) => {
@@ -1105,6 +1256,46 @@ impl App {
             Modal::Error(_) => {
                 if ok_btn.clicked(down, up) {
                     self.modal = Modal::None;
+                }
+            }
+            Modal::InputDialog(_) => {
+                if input_ok.clicked(down, up) {
+                    if let Modal::InputDialog(state) =
+                        std::mem::replace(&mut self.modal, Modal::None)
+                    {
+                        self.execute_input_dialog(state);
+                    }
+                } else if input_cancel.clicked(down, up) {
+                    self.modal = Modal::None;
+                }
+            }
+            Modal::SortPopup(_, _) => {
+                let area = self.sort_popup_area.get();
+                let offset = self.sort_popup_offset.get();
+                if area.width > 0 {
+                    let inner_y = area.y + 1;
+                    let inner_bottom = area.y + area.height.saturating_sub(1);
+                    if down == Some(up) && area.contains(up) && up.y >= inner_y && up.y < inner_bottom {
+                        let row = (up.y - inner_y) as usize;
+                        let idx = offset + row;
+                        if let Modal::SortPopup(ref mut s, _) = self.modal {
+                            if idx < s.items.len() { s.selected = idx; }
+                        }
+                        if let Modal::SortPopup(state, side) =
+                            std::mem::replace(&mut self.modal, Modal::None)
+                        {
+                            let (key, asc) = Self::sort_item_to_key(state.selected);
+                            let panel = match side {
+                                Side::Left => &mut self.left,
+                                Side::Right => &mut self.right,
+                            };
+                            panel.sort_key = key;
+                            panel.sort_asc = asc;
+                            panel.refresh();
+                        }
+                    } else if !area.contains(up) {
+                        self.modal = Modal::None;
+                    }
                 }
             }
             Modal::UserMenu(_) => {
@@ -1147,12 +1338,57 @@ impl App {
             return;
         };
 
-        let inner_y = clicked_area.y + 1;
+        let inner_y = clicked_area.y + 1;  // first row inside border = header row
+        let entries_y = inner_y + 1;       // entries start below header
         if row < inner_y || row >= clicked_area.y + clicked_area.height - 1 {
             return;
         }
-        let entry_row = (row - inner_y) as usize;
-        let vh = clicked_area.height.saturating_sub(2).max(1) as usize;
+        // Header row click: sort by column
+        if row == inner_y {
+            if clicked_side != self.active {
+                self.active = clicked_side;
+            }
+            let inner_x = clicked_area.x + 1;
+            let inner_width = clicked_area.width.saturating_sub(2) as usize;
+            let fixed = 22usize; // same formula as panel.rs
+            let name_width = if inner_width > fixed + 4 { inner_width - fixed } else { 4 };
+            let rel_x = col.saturating_sub(inner_x) as usize;
+            let panel = match clicked_side {
+                Side::Left => &mut self.left,
+                Side::Right => &mut self.right,
+            };
+            if rel_x >= 2 && rel_x < 2 + name_width {
+                // Name column
+                if matches!(panel.sort_key, SortKey::Name | SortKey::Extension) {
+                    panel.sort_asc = !panel.sort_asc;
+                } else {
+                    panel.sort_key = SortKey::Name;
+                    panel.sort_asc = true;
+                }
+                panel.refresh();
+            } else if rel_x >= 2 + name_width + 1 && rel_x < 2 + name_width + 9 {
+                // Size column
+                if panel.sort_key == SortKey::Size {
+                    panel.sort_asc = !panel.sort_asc;
+                } else {
+                    panel.sort_key = SortKey::Size;
+                    panel.sort_asc = true;
+                }
+                panel.refresh();
+            } else if rel_x >= 2 + name_width + 10 && rel_x < 2 + name_width + 20 {
+                // Mtime column
+                if panel.sort_key == SortKey::Modified {
+                    panel.sort_asc = !panel.sort_asc;
+                } else {
+                    panel.sort_key = SortKey::Modified;
+                    panel.sort_asc = true;
+                }
+                panel.refresh();
+            }
+            return;
+        }
+        let entry_row = (row - entries_y) as usize;
+        let vh = clicked_area.height.saturating_sub(3).max(1) as usize;
 
         let now = Instant::now();
         let is_double = if let Some((last_time, last_col, last_row)) = self.last_click {
@@ -1245,10 +1481,18 @@ impl App {
         if !matches!(self.modal, Modal::None) {
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
-                    if let Modal::UserMenu(ref mut s) = self.modal { s.move_up(); }
+                    match &mut self.modal {
+                        Modal::UserMenu(s) => s.move_up(),
+                        Modal::SortPopup(s, _) => s.move_up(),
+                        _ => {}
+                    }
                 }
                 MouseEventKind::ScrollDown => {
-                    if let Modal::UserMenu(ref mut s) = self.modal { s.move_down(); }
+                    match &mut self.modal {
+                        Modal::UserMenu(s) => s.move_down(),
+                        Modal::SortPopup(s, _) => s.move_down(),
+                        _ => {}
+                    }
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
                     self.mouse_pressed = Some(pos);
@@ -1386,7 +1630,7 @@ impl App {
                 } else {
                     return;
                 };
-                let vh = area.height.saturating_sub(2).max(1) as usize;
+                let vh = area.height.saturating_sub(3).max(1) as usize;
                 let delta = if matches!(mouse.kind, MouseEventKind::ScrollUp) { -1 } else { 1 };
                 panel.move_cursor(delta, vh);
             }
@@ -1401,6 +1645,10 @@ impl App {
             show_button_bar: self.show_button_bar,
             left_path: self.left.path.0.clone(),
             right_path: self.right.path.0.clone(),
+            left_sort_key: self.left.sort_key,
+            left_sort_asc: self.left.sort_asc,
+            right_sort_key: self.right.sort_key,
+            right_sort_asc: self.right.sort_asc,
         };
         let _ = state.save();
         let _ = self.history.save(&crate::state::history_path());
@@ -1480,6 +1728,8 @@ impl App {
                 }
             }
         }
+        // Store InputDialog cursor to set after modal rendering
+        let mut input_dialog_cursor: Option<Position> = None;
 
         // Popup list rendering (completion & reverse-search); shown only without modal/overlay
         if matches!(self.modal, Modal::None) && !self.show_output {
@@ -1541,6 +1791,22 @@ impl App {
                 let a = render_error(area, frame.buffer_mut(), &cs, &msg, press);
                 ModalAreas::Error(a)
             }
+            Modal::InputDialog(state) => {
+                let (a, cursor) = render_input_dialog(area, frame.buffer_mut(), &cs, state, press);
+                ModalAreas::InputDialog(a, cursor)
+            }
+            Modal::SortPopup(state, side) => {
+                let panel_area = match side {
+                    Side::Left => self.left_area.get(),
+                    Side::Right => self.right_area.get(),
+                };
+                let anchor_x = panel_area.x + 2;
+                let anchor_y = panel_area.y + panel_area.height.saturating_sub(1);
+                let offset = self.sort_popup_offset.get();
+                let (r, new_offset) = PopupListWidget { cs: &cs, state }
+                    .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
+                ModalAreas::SortPopup(r, new_offset)
+            }
         };
         // Borrow of self.modal released; store areas for mouse hit-testing
         match modal_areas {
@@ -1557,6 +1823,18 @@ impl App {
             ModalAreas::Error(a) => {
                 self.error_ok_btn.set(a.ok);
             }
+            ModalAreas::InputDialog(a, cursor) => {
+                self.input_ok_btn.set(a.ok);
+                self.input_cancel_btn.set(a.cancel);
+                input_dialog_cursor = cursor;
+            }
+            ModalAreas::SortPopup(r, offset) => {
+                self.sort_popup_area.set(r);
+                self.sort_popup_offset.set(offset);
+            }
+        }
+        if let Some(pos) = input_dialog_cursor {
+            frame.set_cursor_position(pos);
         }
     }
 

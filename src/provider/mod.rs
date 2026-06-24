@@ -29,4 +29,5 @@ pub trait TreeProvider {
     fn copy(&self, src: &NodePath, dst_dir: &NodePath) -> Result<()>;
     fn move_entry(&self, src: &NodePath, dst_dir: &NodePath) -> Result<()>;
     fn delete(&self, path: &NodePath) -> Result<()>;
+    fn rename(&self, path: &NodePath, new_name: &str) -> Result<()>;
 }

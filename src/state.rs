@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use crate::ui::panel::SortKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -22,6 +23,14 @@ pub struct AppState {
     pub left_path: String,
     #[serde(default = "default_home")]
     pub right_path: String,
+    #[serde(default)]
+    pub left_sort_key: SortKey,
+    #[serde(default = "default_true")]
+    pub left_sort_asc: bool,
+    #[serde(default)]
+    pub right_sort_key: SortKey,
+    #[serde(default = "default_true")]
+    pub right_sort_asc: bool,
 }
 
 fn default_true() -> bool {
@@ -42,6 +51,10 @@ impl Default for AppState {
             show_button_bar: true,
             left_path: default_home(),
             right_path: default_home(),
+            left_sort_key: SortKey::Name,
+            left_sort_asc: true,
+            right_sort_key: SortKey::Name,
+            right_sort_asc: true,
         }
     }
 }

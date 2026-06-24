@@ -100,6 +100,16 @@ impl TreeProvider for FilesystemProvider {
         }
         .with_context(|| format!("deleting {:?}", p))
     }
+
+    fn rename(&self, path: &NodePath, new_name: &str) -> Result<()> {
+        let src = Path::new(&path.0);
+        let dst = src
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("cannot rename root"))?
+            .join(new_name);
+        std::fs::rename(src, &dst)
+            .with_context(|| format!("renaming {:?} to {:?}", src, dst))
+    }
 }
 
 fn copy_recursive(src: &Path, dst: &Path) -> Result<()> {

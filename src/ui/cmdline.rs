@@ -7,6 +7,7 @@ use ratatui::{
     style::Style,
 };
 
+#[derive(Debug, Clone)]
 pub struct CmdLineState {
     pub text: String,
     pub cursor: usize, // byte offset

@@ -10,8 +10,44 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, StatefulWidget, Widget},
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::cmp::Ordering;
 use std::time::SystemTime;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SortKey {
+    #[default]
+    Name,
+    Extension,
+    Size,
+    Modified,
+    Unsorted,
+}
+
+fn sort_entries(entries: &mut [NodeEntry], key: SortKey, asc: bool) {
+    entries.sort_by(|a, b| {
+        let dk = match (&a.kind, &b.kind) {
+            (NodeKind::Dir, NodeKind::File) => Ordering::Less,
+            (NodeKind::File, NodeKind::Dir) => Ordering::Greater,
+            _ => Ordering::Equal,
+        };
+        if dk != Ordering::Equal { return dk; }
+        let c = match key {
+            SortKey::Unsorted => Ordering::Equal,
+            SortKey::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            SortKey::Extension => {
+                let ext_a = a.name.rsplit_once('.').map(|(_, e)| e).unwrap_or("").to_lowercase();
+                let ext_b = b.name.rsplit_once('.').map(|(_, e)| e).unwrap_or("").to_lowercase();
+                ext_a.cmp(&ext_b).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            }
+            SortKey::Size => a.size.cmp(&b.size),
+            SortKey::Modified => a.modified.cmp(&b.modified),
+        };
+        if asc { c } else { c.reverse() }
+    });
+}
 
 pub struct PanelState {
     pub provider: Box<dyn TreeProvider>,
@@ -21,6 +57,8 @@ pub struct PanelState {
     pub scroll: usize,
     pub tagged: HashSet<String>,
     pub error: Option<String>,
+    pub sort_key: SortKey,
+    pub sort_asc: bool,
 }
 
 impl PanelState {
@@ -33,6 +71,8 @@ impl PanelState {
             scroll: 0,
             tagged: HashSet::new(),
             error: None,
+            sort_key: SortKey::Name,
+            sort_asc: true,
         };
         s.refresh();
         s
@@ -54,6 +94,9 @@ impl PanelState {
                         },
                     );
                 }
+                // Keep ".." at position 0, sort the rest
+                let sort_start = if entries.first().map(|e| e.name == "..").unwrap_or(false) { 1 } else { 0 };
+                sort_entries(&mut entries[sort_start..], self.sort_key, self.sort_asc);
                 self.entries = entries;
                 self.error = None;
             }
@@ -278,7 +321,12 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
             return;
         }
 
-        let visible_height = inner.height as usize;
+        // First row of inner is the header; entries occupy the rest.
+        let header_y = inner.y;
+        let entries_height = inner.height.saturating_sub(1);
+        let entries_y = inner.y + 1;
+        let visible_height = entries_height as usize;
+
         // Ensure scroll is consistent with cursor
         if state.cursor < state.scroll {
             state.scroll = state.cursor;
@@ -294,6 +342,31 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
         } else {
             4
         };
+
+        // Render column header row
+        {
+            let hdr_style = Style::default()
+                .fg(border_color)
+                .bg(to_color(self.cs.panel_bg))
+                .add_modifier(Modifier::BOLD);
+            let name_active = matches!(state.sort_key, SortKey::Name | SortKey::Extension);
+            let size_active = state.sort_key == SortKey::Size;
+            let date_active = state.sort_key == SortKey::Modified;
+            let icon = |active: bool| -> &'static str {
+                if !active { " " } else if state.sort_asc { "▲" } else { "▼" }
+            };
+            let name_label = format!("Name{}", icon(name_active));
+            let name_hdr = truncate_str(&name_label, name_width);
+            let size_label = format!("  Size{} ", icon(size_active));  // 8 chars
+            let size_hdr = format!("{:<8}", size_label);
+            let date_label = format!(" Mtime{}   ", icon(date_active));  // 10 chars
+            let date_hdr = format!("{:<10}", date_label);
+            let hdr_text = format!("  {} {} {}", name_hdr, size_hdr, date_hdr);
+            // Pad / truncate to inner width
+            let padded = format!("{:<width$}", hdr_text, width = available_width);
+            let display: String = padded.chars().take(available_width).collect();
+            buf.set_string(inner.x, header_y, &display, hdr_style);
+        }
 
         let visible: Vec<&NodeEntry> = state
             .entries
@@ -366,6 +439,7 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
                     .add_modifier(Modifier::BOLD),
             );
 
-        StatefulWidget::render(list, inner, buf, &mut list_state);
+        let entries_area = Rect { x: inner.x, y: entries_y, width: inner.width, height: entries_height };
+        StatefulWidget::render(list, entries_area, buf, &mut list_state);
     }
 }
