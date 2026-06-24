@@ -345,9 +345,16 @@ impl Default for ColorScheme {
 
 // ── StartupConfig ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartupConfig {
     pub restore_paths: bool,
+    pub subshell: bool,
+}
+
+impl Default for StartupConfig {
+    fn default() -> Self {
+        StartupConfig { restore_paths: false, subshell: true }
+    }
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -520,6 +527,9 @@ impl Config {
         if let Some(startup) = v.get("startup") {
             if let Some(v) = startup.get("restore_paths").and_then(|v| v.as_bool()) {
                 cfg.startup.restore_paths = v;
+            }
+            if let Some(v) = startup.get("subshell").and_then(|v| v.as_bool()) {
+                cfg.startup.subshell = v;
             }
         }
 

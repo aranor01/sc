@@ -40,6 +40,7 @@ use crate::ui::panel::{validate_filter_pattern, PanelState, PanelWidget, SortKey
 
 pub enum ShellMode {
     Stateless,
+    Subshell(crate::subshell::Subshell),
 }
 
 pub enum AppMode {
@@ -347,7 +348,14 @@ pub struct App {
     completion: Option<CompletionSession>,
     reverse_search: Option<ReverseSearchSession>,
     quicksearch: Option<String>,
+    shell_mode: ShellMode,
 }
+
+fn shell_escape_path(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+
 
 impl App {
     pub fn new(config: Config, left_path: PathBuf, right_path: PathBuf, state: &AppState, mouse: bool) -> Self {
@@ -408,8 +416,16 @@ impl App {
             completion: None,
             reverse_search: None,
             quicksearch: None,
+            shell_mode: ShellMode::Stateless,
             config,
         };
+        // Try to spawn subshell if configured
+        if app.config.startup.subshell {
+            match crate::subshell::Subshell::spawn() {
+                Ok(sub) => app.shell_mode = ShellMode::Subshell(sub),
+                Err(_) => {} // fall back to stateless silently
+            }
+        }
         // Load panel history
         let (ph_left, ph_right) = crate::panel_history::load();
         app.panel_history_left = ph_left;
@@ -563,10 +579,17 @@ impl App {
                 self.show_button_bar = !self.show_button_bar;
             }
             Action::ToggleShell => {
-                if self.show_output {
-                    self.show_output = false;
+                match &self.shell_mode {
+                    ShellMode::Subshell(_) => {
+                        // Enter interactive passthrough
+                        self.run_subshell_passthrough();
+                        return;
+                    }
+                    ShellMode::Stateless => {
+                        // Toggle output overlay
+                        self.show_output = !self.show_output;
+                    }
                 }
-                // Stateless mode: Ctrl+O hides output overlay
             }
             Action::UserMenu => {
                 if self.config.menu.is_empty() {
@@ -1067,42 +1090,49 @@ impl App {
         }
         self.history.push(cmd.clone());
         let _ = self.history.save(&crate::state::history_path());
+        self.cmdline.clear();
 
         let cwd = self.active_panel().path.0.clone();
-        match std::process::Command::new("sh")
-            .arg("-c")
-            .arg(&cmd)
-            .current_dir(&cwd)
-            .output()
-        {
-            Ok(out) => {
-                let mut combined = String::new();
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                if !stdout.is_empty() {
-                    combined.push_str(&stdout);
-                }
-                if !stderr.is_empty() {
-                    if !combined.is_empty() {
-                        combined.push_str("\n--- stderr ---\n");
-                    }
-                    combined.push_str(&stderr);
-                }
-                if combined.is_empty() {
-                    combined = "(no output)".to_string();
-                }
-                self.last_output = Some(combined);
-                self.show_output = true;
-                self.overlay = OutputOverlayState::new();
-            }
-            Err(e) => {
-                self.last_output = Some(format!("Error running command: {}", e));
-                self.show_output = true;
-                self.overlay = OutputOverlayState::new();
-            }
-        }
 
-        self.cmdline.clear();
+        let output = match &self.shell_mode {
+            ShellMode::Subshell(sub) => {
+                // Sync cwd, then run command
+                let cd_cmd = format!("cd {}", shell_escape_path(&cwd));
+                let _ = sub.run_command(&cd_cmd);
+                match sub.run_command(&cmd) {
+                    Ok(bytes) => {
+                        let s = String::from_utf8_lossy(&bytes).into_owned();
+                        if s.trim().is_empty() { "(no output)".to_string() } else { s }
+                    }
+                    Err(e) => format!("Error: {e}"),
+                }
+            }
+            ShellMode::Stateless => {
+                match std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&cmd)
+                    .current_dir(&cwd)
+                    .output()
+                {
+                    Ok(out) => {
+                        let mut combined = String::new();
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        if !stdout.is_empty() { combined.push_str(&stdout); }
+                        if !stderr.is_empty() {
+                            if !combined.is_empty() { combined.push_str("\n--- stderr ---\n"); }
+                            combined.push_str(&stderr);
+                        }
+                        if combined.is_empty() { "(no output)".to_string() } else { combined }
+                    }
+                    Err(e) => format!("Error running command: {e}"),
+                }
+            }
+        };
+
+        self.last_output = Some(output);
+        self.show_output = true;
+        self.overlay = OutputOverlayState::new();
         self.active_panel_mut().refresh();
     }
 
@@ -1988,6 +2018,26 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn run_subshell_passthrough(&mut self) {
+        // Leave alternate screen so the subshell renders in the normal terminal
+        let _ = crossterm::execute!(stdout(), LeaveAlternateScreen);
+        let _ = disable_raw_mode();
+
+        if let ShellMode::Subshell(ref sub) = self.shell_mode {
+            let cwd = self.active_panel().path.0.clone();
+            let cd_cmd = format!("cd {}", shell_escape_path(&cwd));
+            let _ = sub.run_command(&cd_cmd);
+            let _ = sub.start_passthrough();
+        }
+
+        // Return to TUI
+        let _ = enable_raw_mode();
+        let _ = crossterm::execute!(stdout(), EnterAlternateScreen);
+        // Refresh panels in case the subshell changed the filesystem
+        self.left.refresh();
+        self.right.refresh();
     }
 
     fn save_state(&self) {

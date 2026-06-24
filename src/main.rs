@@ -4,6 +4,7 @@ mod app;
 mod bookmarks;
 mod config;
 mod panel_history;
+mod subshell;
 mod history;
 mod macros;
 mod provider;
@@ -22,11 +23,14 @@ fn main() -> anyhow::Result<()> {
     let mut dir2: Option<PathBuf> = None;
     let mut restore_flag: Option<bool> = None;
     let mut mouse = true;
+    let mut subshell_flag: Option<bool> = None;
 
     for arg in &args {
         match arg.as_str() {
             "--restore-paths" => restore_flag = Some(true),
             "--no-restore-paths" => restore_flag = Some(false),
+            "--subshell" => subshell_flag = Some(true),
+            "--no-subshell" => subshell_flag = Some(false),
             "-d" | "--nomouse" => mouse = false,
             s if !s.starts_with('-') => {
                 if dir1.is_none() {
@@ -39,7 +43,10 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let config = Config::load()?;
+    let mut config = Config::load()?;
+    if let Some(flag) = subshell_flag {
+        config.startup.subshell = flag;
+    }
     let saved_state = AppState::load();
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
