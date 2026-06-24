@@ -1,7 +1,6 @@
 use anyhow::{bail, Result};
 use std::io;
 use std::os::unix::io::RawFd;
-use std::path::Path;
 
 const SENTINEL: &str = "__SC_PROMPT_SENTINEL__";
 
@@ -98,30 +97,10 @@ impl Subshell {
         enable_raw_mode()?;
 
         let master = self.master_fd;
-        let result = passthrough_loop(master, false);
+        let result = passthrough_loop(master);
 
         disable_raw_mode()?;
         result
-    }
-
-    /// Like `start_passthrough`, but also exits automatically when the shell
-    /// sentinel prompt is detected in PTY output (i.e. the command has finished).
-    pub fn start_passthrough_until_prompt(&self) -> Result<()> {
-        use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-
-        enable_raw_mode()?;
-
-        let master = self.master_fd;
-        let result = passthrough_loop(master, true);
-
-        disable_raw_mode()?;
-        result
-    }
-
-    /// Send `cd <path>` to the subshell (best-effort; ignore errors).
-    pub fn sync_cwd(&self, path: &Path) {
-        let cmd = format!("cd {}", shell_escape(path.to_string_lossy().as_ref()));
-        let _ = self.run_command(&cmd);
     }
 
     /// Send a line to the PTY without waiting for the sentinel prompt.
@@ -316,14 +295,10 @@ fn read_until_sentinel(fd: RawFd) -> Result<Vec<u8>> {
 }
 
 /// Passthrough loop: copies stdin→master and master→stdout until Ctrl+O or EOF.
-/// If `exit_on_sentinel` is true, also exits when the shell sentinel prompt is
-/// detected in PTY output (i.e. a non-interactive command has finished).
-fn passthrough_loop(master: RawFd, exit_on_sentinel: bool) -> Result<()> {
+fn passthrough_loop(master: RawFd) -> Result<()> {
     let stdin_fd = libc::STDIN_FILENO;
     let stdout_fd = libc::STDOUT_FILENO;
     let mut buf = [0u8; 4096];
-    // Rolling window to detect the sentinel across read boundaries
-    let mut tail: Vec<u8> = Vec::with_capacity(SENTINEL.len() * 2);
 
     loop {
         let mut fds = [
@@ -349,16 +324,6 @@ fn passthrough_loop(master: RawFd, exit_on_sentinel: bool) -> Result<()> {
             if n <= 0 { break; }
             let data = &buf[..n as usize];
             let _ = unsafe { libc::write(stdout_fd, data.as_ptr() as *const _, data.len()) };
-            if exit_on_sentinel {
-                tail.extend_from_slice(data);
-                // Keep only enough bytes to detect a cross-boundary sentinel
-                if tail.len() > SENTINEL.len() * 2 {
-                    tail.drain(..tail.len() - SENTINEL.len());
-                }
-                if tail.windows(SENTINEL.len()).any(|w| w == SENTINEL.as_bytes()) {
-                    break;
-                }
-            }
         }
     }
     Ok(())

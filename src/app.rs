@@ -1129,22 +1129,15 @@ impl App {
         }
         let _ = disable_raw_mode();
 
-        let captured: Option<String> = match &self.shell_mode {
-            ShellMode::Subshell(sub) => {
-                let cd_cmd = format!("cd {}", shell_escape_path(&cwd));
-                let _ = sub.run_command(&cd_cmd);
-                let _ = sub.send_line(&cmd);
-                let _ = sub.start_passthrough_until_prompt();
-                None
-            }
-            ShellMode::Stateless => {
-                // Run in a fresh PTY so the child sees a real tty on stdout —
-                // interactive programs work correctly and non-interactive output
-                // is captured for the C-o overlay.
-                let raw = crate::subshell::run_with_pty_capture(&cmd, &cwd);
-                let text = strip_ansi(&raw);
-                if text.trim().is_empty() { None } else { Some(text) }
-            }
+        // Run in a fresh PTY regardless of shell mode: exits cleanly on process
+        // exit (EIO), works for both interactive and non-interactive programs,
+        // and avoids all sentinel/passthrough complexity.  The subshell's
+        // persistent state is only needed for the C-o interactive passthrough,
+        // not for one-shot cmdline commands which always sync cwd from the panel.
+        let captured: Option<String> = {
+            let raw = crate::subshell::run_with_pty_capture(&cmd, &cwd);
+            let text = strip_ansi(&raw);
+            if text.trim().is_empty() { None } else { Some(text) }
         };
 
         let _ = enable_raw_mode();
@@ -2065,7 +2058,10 @@ impl App {
                     .status();
             }
             ShellMode::Subshell(sub) => {
-                sub.sync_cwd(std::path::Path::new(&cwd));
+                // Non-blocking: send cd then the command; both execute inside
+                // the passthrough so we never block on the sentinel.
+                let cd_cmd = format!("cd {}", shell_escape_path(&cwd));
+                let _ = sub.send_line(&cd_cmd);
                 let _ = sub.send_line(cmd);
                 let _ = sub.start_passthrough();
             }
@@ -2093,8 +2089,10 @@ impl App {
 
         if let ShellMode::Subshell(ref sub) = self.shell_mode {
             let cwd = self.active_panel().path.0.clone();
+            // Use send_line (non-blocking) so we never wait for the sentinel.
+            // The cd executes inside the passthrough — no cwd sync lag.
             let cd_cmd = format!("cd {}", shell_escape_path(&cwd));
-            let _ = sub.run_command(&cd_cmd);
+            let _ = sub.send_line(&cd_cmd);
             let _ = sub.start_passthrough();
         }
 
