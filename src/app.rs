@@ -136,6 +136,7 @@ enum Action {
     BookmarkOpen,
     BookmarkAdd,
     Mkdir,
+    PathHistory,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -199,6 +200,7 @@ enum Modal {
     InputDialog(InputDialogState),
     SortPopup(PopupListState, Side),
     BookmarkList(PopupListState),
+    PathHistoryList(PopupListState),
 }
 
 // ── ModalAreas ────────────────────────────────────────────────────────────────
@@ -211,6 +213,7 @@ enum ModalAreas {
     InputDialog(InputDialogAreas, Option<Position>),
     SortPopup(Rect, usize),
     BookmarkList(Rect, usize),
+    PathHistoryList(Rect, usize),
 }
 
 // ── AppLayout ─────────────────────────────────────────────────────────────────
@@ -327,6 +330,10 @@ pub struct App {
     bookmark_popup_area: Cell<Rect>,
     bookmark_popup_offset: Cell<usize>,
     bookmarks: Vec<String>,
+    path_history_popup_area: Cell<Rect>,
+    path_history_popup_offset: Cell<usize>,
+    panel_history_left: crate::panel_history::PanelHistory,
+    panel_history_right: crate::panel_history::PanelHistory,
     // Pending left-button press for down+up click detection
     mouse_pressed: Option<Position>,
     should_quit: bool,
@@ -387,6 +394,10 @@ impl App {
             bookmark_popup_area: Cell::new(Rect::default()),
             bookmark_popup_offset: Cell::new(0),
             bookmarks: crate::bookmarks::load(),
+            path_history_popup_area: Cell::new(Rect::default()),
+            path_history_popup_offset: Cell::new(0),
+            panel_history_left: Default::default(),
+            panel_history_right: Default::default(),
             mouse_pressed: None,
             should_quit: false,
             mouse,
@@ -396,6 +407,10 @@ impl App {
             quicksearch: None,
             config,
         };
+        // Load panel history
+        let (ph_left, ph_right) = crate::panel_history::load();
+        app.panel_history_left = ph_left;
+        app.panel_history_right = ph_right;
         // Restore saved sort and hidden state, then re-sort
         app.left.sort_key = state.left_sort_key;
         app.left.sort_asc = state.left_sort_asc;
@@ -487,6 +502,7 @@ impl App {
             (&kb.bookmark_open, Action::BookmarkOpen),
             (&kb.bookmark_add, Action::BookmarkAdd),
             (&kb.mkdir, Action::Mkdir),
+            (&kb.path_history, Action::PathHistory),
         ]
     }
 
@@ -744,6 +760,18 @@ impl App {
                 let state = InputDialogState::new(InputDialogAction::Mkdir, " Create directory ", "");
                 self.modal = Modal::InputDialog(state);
             }
+            Action::PathHistory => {
+                let history = match self.active {
+                    Side::Left => &self.panel_history_left,
+                    Side::Right => &self.panel_history_right,
+                };
+                if history.entries.is_empty() {
+                    self.modal = Modal::Error("No path history.".to_string());
+                } else {
+                    let popup = PopupListState::new(history.entries.clone());
+                    self.modal = Modal::PathHistoryList(popup);
+                }
+            }
             Action::BookmarkAdd => {
                 let path = self.active_panel().path.0.clone();
                 if !self.bookmarks.contains(&path) {
@@ -754,6 +782,28 @@ impl App {
         }
     }
 
+    fn push_path_history(&mut self, path: &str) {
+        match self.active {
+            Side::Left => self.panel_history_left.push(path),
+            Side::Right => self.panel_history_right.push(path),
+        }
+    }
+
+    fn navigate_to_path(&mut self, path: &str) {
+        if !std::path::Path::new(path).exists() {
+            self.modal = Modal::Error(format!("Path no longer exists: {path}"));
+            return;
+        }
+        let current = self.active_panel().path.0.clone();
+        self.push_path_history(&current);
+        let panel = self.active_panel_mut();
+        panel.path = crate::provider::NodePath(path.to_string());
+        panel.cursor = 0;
+        panel.scroll = 0;
+        panel.tagged.clear();
+        panel.refresh();
+    }
+
     fn navigate_to_bookmark(&mut self, path: &str) {
         if !std::path::Path::new(path).exists() {
             self.bookmarks.retain(|b| b != path);
@@ -761,6 +811,8 @@ impl App {
             self.modal = Modal::Error(format!("Path no longer exists: {path}"));
             return;
         }
+        let current = self.active_panel().path.0.clone();
+        self.push_path_history(&current);
         let panel = self.active_panel_mut();
         panel.path = crate::provider::NodePath(path.to_string());
         panel.cursor = 0;
@@ -1121,6 +1173,21 @@ impl App {
                 }
                 return;
             }
+            Modal::PathHistoryList(_) => {
+                let vh = self.path_history_popup_area.get().height.saturating_sub(2) as usize;
+                let outcome = if let Modal::PathHistoryList(ref mut s) = self.modal {
+                    s.handle_key(&event, vh)
+                } else { PopupOutcome::Dismissed };
+                match outcome {
+                    PopupOutcome::Accept(path) => {
+                        self.modal = Modal::None;
+                        self.navigate_to_path(&path);
+                    }
+                    PopupOutcome::Dismissed => self.modal = Modal::None,
+                    _ => {}
+                }
+                return;
+            }
             Modal::BookmarkList(_) => {
                 let vh = self.bookmark_popup_area.get().height.saturating_sub(2) as usize;
                 let outcome = if let Modal::BookmarkList(ref mut s) = self.modal {
@@ -1326,8 +1393,16 @@ impl App {
         // Panel navigation keys are always intercepted first.
         let am = self.action_mode();
         let vh = self.active_vh();
+        let path_before = self.active_panel().path.0.clone();
         match self.active_panel_mut().handle_key(&event, vh, am) {
-            PanelOutcome::Consumed => return,
+            PanelOutcome::Consumed => {
+                // Record old path in history when a directory change occurred
+                let path_after = self.active_panel().path.0.clone();
+                if path_after != path_before {
+                    self.push_path_history(&path_before);
+                }
+                return;
+            }
             PanelOutcome::ExecuteCommand => { self.execute_command(); return; }
             PanelOutcome::Passthrough => {}
         }
@@ -1426,6 +1501,29 @@ impl App {
                     }
                 } else if input_cancel.clicked(down, up) {
                     self.modal = Modal::None;
+                }
+            }
+            Modal::PathHistoryList(_) => {
+                let area = self.path_history_popup_area.get();
+                let offset = self.path_history_popup_offset.get();
+                if area.width > 0 {
+                    let inner_y = area.y + 1;
+                    let inner_bottom = area.y + area.height.saturating_sub(1);
+                    if down == Some(up) && area.contains(up) && up.y >= inner_y && up.y < inner_bottom {
+                        let idx = offset + (up.y - inner_y) as usize;
+                        if let Modal::PathHistoryList(ref mut s) = self.modal {
+                            if idx < s.items.len() { s.selected = idx; }
+                        }
+                        let path = if let Modal::PathHistoryList(ref s) = self.modal {
+                            s.selected_item().map(String::from)
+                        } else { None };
+                        self.modal = Modal::None;
+                        if let Some(p) = path {
+                            self.navigate_to_path(&p);
+                        }
+                    } else if !area.contains(up) {
+                        self.modal = Modal::None;
+                    }
                 }
             }
             Modal::BookmarkList(_) => {
@@ -1667,6 +1765,7 @@ impl App {
                         Modal::UserMenu(s) => s.move_up(),
                         Modal::SortPopup(s, _) => s.move_up(),
                         Modal::BookmarkList(s) => s.move_up(),
+                        Modal::PathHistoryList(s) => s.move_up(),
                         _ => {}
                     }
                 }
@@ -1675,6 +1774,7 @@ impl App {
                         Modal::UserMenu(s) => s.move_down(),
                         Modal::SortPopup(s, _) => s.move_down(),
                         Modal::BookmarkList(s) => s.move_down(),
+                        Modal::PathHistoryList(s) => s.move_down(),
                         _ => {}
                     }
                 }
@@ -1838,6 +1938,7 @@ impl App {
         };
         let _ = state.save();
         let _ = self.history.save(&crate::state::history_path());
+        let _ = crate::panel_history::save(&self.panel_history_left, &self.panel_history_right);
     }
 
     fn render(&mut self, frame: &mut Frame) {
@@ -2012,6 +2113,18 @@ impl App {
                     .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
                 ModalAreas::SortPopup(r, new_offset)
             }
+            Modal::PathHistoryList(state) => {
+                let panel_area = match self.active {
+                    Side::Left => self.left_area.get(),
+                    Side::Right => self.right_area.get(),
+                };
+                let anchor_x = panel_area.x + 2;
+                let anchor_y = panel_area.y + panel_area.height.saturating_sub(1);
+                let offset = self.path_history_popup_offset.get();
+                let (r, new_offset) = PopupListWidget { cs: &cs, state }
+                    .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
+                ModalAreas::PathHistoryList(r, new_offset)
+            }
             Modal::BookmarkList(state) => {
                 let panel_area = match self.active {
                     Side::Left => self.left_area.get(),
@@ -2048,6 +2161,10 @@ impl App {
             ModalAreas::SortPopup(r, offset) => {
                 self.sort_popup_area.set(r);
                 self.sort_popup_offset.set(offset);
+            }
+            ModalAreas::PathHistoryList(r, offset) => {
+                self.path_history_popup_area.set(r);
+                self.path_history_popup_offset.set(offset);
             }
             ModalAreas::BookmarkList(r, offset) => {
                 self.bookmark_popup_area.set(r);

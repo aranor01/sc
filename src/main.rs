@@ -3,6 +3,7 @@
 mod app;
 mod bookmarks;
 mod config;
+mod panel_history;
 mod history;
 mod macros;
 mod provider;
