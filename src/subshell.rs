@@ -33,6 +33,8 @@ impl Subshell {
 
             let child_pid = libc::fork();
             if child_pid < 0 {
+                libc::close(slave_fd);
+                libc::close(master_fd);
                 bail!("fork failed: {}", io::Error::last_os_error());
             }
 

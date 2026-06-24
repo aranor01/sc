@@ -878,6 +878,11 @@ impl App {
         }
     }
 
+    fn reopen_dialog_with_error(&mut self, mut state: InputDialogState, err: String) {
+        state.error = Some(err);
+        self.modal = Modal::InputDialog(state);
+    }
+
     fn execute_input_dialog(&mut self, state: InputDialogState) {
         let new_text = state.input.text.trim().to_string();
         match state.action {
@@ -949,15 +954,14 @@ impl App {
                             self.active_panel_mut().refresh();
                         }
                         Err(e) => {
-                            if let Modal::InputDialog(ref mut s) = self.modal {
-                                s.error = Some(e);
-                            }
-                            return; // keep dialog open
+                            self.reopen_dialog_with_error(state, e);
+                            return;
                         }
                     }
                 }
             }
             InputDialogAction::SelectGroup => {
+                if new_text.is_empty() { return; }
                 match validate_filter_pattern(&new_text) {
                     Ok(pat) => {
                         let names: Vec<String> = self.active_panel().entries.iter()
@@ -968,23 +972,20 @@ impl App {
                         for name in names { panel.tagged.insert(name); }
                     }
                     Err(e) => {
-                        if let Modal::InputDialog(ref mut s) = self.modal {
-                            s.error = Some(e);
-                        }
+                        self.reopen_dialog_with_error(state, e);
                         return;
                     }
                 }
             }
             InputDialogAction::UnselectGroup => {
+                if new_text.is_empty() { return; }
                 match validate_filter_pattern(&new_text) {
                     Ok(pat) => {
                         let panel = self.active_panel_mut();
                         panel.tagged.retain(|n| !pat.matches(n));
                     }
                     Err(e) => {
-                        if let Modal::InputDialog(ref mut s) = self.modal {
-                            s.error = Some(e);
-                        }
+                        self.reopen_dialog_with_error(state, e);
                         return;
                     }
                 }
@@ -1736,8 +1737,8 @@ impl App {
                 Side::Right => &mut self.right,
             };
             if rel_x >= 2 && rel_x < 2 + name_width {
-                // Name column
-                if matches!(panel.sort_key, SortKey::Name | SortKey::Extension) {
+                // Name column: toggle direction if already sorting by Name, else switch to Name
+                if panel.sort_key == SortKey::Name {
                     panel.sort_asc = !panel.sort_asc;
                 } else {
                     panel.sort_key = SortKey::Name;
@@ -2022,7 +2023,11 @@ impl App {
 
     fn run_subshell_passthrough(&mut self) {
         // Leave alternate screen so the subshell renders in the normal terminal
-        let _ = crossterm::execute!(stdout(), LeaveAlternateScreen);
+        if self.mouse {
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        } else {
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen);
+        }
         let _ = disable_raw_mode();
 
         if let ShellMode::Subshell(ref sub) = self.shell_mode {
@@ -2034,7 +2039,11 @@ impl App {
 
         // Return to TUI
         let _ = enable_raw_mode();
-        let _ = crossterm::execute!(stdout(), EnterAlternateScreen);
+        if self.mouse {
+            let _ = crossterm::execute!(stdout(), EnterAlternateScreen, EnableMouseCapture);
+        } else {
+            let _ = crossterm::execute!(stdout(), EnterAlternateScreen);
+        }
         // Refresh panels in case the subshell changed the filesystem
         self.left.refresh();
         self.right.refresh();

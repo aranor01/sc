@@ -134,24 +134,6 @@ impl<'a> ButtonBarWidget<'a> {
         None
     }
 
-    // Legacy: only built-in Fkey buttons (used by callers that don't have menu yet)
-    pub fn buttons(kb: &KeyBindings) -> Vec<(u8, &'static str)> {
-        let mut items: Vec<(u8, &'static str)> = Vec::new();
-        let pairs: &[(&ActionBindings, &'static str)] = &[
-            (&kb.user_menu,  "Menu"),
-            (&kb.copy,       "Copy"),
-            (&kb.move_entry, "Move"),
-            (&kb.delete,     "Delete"),
-            (&kb.exit,       "Quit"),
-        ];
-        for (bindings, label) in pairs {
-            if let Some(n) = first_fkey(bindings) {
-                items.push((n, label));
-            }
-        }
-        items.sort_by_key(|(n, _)| *n);
-        items
-    }
 }
 
 impl<'a> Widget for ButtonBarWidget<'a> {
