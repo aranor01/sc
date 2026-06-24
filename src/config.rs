@@ -303,9 +303,43 @@ pub struct Config {
     pub startup: StartupConfig,
 }
 
+/// Locate the scripts directory at runtime using a two-step search:
+/// 1. Compile-time install prefix: `<SC_INSTALL_PREFIX>/share/sc/scripts/`
+/// 2. Fallback: `scripts/` directory alongside the running binary
+pub fn find_scripts_dir() -> Option<std::path::PathBuf> {
+    let prefix = std::path::PathBuf::from(env!("SC_INSTALL_PREFIX"))
+        .join("share").join("sc").join("scripts");
+    if prefix.join("edit.sh").exists() {
+        return Some(prefix);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let scripts = parent.join("scripts");
+            if scripts.join("edit.sh").exists() {
+                return Some(scripts);
+            }
+        }
+    }
+    None
+}
+
+fn generate_default_config(scripts_dir: &std::path::Path) -> String {
+    let s = scripts_dir.to_string_lossy();
+    format!(
+        r#"{{
+  "menu": [
+    {{ "label": "View",        "command": "{s}/view.sh %f",                             "keys": "F3" }},
+    {{ "label": "Edit",        "command": "{s}/edit.sh %f",                             "keys": "F4" }},
+    {{ "label": "Edit config", "command": "{s}/edit.sh ~/.config/sc/config.json" }}
+  ]
+}}
+"#
+    )
+}
+
 impl Config {
     /// Load config from the default path (~/.config/sc/config.json).
-    /// Returns defaults if the file is absent.
+    /// If the file is absent and scripts are found, generates a default config.
     pub fn load() -> Result<Self> {
         let path = dirs::config_dir()
             .context("cannot determine config directory")?
@@ -313,6 +347,14 @@ impl Config {
             .join("config.json");
 
         if !path.exists() {
+            if let Some(scripts_dir) = find_scripts_dir() {
+                let content = generate_default_config(&scripts_dir);
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&path, &content);
+                return Self::load_from_str(&content);
+            }
             return Ok(Self::default());
         }
 
