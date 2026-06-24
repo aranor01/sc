@@ -59,6 +59,7 @@ pub struct PanelState {
     pub error: Option<String>,
     pub sort_key: SortKey,
     pub sort_asc: bool,
+    pub show_hidden: bool,
 }
 
 impl PanelState {
@@ -73,6 +74,7 @@ impl PanelState {
             error: None,
             sort_key: SortKey::Name,
             sort_asc: true,
+            show_hidden: false,
         };
         s.refresh();
         s
@@ -93,6 +95,12 @@ impl PanelState {
                             permissions: String::new(),
                         },
                     );
+                }
+                // Filter hidden files (dotfiles), keeping ".."
+                if !self.show_hidden {
+                    entries.retain(|e| e.name == ".." || !e.name.starts_with('.'));
+                    // Untag any entries that are now hidden
+                    self.tagged.retain(|n| !n.starts_with('.'));
                 }
                 // Keep ".." at position 0, sort the rest
                 let sort_start = if entries.first().map(|e| e.name == "..").unwrap_or(false) { 1 } else { 0 };

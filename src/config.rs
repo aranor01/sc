@@ -164,6 +164,7 @@ pub struct KeyBindings {
     pub sort_panel: ActionBindings,
     pub quicksearch: ActionBindings,
     pub quicksearch_alt: ActionBindings,
+    pub toggle_hidden: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -221,6 +222,7 @@ impl Default for KeyBindings {
             sort_panel: vec![KeyBinding::Single(ke(Char('s'), c))],
             quicksearch: vec![KeyBinding::Single(ke(Char('/'), n))],
             quicksearch_alt: vec![KeyBinding::Single(ke(Char('s'), a))],
+            toggle_hidden: vec![KeyBinding::Single(ke(Char('.'), a))],
         }
     }
 }
@@ -410,6 +412,7 @@ impl Config {
                     "sort_panel" => cfg.keybindings.sort_panel = bindings,
                     "quicksearch" => cfg.keybindings.quicksearch = bindings,
                     "quicksearch_alt" => cfg.keybindings.quicksearch_alt = bindings,
+                    "toggle_hidden" => cfg.keybindings.toggle_hidden = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }

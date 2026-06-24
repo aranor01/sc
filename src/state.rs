@@ -31,6 +31,10 @@ pub struct AppState {
     pub right_sort_key: SortKey,
     #[serde(default = "default_true")]
     pub right_sort_asc: bool,
+    #[serde(default)]
+    pub left_show_hidden: bool,
+    #[serde(default)]
+    pub right_show_hidden: bool,
 }
 
 fn default_true() -> bool {
@@ -55,6 +59,8 @@ impl Default for AppState {
             left_sort_asc: true,
             right_sort_key: SortKey::Name,
             right_sort_asc: true,
+            left_show_hidden: false,
+            right_show_hidden: false,
         }
     }
 }

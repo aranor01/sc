@@ -132,6 +132,7 @@ enum Action {
     SortPanel,
     Quicksearch,
     QuicksearchAlt,
+    ToggleHidden,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -384,11 +385,13 @@ impl App {
             quicksearch: None,
             config,
         };
-        // Restore saved sort state and re-sort panels
+        // Restore saved sort and hidden state, then re-sort
         app.left.sort_key = state.left_sort_key;
         app.left.sort_asc = state.left_sort_asc;
+        app.left.show_hidden = state.left_show_hidden;
         app.right.sort_key = state.right_sort_key;
         app.right.sort_asc = state.right_sort_asc;
+        app.right.show_hidden = state.right_show_hidden;
         app.left.refresh();
         app.right.refresh();
         app
@@ -469,6 +472,7 @@ impl App {
             (&kb.sort_panel, Action::SortPanel),
             (&kb.quicksearch, Action::Quicksearch),
             (&kb.quicksearch_alt, Action::QuicksearchAlt),
+            (&kb.toggle_hidden, Action::ToggleHidden),
         ]
     }
 
@@ -708,6 +712,11 @@ impl App {
             }
             Action::Quicksearch | Action::QuicksearchAlt => {
                 self.quicksearch = Some(String::new());
+            }
+            Action::ToggleHidden => {
+                let panel = self.active_panel_mut();
+                panel.show_hidden = !panel.show_hidden;
+                panel.refresh();
             }
         }
     }
@@ -1707,8 +1716,10 @@ impl App {
             right_path: self.right.path.0.clone(),
             left_sort_key: self.left.sort_key,
             left_sort_asc: self.left.sort_asc,
+            left_show_hidden: self.left.show_hidden,
             right_sort_key: self.right.sort_key,
             right_sort_asc: self.right.sort_asc,
+            right_show_hidden: self.right.show_hidden,
         };
         let _ = state.save();
         let _ = self.history.save(&crate::state::history_path());
