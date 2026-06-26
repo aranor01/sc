@@ -10,6 +10,7 @@ use crossterm::{
         MouseButton, MouseEvent, MouseEventKind,
     },
     execute,
+    cursor::{Hide, Show},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
@@ -1123,9 +1124,9 @@ impl App {
 
         // Tear down TUI so any spawned process (interactive or not) gets a real terminal.
         if self.mouse {
-            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
         } else {
-            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen);
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, Show);
         }
         let _ = disable_raw_mode();
 
@@ -1142,9 +1143,9 @@ impl App {
 
         let _ = enable_raw_mode();
         if self.mouse {
-            let _ = crossterm::execute!(stdout(), EnterAlternateScreen, EnableMouseCapture);
+            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableMouseCapture);
         } else {
-            let _ = crossterm::execute!(stdout(), EnterAlternateScreen);
+            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen);
         }
 
         // Update stored output but don't auto-show; user presses C-o to view it.
@@ -2043,9 +2044,9 @@ impl App {
         let cwd = self.active_panel().path.0.clone();
 
         if self.mouse {
-            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
         } else {
-            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen);
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, Show);
         }
         let _ = disable_raw_mode();
 
@@ -2069,9 +2070,9 @@ impl App {
 
         let _ = enable_raw_mode();
         if self.mouse {
-            let _ = crossterm::execute!(stdout(), EnterAlternateScreen, EnableMouseCapture);
+            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableMouseCapture);
         } else {
-            let _ = crossterm::execute!(stdout(), EnterAlternateScreen);
+            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen);
         }
         self.needs_full_redraw = true;
         self.left.refresh();
@@ -2081,9 +2082,9 @@ impl App {
     fn run_subshell_passthrough(&mut self) {
         // Leave alternate screen so the subshell renders in the normal terminal
         if self.mouse {
-            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
         } else {
-            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen);
+            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, Show);
         }
         let _ = disable_raw_mode();
 
@@ -2099,9 +2100,9 @@ impl App {
         // Return to TUI
         let _ = enable_raw_mode();
         if self.mouse {
-            let _ = crossterm::execute!(stdout(), EnterAlternateScreen, EnableMouseCapture);
+            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableMouseCapture);
         } else {
-            let _ = crossterm::execute!(stdout(), EnterAlternateScreen);
+            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen);
         }
         // Refresh panels in case the subshell changed the filesystem
         self.needs_full_redraw = true;
