@@ -113,6 +113,10 @@ impl Subshell {
         write_fd(self.master_fd, format!("{line}\n").as_bytes())
     }
 
+    pub fn send_raw(&self, bytes: &[u8]) {
+        let _ = write_fd(self.master_fd, bytes);
+    }
+
     /// Control the ECHO flag on the PTY slave's line discipline.
     /// Opens the slave device transiently so tcsetattr targets the correct termios.
     pub fn set_echo(&self, on: bool) {

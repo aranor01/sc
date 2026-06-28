@@ -309,6 +309,7 @@ pub struct App {
     history: CommandHistory,
     last_output: Option<String>,
     show_output: bool,
+    subshell_prompt_needed: bool,
     overlay: OutputOverlayState,
     modal: Modal,
     pending_chord: Option<KeyEvent>,
@@ -401,6 +402,7 @@ impl App {
             history: hist,
             last_output: None,
             show_output: false,
+            subshell_prompt_needed: false,
             overlay: OutputOverlayState::new(),
             modal: Modal::None,
             pending_chord: None,
@@ -1135,6 +1137,32 @@ impl App {
         }
         let _ = disable_raw_mode();
 
+        // Start on a new line — the scrollback cursor may be right after bash's
+        // last prompt with no trailing newline.
+        let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\r\n");
+
+        // In subshell mode: if the persistent bash's cwd differs from the panel's,
+        // show the cd visually and sync the bash now (before the command output),
+        // so Ctrl+O later finds it already aligned and the order on screen is correct.
+        if let ShellMode::Subshell(ref sub) = self.shell_mode {
+            let shell_cwd = std::fs::read_link(format!("/proc/{}/cwd", sub.child_pid))
+                .ok()
+                .map(|p| p.to_string_lossy().to_string());
+            if shell_cwd.as_deref() != Some(cwd.as_str()) {
+                let _ = std::io::Write::write_all(
+                    &mut std::io::stdout(),
+                    format!("[sc]$ cd {}\r\n", shell_escape_path(&cwd)).as_bytes(),
+                );
+                let _ = sub.send_line(&format!(" cd {}", shell_escape_path(&cwd)));
+            }
+        }
+
+        // Echo the command so the user sees what ran and in what order.
+        let _ = std::io::Write::write_all(
+            &mut std::io::stdout(),
+            format!("[sc]$ {}\r\n", cmd).as_bytes(),
+        );
+
         // Always run cmdline commands in a fresh PTY. This gives clean output
         // with no readline echo artifacts regardless of shell mode. The persistent
         // subshell is reserved for Ctrl+O interactive passthrough only.
@@ -1170,6 +1198,7 @@ impl App {
         if let ShellMode::Subshell(ref sub) = self.shell_mode {
             let escaped = shell_escape_path(&cmd);
             let _ = sub.send_line(&format!("history -s {escaped}"));
+            self.subshell_prompt_needed = true;
         }
 
         self.show_output = false;
@@ -2122,8 +2151,17 @@ impl App {
                 .ok()
                 .map(|p| p.to_string_lossy().to_string());
             if shell_cwd.as_deref() != Some(cwd.as_str()) {
-                let cd_cmd = format!(" cd {}", shell_escape_path(&cwd));
+                // \x15 (Ctrl+U) kills any readline-buffered partial input before we
+                // inject the cd, preventing accidental execution of user-typed text.
+                let cd_cmd = format!("\x15 cd {}", shell_escape_path(&cwd));
                 let _ = sub.send_line(&cd_cmd);
+                // cd echo + post-cd prompt will be visible at session start
+            } else if self.subshell_prompt_needed {
+                // A sc cmdline command ran since last passthrough: drain() discarded
+                // bash's PS1, so we need \n to force a fresh one. \x15 clears any
+                // partial readline input first to prevent accidental execution.
+                self.subshell_prompt_needed = false;
+                let _ = sub.send_line("\x15");
             }
             let _ = sub.start_passthrough(ipc_fd);
 
