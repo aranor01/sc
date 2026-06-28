@@ -1029,6 +1029,7 @@ impl App {
         match std::process::Command::new("bash")
             .arg(&script)
             .arg(&self.cmdline.text)
+            .current_dir(&self.active_panel().path.0)
             .output()
         {
             Ok(out) => std::str::from_utf8(&out.stdout)
@@ -2551,7 +2552,7 @@ fn find_complete_script() -> Option<PathBuf> {
     for name in &["scripts/sc-complete", "scripts/complete.sh"] {
         let p = Path::new(name);
         if p.exists() {
-            return Some(p.to_path_buf());
+            return Some(p.canonicalize().unwrap_or_else(|_| p.to_path_buf()));
         }
     }
     // Installed: look next to the binary
