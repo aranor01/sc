@@ -2317,7 +2317,7 @@ impl App {
                         let total_col = prompt_len + anchor_chars;
                         let anchor_x = cmdline_area.x + (total_col % width) as u16;
                         let anchor_y = cmdline_area.y + (total_col / width) as u16;
-                        let (r, offset) = PopupListWidget { cs: &cs, state: &session.list }
+                        let (r, offset) = PopupListWidget { cs: &cs, state: &session.list, title: None }
                             .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, self.completion_popup_offset.get());
                         self.completion_popup_area.set(r);
                         self.completion_popup_offset.set(offset);
@@ -2328,7 +2328,7 @@ impl App {
                 }
 
                 if let Some(session) = self.reverse_search.as_ref() {
-                    let (r, offset) = PopupListWidget { cs: &cs, state: &session.list }
+                    let (r, offset) = PopupListWidget { cs: &cs, state: &session.list, title: None }
                         .render_at(area, frame.buffer_mut(), cmdline_area.x, cmdline_area.y, self.rev_search_popup_offset.get());
                     self.rev_search_popup_area.set(r);
                     self.rev_search_popup_offset.set(offset);
@@ -2376,7 +2376,7 @@ impl App {
                 let anchor_x = panel_area.x + 2;
                 let anchor_y = panel_area.y + panel_area.height.saturating_sub(1);
                 let offset = self.sort_popup_offset.get();
-                let (r, new_offset) = PopupListWidget { cs: &cs, state }
+                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Sort by") }
                     .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
                 ModalAreas::SortPopup(r, new_offset)
             }
@@ -2388,7 +2388,7 @@ impl App {
                 let anchor_x = panel_area.x + 2;
                 let anchor_y = panel_area.y + panel_area.height.saturating_sub(1);
                 let offset = self.path_history_popup_offset.get();
-                let (r, new_offset) = PopupListWidget { cs: &cs, state }
+                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Path History") }
                     .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
                 ModalAreas::PathHistoryList(r, new_offset)
             }
@@ -2400,7 +2400,7 @@ impl App {
                 let anchor_x = panel_area.x + 2;
                 let anchor_y = panel_area.y + panel_area.height.saturating_sub(1);
                 let offset = self.bookmark_popup_offset.get();
-                let (r, new_offset) = PopupListWidget { cs: &cs, state }
+                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Directory Bookmarks") }
                     .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
                 ModalAreas::BookmarkList(r, new_offset)
             }

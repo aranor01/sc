@@ -3,10 +3,10 @@ use crate::ui::modal_event::PopupOutcome;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, StatefulWidget, Widget},
+    widgets::{block::Title, Block, Borders, Clear, List, ListItem, ListState, StatefulWidget, Widget},
 };
 
 use super::to_color;
@@ -101,6 +101,7 @@ impl PopupListState {
 pub struct PopupListWidget<'a> {
     pub cs: &'a ColorScheme,
     pub state: &'a PopupListState,
+    pub title: Option<&'a str>,
 }
 
 impl<'a> PopupListWidget<'a> {
@@ -139,10 +140,16 @@ impl<'a> PopupListWidget<'a> {
 
         Widget::render(Clear, popup_area, buf);
 
-        let block = Block::default()
+        let mut block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(to_color(self.cs.dialog_border_fg)))
             .style(Style::default().bg(to_color(self.cs.dialog_bg)));
+        if let Some(t) = self.title {
+            block = block.title(
+                Title::from(format!(" {t} "))
+                    .alignment(Alignment::Center),
+            );
+        }
 
         let inner = block.inner(popup_area);
         block.render(popup_area, buf);
