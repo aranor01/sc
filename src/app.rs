@@ -2116,10 +2116,14 @@ impl App {
             // Discard any buffered readline echoes from `history -s` calls that
             // accumulated since the last passthrough session.
             sub.drain();
-            // Use send_line (non-blocking) so we never wait for the sentinel.
-            // The cd executes inside the passthrough — no cwd sync lag.
-            let cd_cmd = format!(" cd {}", shell_escape_path(&cwd));
-            let _ = sub.send_line(&cd_cmd);
+            // Only sync cwd if the subshell is not already in the panel's directory.
+            let shell_cwd = std::fs::read_link(format!("/proc/{}/cwd", sub.child_pid))
+                .ok()
+                .map(|p| p.to_string_lossy().to_string());
+            if shell_cwd.as_deref() != Some(cwd.as_str()) {
+                let cd_cmd = format!(" cd {}", shell_escape_path(&cwd));
+                let _ = sub.send_line(&cd_cmd);
+            }
             let _ = sub.start_passthrough(ipc_fd);
 
             // Sync active panel to wherever the subshell ended up.
