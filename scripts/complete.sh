@@ -76,11 +76,11 @@ if declare -f _completion_loader &>/dev/null; then
         "$func" "$cmd" "$cur" "$prev" 2>/dev/null
 
         if [ "${#COMPREPLY[@]}" -gt 0 ]; then
-            printf '%s\n' "${COMPREPLY[@]}"
+            printf '%s\n' "${COMPREPLY[@]}" | while IFS= read -r f; do printf '%q\n' "$f"; done
             exit 0
         fi
     fi
 fi
 
 # Fallback: filename completion
-compgen -f -- "$cur"
+compgen -f -- "$cur" | while IFS= read -r f; do printf '%q\n' "$f"; done
