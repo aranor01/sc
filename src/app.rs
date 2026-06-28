@@ -22,6 +22,7 @@ use ratatui::{
 };
 
 use crate::config::{ActionBindings, Config, KeyBinding};
+use crate::ipc::{IpcMessage, IpcServer};
 use crate::history::CommandHistory;
 use crate::macros::{MacroContext, PanelContext};
 use crate::provider::{NodeKind, NodePath, TreeProvider};
@@ -352,11 +353,13 @@ pub struct App {
     quicksearch: Option<String>,
     shell_mode: ShellMode,
     needs_full_redraw: bool,
+    ipc: Option<IpcServer>,
 }
 
 fn shell_escape_path(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
+
 
 /// Strip ANSI/VT100 escape sequences and bare carriage returns from PTY output
 /// so it can be displayed cleanly in the output overlay.
@@ -436,6 +439,7 @@ impl App {
             quicksearch: None,
             shell_mode: ShellMode::Stateless,
             needs_full_redraw: false,
+            ipc: IpcServer::new(),
             config,
         };
         // Try to spawn subshell if configured
@@ -1122,7 +1126,7 @@ impl App {
 
         let cwd = self.active_panel().path.0.clone();
 
-        // Tear down TUI so any spawned process (interactive or not) gets a real terminal.
+        // Tear down TUI so any spawned process gets a real terminal.
         if self.mouse {
             let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
         } else {
@@ -1130,16 +1134,17 @@ impl App {
         }
         let _ = disable_raw_mode();
 
-        // Run in a fresh PTY regardless of shell mode: exits cleanly on process
-        // exit (EIO), works for both interactive and non-interactive programs,
-        // and avoids all sentinel/passthrough complexity.  The subshell's
-        // persistent state is only needed for the C-o interactive passthrough,
-        // not for one-shot cmdline commands which always sync cwd from the panel.
-        let captured: Option<String> = {
-            let raw = crate::subshell::run_with_pty_capture(&cmd, &cwd);
-            let text = strip_ansi(&raw);
-            if text.trim().is_empty() { None } else { Some(text) }
-        };
+        // Always run cmdline commands in a fresh PTY. This gives clean output
+        // with no readline echo artifacts regardless of shell mode. The persistent
+        // subshell is reserved for Ctrl+O interactive passthrough only.
+        // Append sc-action so the shell reports its final $PWD back via IPC,
+        // enabling transparent cd navigation in the panel.
+        let binding = std::env::current_exe().unwrap().parent().unwrap().to_owned().join("sc-action");
+        let sc_action_path = binding.to_str().unwrap_or("sc-action");
+        let wrapped = format!(r#"{cmd}; {sc_action_path} "$SC_TOKEN" ShowPanels "$PWD""#);
+        let raw = crate::subshell::run_with_pty_capture(&wrapped, &cwd);
+        let text = strip_ansi(&raw);
+        self.last_output = if text.trim().is_empty() { None } else { Some(text) };
 
         let _ = enable_raw_mode();
         if self.mouse {
@@ -1148,8 +1153,24 @@ impl App {
             let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen);
         }
 
-        // Update stored output but don't auto-show; user presses C-o to view it.
-        self.last_output = captured;
+        // Drain the IPC socket: picks up the ShowPanels message sent by sc-action
+        // above, and also any Tag/Filter/etc. messages the command may have sent.
+        let pending: Vec<_> = self.ipc.iter().flat_map(|ipc| {
+            std::iter::from_fn(|| ipc.try_recv())
+        }).collect();
+        for msg in pending {
+            self.handle_ipc(msg);
+        }
+
+        // In subshell mode, add the command to bash's in-memory history so the
+        // user can recall it with Up arrow during Ctrl+O sessions.  The echo of
+        // `history -s` accumulates unread in the PTY master buffer; it is drained
+        // before the next passthrough starts.
+        if let ShellMode::Subshell(ref sub) = self.shell_mode {
+            let escaped = shell_escape_path(&cmd);
+            let _ = sub.send_line(&format!("history -s {escaped}"));
+        }
+
         self.show_output = false;
         self.needs_full_redraw = true;
         self.left.refresh();
@@ -2050,6 +2071,7 @@ impl App {
         }
         let _ = disable_raw_mode();
 
+        let ipc_fd = self.ipc.as_ref().map(|s| s.raw_fd());
         match &self.shell_mode {
             ShellMode::Stateless => {
                 let _ = std::process::Command::new("sh")
@@ -2061,10 +2083,10 @@ impl App {
             ShellMode::Subshell(sub) => {
                 // Non-blocking: send cd then the command; both execute inside
                 // the passthrough so we never block on the sentinel.
-                let cd_cmd = format!("cd {}", shell_escape_path(&cwd));
+                let cd_cmd = format!(" cd {}", shell_escape_path(&cwd));
                 let _ = sub.send_line(&cd_cmd);
                 let _ = sub.send_line(cmd);
-                let _ = sub.start_passthrough();
+                let _ = sub.start_passthrough(ipc_fd);
             }
         }
 
@@ -2088,13 +2110,27 @@ impl App {
         }
         let _ = disable_raw_mode();
 
+        let ipc_fd = self.ipc.as_ref().map(|s| s.raw_fd());
         if let ShellMode::Subshell(ref sub) = self.shell_mode {
             let cwd = self.active_panel().path.0.clone();
+            // Discard any buffered readline echoes from `history -s` calls that
+            // accumulated since the last passthrough session.
+            sub.drain();
             // Use send_line (non-blocking) so we never wait for the sentinel.
             // The cd executes inside the passthrough — no cwd sync lag.
-            let cd_cmd = format!("cd {}", shell_escape_path(&cwd));
+            let cd_cmd = format!(" cd {}", shell_escape_path(&cwd));
             let _ = sub.send_line(&cd_cmd);
-            let _ = sub.start_passthrough();
+            let _ = sub.start_passthrough(ipc_fd);
+
+            // Sync active panel to wherever the subshell ended up.
+            // /proc/<pid>/cwd is valid here because the subshell is still alive.
+            if let Ok(link) = std::fs::read_link(format!("/proc/{}/cwd", sub.child_pid)) {
+                let new_cwd = link.to_string_lossy().to_string();
+                let panel_cwd = self.active_panel().path.0.clone();
+                if new_cwd != panel_cwd {
+                    self.navigate_to_path(&new_cwd);
+                }
+            }
         }
 
         // Return to TUI
@@ -2364,6 +2400,100 @@ impl App {
         }
     }
 
+    fn handle_ipc(&mut self, msg: IpcMessage) {
+        match msg {
+            IpcMessage::Tag(names) => {
+                let entries: Vec<String> = self.active_panel().entries.iter()
+                    .filter(|e| e.name != "..")
+                    .map(|e| e.name.clone())
+                    .collect();
+                let panel = self.active_panel_mut();
+                for name in names {
+                    let base = std::path::Path::new(&name)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&name)
+                        .to_string();
+                    if entries.contains(&base) {
+                        panel.tagged.insert(base);
+                    }
+                }
+            }
+            IpcMessage::Untag(names) => {
+                let panel = self.active_panel_mut();
+                for name in names {
+                    let base = std::path::Path::new(&name)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&name)
+                        .to_string();
+                    panel.tagged.remove(&base);
+                }
+            }
+            IpcMessage::TagOnly(names) => {
+                let entries: Vec<String> = self.active_panel().entries.iter()
+                    .filter(|e| e.name != "..")
+                    .map(|e| e.name.clone())
+                    .collect();
+                let panel = self.active_panel_mut();
+                panel.tagged.clear();
+                for name in names {
+                    let base = std::path::Path::new(&name)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&name)
+                        .to_string();
+                    if entries.contains(&base) {
+                        panel.tagged.insert(base);
+                    }
+                }
+            }
+            IpcMessage::SelectGroup(pattern) => {
+                if let Ok(pat) = validate_filter_pattern(&pattern) {
+                    let names: Vec<String> = self.active_panel().entries.iter()
+                        .filter(|e| e.name != ".." && pat.matches(&e.name))
+                        .map(|e| e.name.clone())
+                        .collect();
+                    let panel = self.active_panel_mut();
+                    for name in names { panel.tagged.insert(name); }
+                }
+            }
+            IpcMessage::UnselectGroup(pattern) => {
+                if let Ok(pat) = validate_filter_pattern(&pattern) {
+                    self.active_panel_mut().tagged.retain(|n| !pat.matches(n));
+                }
+            }
+            IpcMessage::InjectToCommandLine(text) => {
+                self.cmdline.cursor = self.cmdline.text.len();
+                self.cmdline.insert_str(&text);
+                self.show_cmdline = true;
+            }
+            IpcMessage::Filter(pattern) => {
+                if pattern.is_empty() {
+                    self.active_panel_mut().filter = None;
+                } else if let Ok(pat) = validate_filter_pattern(&pattern) {
+                    self.active_panel_mut().filter = Some(pat);
+                }
+                self.active_panel_mut().refresh();
+            }
+            IpcMessage::ToggleShell => {
+                self.handle_action(Action::ToggleShell);
+            }
+            IpcMessage::RefreshPanel => {
+                self.active_panel_mut().refresh();
+            }
+            IpcMessage::ShowPanels(maybe_cwd) => {
+                self.show_output = false;
+                if let Some(new_cwd) = maybe_cwd {
+                    let panel_cwd = self.active_panel().path.0.clone();
+                    if new_cwd != panel_cwd {
+                        self.navigate_to_path(&new_cwd);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn run(&mut self) -> Result<()> {
         enable_raw_mode()?;
         if self.mouse {
@@ -2400,6 +2530,10 @@ impl App {
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
+            }
+
+            if let Some(msg) = self.ipc.as_ref().and_then(|ipc| ipc.try_recv()) {
+                self.handle_ipc(msg);
             }
         }
 

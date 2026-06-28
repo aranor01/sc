@@ -7,6 +7,7 @@ const SENTINEL: &str = "__SC_PROMPT_SENTINEL__";
 pub struct Subshell {
     pub master_fd: RawFd,
     pub child_pid: libc::pid_t,
+    slave_name: String,
 }
 
 impl Subshell {
@@ -48,18 +49,15 @@ impl Subshell {
                 if slave_fd > 2 { libc::close(slave_fd); }
 
                 let ps1_env = format!("PS1={SENTINEL} $ \0");
-                // exec shell with customized PS1
+                // exec shell with customized PS1 and history settings
                 let shell_c = std::ffi::CString::new(shell).unwrap();
-                // argv is built but exec uses argv_env; kept for reference
-                let _argv: Vec<*const libc::c_char> = vec![
-                    shell_c.as_ptr(),
-                    std::ptr::null(),
-                ];
                 let ps1_cstr = std::ffi::CString::new(ps1_env.trim_end_matches('\0')).unwrap();
+                let histcontrol_cstr = std::ffi::CString::new("HISTCONTROL=ignorespace").unwrap();
                 let env_c = std::ffi::CString::new("env").unwrap();
                 let argv_env: Vec<*const libc::c_char> = vec![
                     env_c.as_ptr(),
                     ps1_cstr.as_ptr(),
+                    histcontrol_cstr.as_ptr(),
                     shell_c.as_ptr(),
                     std::ptr::null(),
                 ];
@@ -68,14 +66,20 @@ impl Subshell {
                 libc::_exit(1);
             }
 
-            // Parent
+            // Parent: get slave device name for set_echo before closing the fd.
+            // ptsname only needs master_fd — slave_fd can already be closed.
+            let slave_name = {
+                let ptr = libc::ptsname(master_fd);
+                if ptr.is_null() { String::new() }
+                else { std::ffi::CStr::from_ptr(ptr).to_str().unwrap_or("").to_string() }
+            };
             libc::close(slave_fd);
 
             // Wait a moment for the shell to start and emit its first prompt
             std::thread::sleep(std::time::Duration::from_millis(100));
             let _ = drain_fd(master_fd);
 
-            Ok(Subshell { master_fd, child_pid })
+            Ok(Subshell { master_fd, child_pid, slave_name })
         }
     }
 
@@ -91,13 +95,13 @@ impl Subshell {
     /// the user presses Ctrl+O or the shell exits.
     ///
     /// This call blocks until passthrough is exited.
-    pub fn start_passthrough(&self) -> Result<()> {
+    pub fn start_passthrough(&self, ipc_fd: Option<RawFd>) -> Result<()> {
         use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
         enable_raw_mode()?;
 
         let master = self.master_fd;
-        let result = passthrough_loop(master);
+        let result = passthrough_loop(master, ipc_fd);
 
         disable_raw_mode()?;
         result
@@ -107,6 +111,39 @@ impl Subshell {
     /// Use this before entering passthrough for interactive commands.
     pub fn send_line(&self, line: &str) -> Result<()> {
         write_fd(self.master_fd, format!("{line}\n").as_bytes())
+    }
+
+    /// Control the ECHO flag on the PTY slave's line discipline.
+    /// Opens the slave device transiently so tcsetattr targets the correct termios.
+    pub fn set_echo(&self, on: bool) {
+        if self.slave_name.is_empty() { return; }
+        let Ok(name) = std::ffi::CString::new(self.slave_name.as_str()) else { return; };
+        unsafe {
+            let fd = libc::open(name.as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
+            if fd < 0 { return; }
+            let mut t: libc::termios = std::mem::zeroed();
+            libc::tcgetattr(fd, &mut t);
+            if on { t.c_lflag |= libc::ECHO; } else { t.c_lflag &= !libc::ECHO; }
+            libc::tcsetattr(fd, libc::TCSANOW, &t);
+            libc::close(fd);
+        }
+    }
+
+    /// Like start_passthrough, but exits automatically when the sentinel
+    /// prompt is detected (command finished), as well as on Ctrl-O or EOF.
+    /// If `ipc_fd` is provided, also exits when a ShowPanels IPC message arrives.
+    pub fn start_passthrough_until_sentinel(&self, ipc_fd: Option<RawFd>) -> Result<()> {
+        use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+        enable_raw_mode()?;
+        let result = passthrough_loop_until_sentinel(self.master_fd, ipc_fd);
+        disable_raw_mode()?;
+        result
+    }
+
+    /// Non-blocking drain of any buffered output on the PTY master.
+    /// Used to discard accumulated readline echoes before entering passthrough.
+    pub fn drain(&self) {
+        drain_fd(self.master_fd);
     }
 
     /// Check if the child process is still alive.
@@ -294,36 +331,92 @@ fn read_until_sentinel(fd: RawFd) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-/// Passthrough loop: copies stdin→master and master→stdout until Ctrl+O or EOF.
-fn passthrough_loop(master: RawFd) -> Result<()> {
+/// Passthrough loop that exits automatically when the sentinel prompt appears
+/// (command finished), on Ctrl+O / EOF, or when a ShowPanels IPC message arrives.
+fn passthrough_loop_until_sentinel(master: RawFd, ipc_fd: Option<RawFd>) -> Result<()> {
+    let stdin_fd  = libc::STDIN_FILENO;
+    let stdout_fd = libc::STDOUT_FILENO;
+    let mut buf  = [0u8; 4096];
+    let mut tail: Vec<u8> = Vec::new();
+
+    loop {
+        let mut fds = [
+            libc::pollfd { fd: stdin_fd,                    events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: master,                      events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: ipc_fd.unwrap_or(-1),        events: libc::POLLIN, revents: 0 },
+        ];
+        let nfds = if ipc_fd.is_some() { 3 } else { 2 };
+        if unsafe { libc::poll(fds.as_mut_ptr(), nfds, -1) } < 0 { break; }
+
+        if fds[0].revents & libc::POLLIN != 0 {
+            let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
+            if n <= 0 { break; }
+            let data = &buf[..n as usize];
+            if data.contains(&0x0F) { break; } // Ctrl-O: manual exit
+            unsafe { libc::write(master, data.as_ptr() as *const _, data.len()); }
+        }
+
+        if fds[1].revents & libc::POLLIN != 0 {
+            let n = unsafe { libc::read(master, buf.as_mut_ptr() as *mut _, buf.len()) };
+            if n <= 0 { break; }
+            let data = &buf[..n as usize];
+            unsafe { libc::write(stdout_fd, data.as_ptr() as *const _, data.len()); }
+            tail.extend_from_slice(data);
+            if tail.windows(SENTINEL.len()).any(|w| w == SENTINEL.as_bytes()) { break; }
+            let trim = tail.len().saturating_sub(SENTINEL.len() * 2);
+            tail.drain(..trim);
+        }
+
+        // IPC: accept a connection and check for HideShell
+        if fds[2].revents & libc::POLLIN != 0 {
+            if let Some(fd) = ipc_fd {
+                if ipc_accept_shows_panels(fd) {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Passthrough loop: copies stdin→master and master→stdout until Ctrl+O, EOF,
+/// or a ShowPanels IPC message arrives on `ipc_fd`.
+fn passthrough_loop(master: RawFd, ipc_fd: Option<RawFd>) -> Result<()> {
     let stdin_fd = libc::STDIN_FILENO;
     let stdout_fd = libc::STDOUT_FILENO;
     let mut buf = [0u8; 4096];
 
     loop {
         let mut fds = [
-            libc::pollfd { fd: stdin_fd, events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: master,   events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: stdin_fd,                 events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: master,                   events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: ipc_fd.unwrap_or(-1),     events: libc::POLLIN, revents: 0 },
         ];
-        let r = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+        let nfds = if ipc_fd.is_some() { 3 } else { 2 };
+        let r = unsafe { libc::poll(fds.as_mut_ptr(), nfds, -1) };
         if r < 0 { break; }
 
-        // stdin → master
         if fds[0].revents & libc::POLLIN != 0 {
             let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
             if n <= 0 { break; }
             let data = &buf[..n as usize];
-            // Ctrl+O = 0x0F
-            if data.contains(&0x0F) { break; }
+            if data.contains(&0x0F) { break; } // Ctrl+O
             let _ = unsafe { libc::write(master, data.as_ptr() as *const _, data.len()) };
         }
 
-        // master → stdout
         if fds[1].revents & libc::POLLIN != 0 {
             let n = unsafe { libc::read(master, buf.as_mut_ptr() as *mut _, buf.len()) };
             if n <= 0 { break; }
             let data = &buf[..n as usize];
             let _ = unsafe { libc::write(stdout_fd, data.as_ptr() as *const _, data.len()) };
+        }
+
+        if fds[2].revents & libc::POLLIN != 0 {
+            if let Some(fd) = ipc_fd {
+                if ipc_accept_shows_panels(fd) {
+                    break;
+                }
+            }
         }
     }
     Ok(())
@@ -331,4 +424,23 @@ fn passthrough_loop(master: RawFd) -> Result<()> {
 
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Non-blocking accept on the IPC listener fd. Returns true if the message is "ShowPanels".
+/// Silently ignores accept errors and unrecognized messages.
+pub fn ipc_accept_shows_panels(listener_fd: RawFd) -> bool {
+    use std::os::unix::net::UnixListener;
+    use std::os::unix::io::FromRawFd;
+    use std::io::Read;
+
+    // Safety: we borrow the fd temporarily; ManuallyDrop prevents double-close.
+    let listener = std::mem::ManuallyDrop::new(unsafe { UnixListener::from_raw_fd(listener_fd) });
+    let _ = listener.set_nonblocking(true);
+    if let Ok((mut stream, _)) = listener.accept() {
+        let _ = stream.set_nonblocking(false);
+        let mut buf = String::new();
+        let _ = stream.read_to_string(&mut buf);
+        return buf.lines().next().map(|l| l.trim()) == Some("ShowPanels");
+    }
+    false
 }

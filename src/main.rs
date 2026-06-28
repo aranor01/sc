@@ -3,6 +3,7 @@
 mod app;
 mod bookmarks;
 mod config;
+mod ipc;
 mod panel_history;
 mod subshell;
 mod history;
