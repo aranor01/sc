@@ -95,13 +95,23 @@ impl PopupListState {
     }
 }
 
-/// Renders a `PopupListState` as a bordered, scrollable list anchored just above
+/// Whether the popup floats above or below its anchor row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PopupDirection {
+    /// Render above the anchor; fall back to below when space is insufficient.
+    Above,
+    /// Always render below the anchor; cap height to available space below.
+    Below,
+}
+
+/// Renders a `PopupListState` as a bordered, scrollable list anchored relative to
 /// `(anchor_x, anchor_y)`.  `area` is the full terminal area used to clamp coordinates.
 /// Returns the drawn `Rect` (or `Rect::default()` if nothing was rendered).
 pub struct PopupListWidget<'a> {
     pub cs: &'a ColorScheme,
     pub state: &'a PopupListState,
     pub title: Option<&'a str>,
+    pub direction: PopupDirection,
 }
 
 impl<'a> PopupListWidget<'a> {
@@ -118,23 +128,36 @@ impl<'a> PopupListWidget<'a> {
         initial_offset: usize,
     ) -> (Rect, usize) {
         let n = self.state.items.len();
-        if n == 0 || anchor_y == 0 || area.width == 0 {
+        if n == 0 || area.width == 0 || area.height == 0 {
             return (Rect::default(), 0);
         }
 
         let max_len = self.state.items.iter().map(|s| s.chars().count()).max().unwrap_or(0);
         // +2 for left/right border
         let popup_width = ((max_len + 2) as u16).max(10).min(area.width);
-        // +2 for top/bottom border; cap at 15 rows or space available above anchor
-        let popup_height = (n as u16 + 2).min(15).min(anchor_y);
+        // +2 for top/bottom border; cap at 15 rows
+        let desired_height = (n as u16 + 2).min(15);
 
-        if popup_height < 3 {
-            return (Rect::default(), 0);
-        }
+        let (popup_height, popup_y) = match self.direction {
+            PopupDirection::Below => {
+                let space = area.height.saturating_sub(anchor_y + 1);
+                if space < 3 {
+                    return (Rect::default(), 0);
+                }
+                (desired_height.min(space), anchor_y + 1)
+            }
+            PopupDirection::Above => {
+                let popup_y = anchor_y.saturating_sub(desired_height);
+                let h = anchor_y - popup_y;
+                if h < 3 {
+                    return (Rect::default(), 0);
+                }
+                (h, popup_y)
+            }
+        };
 
         // Move left if popup would overflow the right edge
         let popup_x = anchor_x.min(area.width.saturating_sub(popup_width));
-        let popup_y = anchor_y - popup_height;
 
         let popup_area = Rect { x: popup_x, y: popup_y, width: popup_width, height: popup_height };
 

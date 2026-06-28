@@ -31,7 +31,7 @@ use crate::state::{AppState, Orientation};
 use crate::ui::button::Button;
 use crate::ui::button_bar::ButtonBarWidget;
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
-use crate::ui::popup_list::{PopupListState, PopupListWidget};
+use crate::ui::popup_list::{PopupDirection, PopupListState, PopupListWidget};
 use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
@@ -2317,7 +2317,7 @@ impl App {
                         let total_col = prompt_len + anchor_chars;
                         let anchor_x = cmdline_area.x + (total_col % width) as u16;
                         let anchor_y = cmdline_area.y + (total_col / width) as u16;
-                        let (r, offset) = PopupListWidget { cs: &cs, state: &session.list, title: None }
+                        let (r, offset) = PopupListWidget { cs: &cs, state: &session.list, title: None, direction: PopupDirection::Above }
                             .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, self.completion_popup_offset.get());
                         self.completion_popup_area.set(r);
                         self.completion_popup_offset.set(offset);
@@ -2328,7 +2328,7 @@ impl App {
                 }
 
                 if let Some(session) = self.reverse_search.as_ref() {
-                    let (r, offset) = PopupListWidget { cs: &cs, state: &session.list, title: None }
+                    let (r, offset) = PopupListWidget { cs: &cs, state: &session.list, title: None, direction: PopupDirection::Above }
                         .render_at(area, frame.buffer_mut(), cmdline_area.x, cmdline_area.y, self.rev_search_popup_offset.get());
                     self.rev_search_popup_area.set(r);
                     self.rev_search_popup_offset.set(offset);
@@ -2374,9 +2374,9 @@ impl App {
                     Side::Right => self.right_area.get(),
                 };
                 let anchor_x = panel_area.x + 2;
-                let anchor_y = panel_area.y + panel_area.height.saturating_sub(1);
+                let anchor_y = panel_area.y + 1;
                 let offset = self.sort_popup_offset.get();
-                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Sort by") }
+                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Sort by"), direction: PopupDirection::Below }
                     .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
                 ModalAreas::SortPopup(r, new_offset)
             }
@@ -2386,9 +2386,9 @@ impl App {
                     Side::Right => self.right_area.get(),
                 };
                 let anchor_x = panel_area.x + 2;
-                let anchor_y = panel_area.y + panel_area.height.saturating_sub(1);
+                let anchor_y = panel_area.y;
                 let offset = self.path_history_popup_offset.get();
-                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Path History") }
+                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Path History"), direction: PopupDirection::Below }
                     .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
                 ModalAreas::PathHistoryList(r, new_offset)
             }
@@ -2398,9 +2398,9 @@ impl App {
                     Side::Right => self.right_area.get(),
                 };
                 let anchor_x = panel_area.x + 2;
-                let anchor_y = panel_area.y + panel_area.height.saturating_sub(1);
+                let anchor_y = panel_area.y;
                 let offset = self.bookmark_popup_offset.get();
-                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Directory Bookmarks") }
+                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Directory Bookmarks"), direction: PopupDirection::Below }
                     .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
                 ModalAreas::BookmarkList(r, new_offset)
             }
