@@ -369,7 +369,8 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
         let (footer_text, footer_style) = if let Some(err) = &state.error {
             (format!(" {} ", err), Style::default().fg(Color::Red))
         } else {
-            let total = state.entries.len();
+            let has_dotdot = state.entries.first().map(|e| e.name == "..").unwrap_or(false);
+            let total = state.entries.len().saturating_sub(has_dotdot as usize);
             let text = if tagged_count > 0 {
                 format!(" {}/{} tagged ", tagged_count, total)
             } else {
