@@ -10,6 +10,12 @@
 - Backspace, A-Up (Alt-Up)
        go to the parent directory of the active panel
 
+- A-Left (Alt-Left)
+       go back to the previous directory in the active panel's history
+
+- A-Right (Alt-Right)
+       go forward in the active panel's history
+
 - Tab
        switch focus to the other panel
 

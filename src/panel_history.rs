@@ -7,15 +7,48 @@ const MAX_HISTORY: usize = 100;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PanelHistory {
     pub entries: Vec<String>,
+    #[serde(default)]
+    pub index: usize,
 }
 
 impl PanelHistory {
     pub fn push(&mut self, path: &str) {
-        if let Some(pos) = self.entries.iter().position(|e| e == path) {
-            self.entries.remove(pos);
+        if self.index > 0 {
+            self.entries.drain(0..self.index);
+            self.index = 0;
         }
         self.entries.insert(0, path.to_string());
         self.entries.truncate(MAX_HISTORY);
+    }
+
+    pub fn go_back(&mut self) -> Option<String> {
+        if self.index + 1 < self.entries.len() {
+            self.index += 1;
+            Some(self.entries[self.index].clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn go_forward(&mut self) -> Option<String> {
+        if self.index > 0 {
+            self.index -= 1;
+            Some(self.entries[self.index].clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn current_path(&self) -> Option<&str> {
+        self.entries.get(self.index).map(|s| s.as_str())
+    }
+
+    pub fn unique_entries(&self) -> Vec<&str> {
+        let mut seen = std::collections::HashSet::new();
+        self.entries.iter()
+            .filter(|e| seen.insert(e.as_str()))
+            .map(|e| e.as_str())
+            .collect()
     }
 }
 

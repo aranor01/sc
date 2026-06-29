@@ -148,6 +148,8 @@ enum Action {
     UnselectGroup,
     RefreshPanel,
     GoToParent,
+    GoBack,
+    GoForward,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -411,9 +413,14 @@ fn normalize_pty_output(bytes: &[u8]) -> String {
 
 
 impl App {
-    pub fn new(config: Config, left_path: PathBuf, right_path: PathBuf, state: &AppState, mouse: bool) -> Self {
+    pub fn new(config: Config, left_path: PathBuf, right_path: PathBuf, state: &AppState,
+               mut ph_left: crate::panel_history::PanelHistory,
+               mut ph_right: crate::panel_history::PanelHistory,
+               mouse: bool) -> Self {
         let left_node = NodePath(left_path.to_string_lossy().into_owned());
         let right_node = NodePath(right_path.to_string_lossy().into_owned());
+        if ph_left.current_path() != Some(left_node.0.as_str()) { ph_left.push(&left_node.0); }
+        if ph_right.current_path() != Some(right_node.0.as_str()) { ph_right.push(&right_node.0); }
 
         let history = crate::state::history_path();
         let hist = if history.exists() {
@@ -461,8 +468,8 @@ impl App {
             bookmarks: crate::bookmarks::load(),
             path_history_popup_area: Cell::new(Rect::default()),
             path_history_popup_offset: Cell::new(0),
-            panel_history_left: Default::default(),
-            panel_history_right: Default::default(),
+            panel_history_left: ph_left,
+            panel_history_right: ph_right,
             mouse_pressed: None,
             should_quit: false,
             mouse,
@@ -483,10 +490,6 @@ impl App {
                 Err(_) => {} // fall back to stateless silently
             }
         }
-        // Load panel history
-        let (ph_left, ph_right) = crate::panel_history::load();
-        app.panel_history_left = ph_left;
-        app.panel_history_right = ph_right;
         // Restore saved sort and hidden state, then re-sort
         app.left.sort_key = state.left_sort_key;
         app.left.sort_asc = state.left_sort_asc;
@@ -591,6 +594,8 @@ impl App {
             (&kb.unselect_group, Action::UnselectGroup),
             (&kb.refresh_panel, Action::RefreshPanel),
             (&kb.go_to_parent, Action::GoToParent),
+            (&kb.go_back, Action::GoBack),
+            (&kb.go_forward, Action::GoForward),
         ]
     }
 
@@ -873,7 +878,9 @@ impl App {
                 if history.entries.is_empty() {
                     self.modal = Modal::Error("No path history.".to_string());
                 } else {
-                    let popup = PopupListState::new(history.entries.clone());
+                    let popup = PopupListState::new(
+                        history.unique_entries().into_iter().map(str::to_owned).collect()
+                    );
                     self.modal = Modal::PathHistoryList(popup);
                 }
             }
@@ -906,9 +913,52 @@ impl App {
                     self.set_status(&format!("Error: {e}"), true);
                     return;
                 }
-                self.push_path_history(&current.0);
+                let dest = parent_path.0.clone();
                 let panel = self.active_panel_mut();
                 panel.path = parent_path;
+                panel.cursor = 0;
+                panel.scroll = 0;
+                panel.tagged.clear();
+                panel.refresh();
+                self.push_path_history(&dest);
+            }
+            Action::GoBack => {
+                let path_opt = match self.active {
+                    Side::Left => self.panel_history_left.go_back(),
+                    Side::Right => self.panel_history_right.go_back(),
+                };
+                let Some(path) = path_opt else { return; };
+                if !std::path::Path::new(&path).exists() {
+                    match self.active {
+                        Side::Left => { self.panel_history_left.go_forward(); }
+                        Side::Right => { self.panel_history_right.go_forward(); }
+                    }
+                    self.set_status(&format!("Path no longer exists: {path}"), true);
+                    return;
+                }
+                let panel = self.active_panel_mut();
+                panel.path = crate::provider::NodePath(path);
+                panel.cursor = 0;
+                panel.scroll = 0;
+                panel.tagged.clear();
+                panel.refresh();
+            }
+            Action::GoForward => {
+                let path_opt = match self.active {
+                    Side::Left => self.panel_history_left.go_forward(),
+                    Side::Right => self.panel_history_right.go_forward(),
+                };
+                let Some(path) = path_opt else { return; };
+                if !std::path::Path::new(&path).exists() {
+                    match self.active {
+                        Side::Left => { self.panel_history_left.go_back(); }
+                        Side::Right => { self.panel_history_right.go_back(); }
+                    }
+                    self.set_status(&format!("Path no longer exists: {path}"), true);
+                    return;
+                }
+                let panel = self.active_panel_mut();
+                panel.path = crate::provider::NodePath(path);
                 panel.cursor = 0;
                 panel.scroll = 0;
                 panel.tagged.clear();
@@ -939,14 +989,13 @@ impl App {
             self.modal = Modal::Error(format!("Path no longer exists: {path}"));
             return;
         }
-        let current = self.active_panel().path.0.clone();
-        self.push_path_history(&current);
         let panel = self.active_panel_mut();
         panel.path = crate::provider::NodePath(path.to_string());
         panel.cursor = 0;
         panel.scroll = 0;
         panel.tagged.clear();
         panel.refresh();
+        self.push_path_history(path);
     }
 
     fn navigate_to_bookmark(&mut self, path: &str) {
@@ -956,14 +1005,13 @@ impl App {
             self.modal = Modal::Error(format!("Path no longer exists: {path}"));
             return;
         }
-        let current = self.active_panel().path.0.clone();
-        self.push_path_history(&current);
         let panel = self.active_panel_mut();
         panel.path = crate::provider::NodePath(path.to_string());
         panel.cursor = 0;
         panel.scroll = 0;
         panel.tagged.clear();
         panel.refresh();
+        self.push_path_history(path);
     }
 
     fn quicksearch_jump(&mut self, pattern: &str) {
@@ -1637,10 +1685,10 @@ impl App {
         let path_before = self.active_panel().path.0.clone();
         match self.active_panel_mut().handle_key(&event, vh, am) {
             PanelOutcome::Consumed => {
-                // Record old path in history when a directory change occurred
+                // Record destination in history when a directory change occurred
                 let path_after = self.active_panel().path.0.clone();
                 if path_after != path_before {
-                    self.push_path_history(&path_before);
+                    self.push_path_history(&path_after);
                 }
                 return;
             }
@@ -2232,8 +2280,6 @@ impl App {
             orientation: self.orientation,
             show_cmdline: self.show_cmdline,
             show_button_bar: self.show_button_bar,
-            left_path: self.left.path.0.clone(),
-            right_path: self.right.path.0.clone(),
             left_sort_key: self.left.sort_key,
             left_sort_asc: self.left.sort_asc,
             left_show_hidden: self.left.show_hidden,

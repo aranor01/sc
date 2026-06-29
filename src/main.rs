@@ -49,13 +49,16 @@ fn main() -> anyhow::Result<()> {
         config.startup.subshell = flag;
     }
     let saved_state = AppState::load();
+    let (ph_left, ph_right) = panel_history::load();
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
 
-    let saved_paths = Some((
-        Path::new(&saved_state.left_path),
-        Path::new(&saved_state.right_path),
-    ));
+    let left_ph_path = ph_left.current_path().map(PathBuf::from);
+    let right_ph_path = ph_right.current_path().map(PathBuf::from);
+    let saved_paths: Option<(&Path, &Path)> = match (&left_ph_path, &right_ph_path) {
+        (Some(l), Some(r)) => Some((l.as_path(), r.as_path())),
+        _ => None,
+    };
 
     let startup = resolve_startup_paths(
         dir1.as_deref(),
@@ -66,6 +69,6 @@ fn main() -> anyhow::Result<()> {
         &cwd,
     );
 
-    let mut app = App::new(config, startup.left, startup.right, &saved_state, mouse);
+    let mut app = App::new(config, startup.left, startup.right, &saved_state, ph_left, ph_right, mouse);
     app.run()
 }

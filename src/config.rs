@@ -222,6 +222,8 @@ pub struct KeyBindings {
     pub unselect_group: ActionBindings,
     pub refresh_panel: ActionBindings,
     pub go_to_parent: ActionBindings,
+    pub go_back: ActionBindings,
+    pub go_forward: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -292,6 +294,8 @@ impl Default for KeyBindings {
                 KeyBinding::Single(ke(Backspace, n)),
                 KeyBinding::Single(ke(Up, a)),
             ],
+            go_back: vec![KeyBinding::Single(ke(Left, a))],
+            go_forward: vec![KeyBinding::Single(ke(Right, a))],
         }
     }
 }
@@ -507,6 +511,8 @@ impl Config {
                     "unselect_group" => cfg.keybindings.unselect_group = bindings,
                     "refresh_panel" => cfg.keybindings.refresh_panel = bindings,
                     "go_to_parent" => cfg.keybindings.go_to_parent = bindings,
+                    "go_back" => cfg.keybindings.go_back = bindings,
+                    "go_forward" => cfg.keybindings.go_forward = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }

@@ -19,10 +19,6 @@ pub struct AppState {
     pub show_cmdline: bool,
     #[serde(default = "default_true")]
     pub show_button_bar: bool,
-    #[serde(default = "default_home")]
-    pub left_path: String,
-    #[serde(default = "default_home")]
-    pub right_path: String,
     #[serde(default)]
     pub left_sort_key: SortKey,
     #[serde(default = "default_true")]
@@ -41,20 +37,12 @@ fn default_true() -> bool {
     true
 }
 
-fn default_home() -> String {
-    dirs::home_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "/".to_string())
-}
-
 impl Default for AppState {
     fn default() -> Self {
         AppState {
             orientation: Orientation::Vertical,
             show_cmdline: true,
             show_button_bar: true,
-            left_path: default_home(),
-            right_path: default_home(),
             left_sort_key: SortKey::Name,
             left_sort_asc: true,
             right_sort_key: SortKey::Name,
