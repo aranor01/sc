@@ -157,8 +157,24 @@ impl PanelState {
                 self.error = None;
             }
             Err(e) => {
-                self.error = Some(e.to_string());
+                let is_not_found = e.root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .map_or(false, |io| io.kind() == std::io::ErrorKind::NotFound);
+                self.error = Some(if is_not_found {
+                    format!("directory no longer exists: {}", self.path.0)
+                } else {
+                    e.to_string()
+                });
                 self.entries.clear();
+                if self.provider.parent(&self.path).is_some() {
+                    self.entries.push(NodeEntry {
+                        name: "..".to_string(),
+                        kind: NodeKind::Dir,
+                        size: 0,
+                        modified: SystemTime::UNIX_EPOCH,
+                        permissions: String::new(),
+                    });
+                }
             }
         }
         if self.cursor >= self.entries.len() && !self.entries.is_empty() {
@@ -350,11 +366,16 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
         };
 
         let tagged_count = state.tagged.len();
-        let total = state.entries.len();
-        let footer = if tagged_count > 0 {
-            format!(" {}/{} tagged ", tagged_count, total)
+        let (footer_text, footer_style) = if let Some(err) = &state.error {
+            (format!(" {} ", err), Style::default().fg(Color::Red))
         } else {
-            format!(" {} entries ", total)
+            let total = state.entries.len();
+            let text = if tagged_count > 0 {
+                format!(" {}/{} tagged ", tagged_count, total)
+            } else {
+                format!(" {} entries ", total)
+            };
+            (text, Style::default().fg(border_color))
         };
 
         let block = Block::default()
@@ -364,22 +385,10 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
                 format!(" {} ", self.title),
                 Style::default().fg(border_color),
             ))
-            .title_bottom(Span::styled(footer, Style::default().fg(border_color)));
+            .title_bottom(Span::styled(footer_text, footer_style));
 
         let inner = block.inner(area);
         block.render(area, buf);
-
-        if let Some(err) = &state.error {
-            let msg = format!("Error: {}", err);
-            let line = Line::from(Span::styled(
-                msg,
-                Style::default().fg(Color::Red).bg(to_color(self.cs.panel_bg)),
-            ));
-            let p =
-                ratatui::widgets::Paragraph::new(line).style(Style::default().bg(to_color(self.cs.panel_bg)));
-            p.render(inner, buf);
-            return;
-        }
 
         // First row of inner is the header; entries occupy the rest.
         let header_y = inner.y;
