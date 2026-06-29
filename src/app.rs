@@ -134,7 +134,6 @@ enum Action {
     Rename,
     SortPanel,
     Quicksearch,
-    QuicksearchAlt,
     ToggleHidden,
     BookmarkOpen,
     BookmarkAdd,
@@ -541,7 +540,6 @@ impl App {
             (&kb.rename, Action::Rename),
             (&kb.sort_panel, Action::SortPanel),
             (&kb.quicksearch, Action::Quicksearch),
-            (&kb.quicksearch_alt, Action::QuicksearchAlt),
             (&kb.toggle_hidden, Action::ToggleHidden),
             (&kb.bookmark_open, Action::BookmarkOpen),
             (&kb.bookmark_add, Action::BookmarkAdd),
@@ -795,7 +793,7 @@ impl App {
                 let popup = PopupListState { items: Self::sort_popup_items(), selected };
                 self.modal = Modal::SortPopup(popup, self.active);
             }
-            Action::Quicksearch | Action::QuicksearchAlt => {
+            Action::Quicksearch => {
                 self.quicksearch = Some(String::new());
             }
             Action::ToggleHidden => {
