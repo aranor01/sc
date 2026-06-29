@@ -20,12 +20,14 @@ impl Subshell {
             let mut master_fd: RawFd = -1;
             let mut slave_fd: RawFd = -1;
             let mut name = [0u8; 256];
+            let mut ws: libc::winsize = std::mem::zeroed();
+            libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws);
             let ret = libc::openpty(
                 &mut master_fd,
                 &mut slave_fd,
                 name.as_mut_ptr() as *mut libc::c_char,
                 std::ptr::null_mut(),
-                std::ptr::null_mut(),
+                if ws.ws_col > 0 { &ws } else { std::ptr::null() },
             );
             if ret != 0 {
                 bail!("openpty failed: {}", io::Error::last_os_error());
@@ -148,6 +150,16 @@ impl Subshell {
     /// Used to discard accumulated readline echoes before entering passthrough.
     pub fn drain(&self) {
         drain_fd(self.master_fd);
+    }
+
+    /// Update the PTY window size and notify the child so fullscreen programs
+    /// (vim, mc, etc.) re-query their terminal dimensions.
+    pub fn resize(&self, cols: u16, rows: u16) {
+        unsafe {
+            let ws = libc::winsize { ws_col: cols, ws_row: rows, ws_xpixel: 0, ws_ypixel: 0 };
+            libc::ioctl(self.master_fd, libc::TIOCSWINSZ, &ws);
+            libc::kill(self.child_pid, libc::SIGWINCH);
+        }
     }
 
     /// Check if the child process is still alive.

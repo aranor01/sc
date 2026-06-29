@@ -2225,6 +2225,10 @@ impl App {
             // Discard any buffered readline echoes from `history -s` calls that
             // accumulated since the last passthrough session.
             sub.drain();
+            // Sync PTY window size so fullscreen programs (vim, mc) get the real dimensions.
+            if let Ok((cols, rows)) = crossterm::terminal::size() {
+                sub.resize(cols, rows);
+            }
             // Only sync cwd if the subshell is not already in the panel's directory.
             let shell_cwd = std::fs::read_link(format!("/proc/{}/cwd", sub.child_pid))
                 .ok()
@@ -2664,7 +2668,11 @@ impl App {
                             break;
                         }
                     }
-                    Event::Resize(_, _) => {}
+                    Event::Resize(cols, rows) => {
+                        if let ShellMode::Subshell(ref sub) = self.shell_mode {
+                            sub.resize(cols, rows);
+                        }
+                    }
                     _ => {}
                 }
             }
