@@ -7,6 +7,9 @@
 
 # Default Key Bindings
 
+- Backspace, A-Up (Alt-Up)
+       go to the parent directory of the active panel
+
 - Tab
        switch focus to the other panel
 

@@ -147,6 +147,7 @@ enum Action {
     SelectGroup,
     UnselectGroup,
     RefreshPanel,
+    GoToParent,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -589,6 +590,7 @@ impl App {
             (&kb.select_group, Action::SelectGroup),
             (&kb.unselect_group, Action::UnselectGroup),
             (&kb.refresh_panel, Action::RefreshPanel),
+            (&kb.go_to_parent, Action::GoToParent),
         ]
     }
 
@@ -894,6 +896,23 @@ impl App {
                 if !std::path::Path::new(&path).exists() {
                     self.set_status(&format!("Directory no longer exists: {path}"), true);
                 }
+            }
+            Action::GoToParent => {
+                let current = self.active_panel().path.clone();
+                let parent_opt = self.active_panel().provider.parent(&current);
+                let Some(parent_path) = parent_opt else { return; };
+                let list_err = self.active_panel().provider.list(&parent_path).err();
+                if let Some(e) = list_err {
+                    self.set_status(&format!("Error: {e}"), true);
+                    return;
+                }
+                self.push_path_history(&current.0);
+                let panel = self.active_panel_mut();
+                panel.path = parent_path;
+                panel.cursor = 0;
+                panel.scroll = 0;
+                panel.tagged.clear();
+                panel.refresh();
             }
             Action::BookmarkAdd => {
                 let path = self.active_panel().path.0.clone();
@@ -1564,6 +1583,10 @@ impl App {
                 }
                 KeyCode::Delete if event.modifiers == KeyModifiers::NONE => {
                     self.cmdline.delete_char();
+                    return;
+                }
+                KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
+                    self.cmdline.backspace();
                     return;
                 }
                 _ => {}
