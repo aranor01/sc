@@ -1271,12 +1271,11 @@ impl App {
     }
 
     fn handle_key_event_inner(&mut self, event: KeyEvent) {
-        // Output overlay active — handle scroll keys
+        // Output overlay active — block all input except scroll/dismiss keys
         if self.show_output {
             match self.overlay.handle_key(&event, &self.config.keybindings.toggle_shell) {
                 OverlayOutcome::Dismissed => { self.show_output = false; return; }
-                OverlayOutcome::Consumed => return,
-                OverlayOutcome::Passthrough => {}
+                OverlayOutcome::Consumed | OverlayOutcome::Passthrough => return,
             }
         }
 
@@ -1884,41 +1883,35 @@ impl App {
 
         let pos = Position { x: col, y: row };
 
-        // Output overlay scroll support. Skipped when a modal is open so that
-        // modal button clicks are not swallowed by the overlay catch-all.
-        if self.show_output && matches!(self.modal, Modal::None) {
+        // Output overlay — capture all mouse input; only scroll/scrollbar clicks are meaningful.
+        if self.show_output {
             let area = self.overlay_area.get();
-            if area.contains(pos) {
-                match mouse.kind {
-                    MouseEventKind::ScrollUp => {
-                        self.overlay.scroll_by(-3);
-                        return;
-                    }
-                    MouseEventKind::ScrollDown => {
-                        self.overlay.scroll_by(3);
-                        return;
-                    }
-                    MouseEventKind::Down(MouseButton::Left) => {
-                        let inner_y = area.y + 1;
-                        let inner_w = area.width.saturating_sub(2);
-                        let inner_h = area.height.saturating_sub(2) as usize;
-                        let scrollbar_col = area.x + 1 + inner_w;
-                        if col == scrollbar_col.saturating_sub(1) {
-                            let total_lines = self.last_output.as_deref()
-                                .map(|t| t.lines().count())
-                                .unwrap_or(0);
-                            let track_row = row.saturating_sub(inner_y) as usize;
-                            self.overlay.scrollbar_click(track_row, inner_h, total_lines);
-                        }
-                        return;
-                    }
-                    MouseEventKind::Up(_) => {
-                        self.mouse_pressed = None;
-                        return;
-                    }
-                    _ => { return; }
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    self.overlay.scroll_by(-3);
                 }
+                MouseEventKind::ScrollDown => {
+                    self.overlay.scroll_by(3);
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    let inner_y = area.y + 1;
+                    let inner_w = area.width.saturating_sub(2);
+                    let inner_h = area.height.saturating_sub(2) as usize;
+                    let scrollbar_col = area.x + 1 + inner_w;
+                    if col == scrollbar_col.saturating_sub(1) {
+                        let total_lines = self.last_output.as_deref()
+                            .map(|t| t.lines().count())
+                            .unwrap_or(0);
+                        let track_row = row.saturating_sub(inner_y) as usize;
+                        self.overlay.scrollbar_click(track_row, inner_h, total_lines);
+                    }
+                }
+                MouseEventKind::Up(_) => {
+                    self.mouse_pressed = None;
+                }
+                _ => {}
             }
+            return;
         }
 
         // Modals capture all mouse events.
@@ -2262,19 +2255,6 @@ impl App {
             &mut self.right,
         );
 
-        // Output overlay
-        if self.show_output {
-            if let Some(text) = &self.last_output {
-                self.overlay_area.set(layout.panel_area);
-                let overlay = OutputOverlayWidget {
-                    cs: &cs,
-                    text,
-                    scroll: self.overlay.scroll,
-                };
-                frame.render_widget(overlay, layout.panel_area);
-            }
-        }
-
         // CmdLine
         if let Some(cmdline_area) = layout.cmdline {
             let buf = frame.buffer_mut();
@@ -2343,6 +2323,19 @@ impl App {
                 ButtonBarWidget { cs: &cs, kb: &self.config.keybindings, menu: &self.config.menu, press },
                 bb_area,
             );
+        }
+
+        // Output overlay — drawn after cmdline/button bar so it covers the full terminal area
+        if self.show_output {
+            if let Some(text) = &self.last_output {
+                self.overlay_area.set(area);
+                let overlay = OutputOverlayWidget {
+                    cs: &cs,
+                    text,
+                    scroll: self.overlay.scroll,
+                };
+                frame.render_widget(overlay, area);
+            }
         }
 
         // Modals (drawn last, on top) — capture returned hit-test areas
