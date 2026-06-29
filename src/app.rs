@@ -361,8 +361,8 @@ fn shell_escape_path(s: &str) -> String {
 }
 
 
-/// Strip ANSI/VT100 escape sequences and bare carriage returns from PTY output
-/// so it can be displayed cleanly in the output overlay.
+/// Strip ANSI/VT100 escape sequences and bare carriage returns from PTY output,
+/// and expand tabs to 8-column stops, so it displays cleanly in the output overlay.
 fn strip_ansi(bytes: &[u8]) -> String {
     let s = String::from_utf8_lossy(bytes);
     // PTY converts \n → \r\n; remove the bare \r.
@@ -373,7 +373,21 @@ fn strip_ansi(bytes: &[u8]) -> String {
         r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))",
     )
     .unwrap();
-    re.replace_all(&s, "").into_owned()
+    let s = re.replace_all(&s, "");
+    // Expand tabs to 8-column stops so PTY multi-column output aligns correctly.
+    let mut out = String::with_capacity(s.len());
+    let mut col: usize = 0;
+    for ch in s.chars() {
+        if ch == '\t' {
+            let spaces = 8 - (col % 8);
+            for _ in 0..spaces { out.push(' '); }
+            col += spaces;
+        } else {
+            out.push(ch);
+            if ch == '\n' { col = 0; } else { col += 1; }
+        }
+    }
+    out
 }
 
 
