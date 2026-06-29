@@ -639,8 +639,10 @@ impl App {
                         return;
                     }
                     ShellMode::Stateless => {
-                        // Toggle output overlay
-                        self.show_output = !self.show_output;
+                        // Toggle output overlay — only if there is cached output to show
+                        if self.last_output.is_some() {
+                            self.show_output = !self.show_output;
+                        }
                     }
                 }
             }
