@@ -32,6 +32,8 @@ pub enum PanelOutcome {
     ExecuteCommand,
     /// Key is not a panel navigation key; caller should handle it
     Passthrough,
+    /// enter_dir failed; caller should show this message in the status bar
+    NavError(String),
 }
 
 pub enum PopupOutcome {

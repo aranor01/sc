@@ -1622,6 +1622,7 @@ impl App {
                 return;
             }
             PanelOutcome::ExecuteCommand => { self.execute_command(); return; }
+            PanelOutcome::NavError(msg) => { self.set_status(&msg, true); return; }
             PanelOutcome::Passthrough => {}
         }
 
@@ -1903,16 +1904,20 @@ impl App {
                 if clicked_side != self.active {
                     self.active = clicked_side;
                 }
-                let panel = match clicked_side {
-                    Side::Left => &mut self.left,
-                    Side::Right => &mut self.right,
-                };
-                panel.move_cursor_to_row(entry_row, vh);
-                if is_double {
-                    let entry = panel.current_entry();
-                    if entry.map(|e| e.kind == NodeKind::Dir).unwrap_or(false) {
-                        panel.enter_dir();
+                let nav_err = {
+                    let panel = match clicked_side {
+                        Side::Left => &mut self.left,
+                        Side::Right => &mut self.right,
+                    };
+                    panel.move_cursor_to_row(entry_row, vh);
+                    if is_double && panel.current_entry().map(|e| e.kind == NodeKind::Dir).unwrap_or(false) {
+                        panel.enter_dir()
+                    } else {
+                        None
                     }
+                };
+                if let Some(err) = nav_err {
+                    self.set_status(&err, true);
                 }
             }
             MouseButton::Right => {

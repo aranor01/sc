@@ -182,26 +182,26 @@ impl PanelState {
             .unwrap_or_default()
     }
 
-    pub fn enter_dir(&mut self) {
+    pub fn enter_dir(&mut self) -> Option<String> {
         let Some(entry) = self.entries.get(self.cursor) else {
-            return;
+            return None;
         };
-        if entry.name == ".." {
-            if let Some(parent) = self.provider.parent(&self.path) {
-                self.path = parent;
-                self.cursor = 0;
-                self.scroll = 0;
-                self.tagged.clear();
-                self.refresh();
-            }
+        let new_path = if entry.name == ".." {
+            self.provider.parent(&self.path)?
         } else if entry.kind == NodeKind::Dir {
-            let new_path = self.provider.join(&self.path, &entry.name);
-            self.path = new_path;
-            self.cursor = 0;
-            self.scroll = 0;
-            self.tagged.clear();
-            self.refresh();
+            self.provider.join(&self.path, &entry.name)
+        } else {
+            return None;
+        };
+        if let Err(e) = self.provider.list(&new_path) {
+            return Some(format!("Error: {}", e));
         }
+        self.path = new_path;
+        self.cursor = 0;
+        self.scroll = 0;
+        self.tagged.clear();
+        self.refresh();
+        None
     }
 
     pub fn move_cursor(&mut self, delta: i32, visible_height: usize) {
@@ -233,7 +233,9 @@ impl PanelState {
             KeyCode::End if action_mode => { self.move_cursor(i32::MAX / 2, visible_height); PanelOutcome::Consumed }
             KeyCode::Enter if action_mode => {
                 if self.current_entry().map(|e| e.kind == NodeKind::Dir).unwrap_or(false) {
-                    self.enter_dir();
+                    if let Some(err) = self.enter_dir() {
+                        return PanelOutcome::NavError(err);
+                    }
                 }
                 PanelOutcome::Consumed
             }
