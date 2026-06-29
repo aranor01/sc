@@ -11,9 +11,8 @@ pub struct PanelHistory {
 
 impl PanelHistory {
     pub fn push(&mut self, path: &str) {
-        // Remove consecutive duplicates
-        if self.entries.first().map(String::as_str) == Some(path) {
-            return;
+        if let Some(pos) = self.entries.iter().position(|e| e == path) {
+            self.entries.remove(pos);
         }
         self.entries.insert(0, path.to_string());
         self.entries.truncate(MAX_HISTORY);
