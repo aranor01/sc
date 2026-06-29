@@ -1155,7 +1155,7 @@ impl App {
         session.list.selected = new_selected;
     }
 
-    fn execute_menu_item(&mut self, cmd_template: String, interactive: bool) {
+    fn execute_menu_item(&mut self, cmd_template: String) {
         let result = self.expand_menu_command(&cmd_template);
         if result.untag_active {
             self.active_panel_mut().tagged.clear();
@@ -1163,13 +1163,9 @@ impl App {
         if result.untag_inactive {
             self.inactive_panel_mut().tagged.clear();
         }
-        if interactive {
-            self.run_command_interactively(&result.text);
-        } else {
-            self.cmdline.text = result.text;
-            self.cmdline.move_end();
-            self.execute_command();
-        }
+        self.cmdline.text = result.text;
+        self.cmdline.move_end();
+        self.execute_command();
     }
 
     fn execute_command(&mut self) {
@@ -1369,9 +1365,9 @@ impl App {
                     s.handle_key(&event, vh)
                 } else { ModalOutcome::Consumed };
                 match outcome {
-                    ModalOutcome::Execute(cmd, interactive) => {
+                    ModalOutcome::Execute(cmd) => {
                         self.modal = Modal::None;
-                        self.execute_menu_item(cmd, interactive);
+                        self.execute_menu_item(cmd);
                     }
                     ModalOutcome::Dismissed => self.modal = Modal::None,
                     _ => {}
@@ -1599,9 +1595,9 @@ impl App {
                 // User menu shortcuts (single-key and chord) fire from the main screen.
                 let menu_match = self.config.menu.iter()
                     .find(|item| menu_item_matches_key(item, pending.as_ref(), &event))
-                    .map(|item| (item.command.clone(), item.interactive));
-                if let Some((cmd, interactive)) = menu_match {
-                    self.execute_menu_item(cmd, interactive);
+                    .map(|item| item.command.clone());
+                if let Some(cmd) = menu_match {
+                    self.execute_menu_item(cmd);
                     return;
                 }
                 // If no chord completed, check if this key starts a user menu chord.
@@ -2136,46 +2132,6 @@ impl App {
             }
             _ => {}
         }
-    }
-
-    fn run_command_interactively(&mut self, cmd: &str) {
-        let cwd = self.active_panel().path.0.clone();
-
-        if self.mouse {
-            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
-        } else {
-            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, Show);
-        }
-        let _ = disable_raw_mode();
-
-        let ipc_fd = self.ipc.as_ref().map(|s| s.raw_fd());
-        match &self.shell_mode {
-            ShellMode::Stateless => {
-                let _ = std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(cmd)
-                    .current_dir(&cwd)
-                    .status();
-            }
-            ShellMode::Subshell(sub) => {
-                // Non-blocking: send cd then the command; both execute inside
-                // the passthrough so we never block on the sentinel.
-                let cd_cmd = format!(" cd {}", shell_escape_path(&cwd));
-                let _ = sub.send_line(&cd_cmd);
-                let _ = sub.send_line(cmd);
-                let _ = sub.start_passthrough(ipc_fd);
-            }
-        }
-
-        let _ = enable_raw_mode();
-        if self.mouse {
-            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableMouseCapture);
-        } else {
-            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen);
-        }
-        self.needs_full_redraw = true;
-        self.left.refresh();
-        self.right.refresh();
     }
 
     fn run_subshell_passthrough(&mut self) {

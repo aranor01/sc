@@ -2,7 +2,7 @@ pub enum ModalOutcome {
     Consumed,
     Dismissed,
     Confirmed,
-    Execute(String, bool),
+    Execute(String),
 }
 
 pub enum OverlayOutcome {
