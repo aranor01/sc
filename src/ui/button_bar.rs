@@ -59,6 +59,7 @@ impl<'a> ButtonBarWidget<'a> {
             (&kb.user_menu,   "Menu"),
             (&kb.copy,        "Copy"),
             (&kb.move_entry,  "Move"),
+            (&kb.mkdir,       "Mkdir"),
             (&kb.delete,      "Delete"),
             (&kb.exit,        "Quit"),
         ];
