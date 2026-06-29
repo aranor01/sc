@@ -101,6 +101,20 @@ fn parse_key_event(s: &str) -> Result<KeyEvent> {
         s => bail!("unknown key code {:?}", s),
     };
 
+    // crossterm maps bytes 0x1C-0x1F (Ctrl+\ ] ^ _) to Char('4'-'7') with CONTROL,
+    // not to the original character. Normalize here so config files work correctly.
+    let code = if mods.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('\\') => KeyCode::Char('4'),
+            KeyCode::Char(']')  => KeyCode::Char('5'),
+            KeyCode::Char('^')  => KeyCode::Char('6'),
+            KeyCode::Char('_')  => KeyCode::Char('7'),
+            other => other,
+        }
+    } else {
+        code
+    };
+
     Ok(KeyEvent::new(code, mods))
 }
 
@@ -264,7 +278,8 @@ impl Default for KeyBindings {
             sort_panel: vec![KeyBinding::Single(ke(Char('s'), c))],
             quicksearch: vec![KeyBinding::Single(ke(Char('/'), n)), KeyBinding::Single(ke(Char('s'), a))],
             toggle_hidden: vec![KeyBinding::Single(ke(Char('.'), a))],
-            bookmark_open: vec![KeyBinding::Single(ke(Char('\\'), c))],
+            // crossterm maps Ctrl+\ (byte 0x1C) to Char('4') with CONTROL
+            bookmark_open: vec![KeyBinding::Single(ke(Char('4'), c))],
             bookmark_add: vec![KeyBinding::Single(ke(Char('b'), c))],
             mkdir: vec![KeyBinding::Single(ke(F(7), n))],
             path_history: vec![KeyBinding::Single(ke(Char('H'), a))],
