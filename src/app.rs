@@ -1,7 +1,10 @@
 use std::cell::Cell;
 use std::io::stdout;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
+
+use unicode_width::UnicodeWidthChar;
 
 use anyhow::Result;
 use crossterm::{
@@ -361,30 +364,42 @@ fn shell_escape_path(s: &str) -> String {
 }
 
 
-/// Strip ANSI/VT100 escape sequences and bare carriage returns from PTY output,
-/// and expand tabs to 8-column stops, so it displays cleanly in the output overlay.
-fn strip_ansi(bytes: &[u8]) -> String {
+// OSC alternative is first so \x1b] is consumed with its body;
+// otherwise the fallback 2-char match would consume just \x1b].
+// [0-?] adds DEC private sequences (\x1b=, \x1b>, \x1b7, \x1b8, etc.) missing from the
+// original [@-Z\\-_] range (0x40-0x5F).
+static ANSI_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(
+        r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|[0-?@-Z\\-_]|\[[0-?]*[ -/]*[@-~])",
+    )
+    .unwrap()
+});
+
+fn normalize_pty_output(bytes: &[u8]) -> String {
     let s = String::from_utf8_lossy(bytes);
     // PTY converts \n → \r\n; remove the bare \r.
     let s = s.replace('\r', "");
-    // Remove CSI sequences (ESC [ ... letter), simple 2-char ESC sequences,
-    // and OSC sequences (ESC ] ... BEL/ST).
-    let re = regex::Regex::new(
-        r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))",
-    )
-    .unwrap();
-    let s = re.replace_all(&s, "");
-    // Expand tabs to 8-column stops so PTY multi-column output aligns correctly.
-    let mut out = String::with_capacity(s.len());
+    let s = ANSI_RE.replace_all(&s, "");
+    let tab_count = s.bytes().filter(|&b| b == b'\t').count();
+    let mut out = String::with_capacity(s.len() + tab_count * 7);
     let mut col: usize = 0;
+    const SPACES: &str = "        "; // 8 spaces — max tab expansion
     for ch in s.chars() {
-        if ch == '\t' {
-            let spaces = 8 - (col % 8);
-            for _ in 0..spaces { out.push(' '); }
-            col += spaces;
-        } else {
-            out.push(ch);
-            if ch == '\n' { col = 0; } else { col += 1; }
+        match ch {
+            '\t' => {
+                let spaces = 8 - (col % 8);
+                out.push_str(&SPACES[..spaces]);
+                col += spaces;
+            }
+            '\n' => {
+                out.push('\n');
+                col = 0;
+            }
+            c if (c as u32) < 0x20 || c == '\x7f' => {}
+            _ => {
+                out.push(ch);
+                col += ch.width().unwrap_or(1);
+            }
         }
     }
     out
@@ -1183,7 +1198,7 @@ impl App {
         let sc_action_path = binding.to_str().unwrap_or("sc-action");
         let wrapped = format!(r#"{cmd}; {sc_action_path} "$SC_TOKEN" ShowPanels "$PWD""#);
         let raw = crate::subshell::run_with_pty_capture(&wrapped, &cwd);
-        let text = strip_ansi(&raw);
+        let text = normalize_pty_output(&raw);
         self.last_output = if text.trim().is_empty() { None } else { Some(text) };
 
         let _ = enable_raw_mode();
