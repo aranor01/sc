@@ -429,10 +429,6 @@ fn passthrough_loop(master: RawFd, ipc_fd: Option<RawFd>) -> Result<()> {
     Ok(())
 }
 
-fn shell_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
 /// Non-blocking accept on the IPC listener fd. Returns true if the message is "ShowPanels".
 /// Silently ignores accept errors and unrecognized messages.
 pub fn ipc_accept_shows_panels(listener_fd: RawFd) -> bool {

@@ -365,7 +365,7 @@ pub struct App {
 }
 
 fn shell_escape_path(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
+    crate::macros::shell_escape(s)
 }
 
 
@@ -729,7 +729,7 @@ impl App {
             Action::CmdlineInsertFilename => {
                 let name = self.active_panel().current_name();
                 if !name.is_empty() && name != ".." {
-                    self.cmdline.insert_str(&name);
+                    self.cmdline.insert_str(&crate::macros::shell_escape(&name));
                 } else {
                     self.set_status("No file selected", true);
                 }
@@ -739,7 +739,7 @@ impl App {
                 let name = panel.current_name();
                 if !name.is_empty() && name != ".." {
                     let full = format!("{}/{}", panel.path.0, name);
-                    self.cmdline.insert_str(&full);
+                    self.cmdline.insert_str(&crate::macros::shell_escape(&full));
                 }
             }
             Action::CmdlineInsertTagged => {
@@ -751,7 +751,7 @@ impl App {
                     }
                 }
                 names.sort();
-                let s = names.join(" ");
+                let s = names.iter().map(|n| crate::macros::shell_escape(n)).collect::<Vec<_>>().join(" ");
                 if !s.is_empty() {
                     self.cmdline.insert_str(&s);
                 }
@@ -765,18 +765,18 @@ impl App {
                     }
                 }
                 names.sort();
-                let s = names.join(" ");
+                let s = names.iter().map(|n| crate::macros::shell_escape(n)).collect::<Vec<_>>().join(" ");
                 if !s.is_empty() {
                     self.cmdline.insert_str(&s);
                 }
             }
             Action::CmdlineInsertPath => {
                 let path = self.active_panel().path.0.clone();
-                self.cmdline.insert_str(&path);
+                self.cmdline.insert_str(&crate::macros::shell_escape(&path));
             }
             Action::CmdlineInsertPathOther => {
                 let path = self.inactive_panel().path.0.clone();
-                self.cmdline.insert_str(&path);
+                self.cmdline.insert_str(&crate::macros::shell_escape(&path));
             }
             Action::CmdlineHistoryPrev => {
                 let current = self.cmdline.text.clone();

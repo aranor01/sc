@@ -40,12 +40,12 @@ pub fn expand(template: &str, ctx: &MacroContext) -> ExpandResult {
             continue;
         }
         match chars.next() {
-            Some('f') => text.push_str(&ctx.active.current_file),
-            Some('x') => text.push_str(file_extension(&ctx.active.current_file)),
-            Some('b') => text.push_str(file_basename(&ctx.active.current_file)),
-            Some('d') => text.push_str(&ctx.active.dir),
-            Some('F') => text.push_str(&ctx.inactive.current_file),
-            Some('D') => text.push_str(&ctx.inactive.dir),
+            Some('f') => text.push_str(&shell_escape(&ctx.active.current_file)),
+            Some('x') => text.push_str(&shell_escape(file_extension(&ctx.active.current_file))),
+            Some('b') => text.push_str(&shell_escape(file_basename(&ctx.active.current_file))),
+            Some('d') => text.push_str(&shell_escape(&ctx.active.dir)),
+            Some('F') => text.push_str(&shell_escape(&ctx.inactive.current_file)),
+            Some('D') => text.push_str(&shell_escape(&ctx.inactive.dir)),
             Some('t') => text.push_str(&join_tagged(&ctx.active.tagged)),
             Some('T') => text.push_str(&join_tagged(&ctx.inactive.tagged)),
             Some('u') => {
@@ -98,19 +98,24 @@ fn file_basename(name: &str) -> &str {
 }
 
 fn join_tagged(tagged: &[String]) -> String {
-    tagged.iter().map(|s| shell_quote(s)).collect::<Vec<_>>().join(" ")
+    tagged.iter().map(|s| shell_escape(s)).collect::<Vec<_>>().join(" ")
 }
 
-/// Wrap a filename in single quotes if it contains shell-special characters.
-fn shell_quote(s: &str) -> String {
-    let safe = s.chars().all(|c| {
+/// Backslash-escape shell-special characters in a filename or path.
+pub(crate) fn shell_escape(s: &str) -> String {
+    if s.chars().all(|c| {
         matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '.' | '_' | '/' | '+' | ',' | ':' | '@')
-    });
-    if safe {
-        s.to_string()
-    } else {
-        format!("'{}'", s.replace('\'', r"'\''"))
+    }) {
+        return s.to_string();
     }
+    let mut out = String::with_capacity(s.len() * 2);
+    for c in s.chars() {
+        if !matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '.' | '_' | '/' | '+' | ',' | ':' | '@') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -189,7 +194,7 @@ mod tests {
     fn expand_tagged() {
         let c = ctx("f", "/d", &["a.txt", "b c.txt"], "g", "/e", &[]);
         let r = expand("%t", &c);
-        assert_eq!(r.text, "a.txt 'b c.txt'");
+        assert_eq!(r.text, r"a.txt b\ c.txt");
     }
 
     #[test]
@@ -262,18 +267,23 @@ mod tests {
     }
 
     #[test]
-    fn shell_quote_safe_name() {
-        assert_eq!(shell_quote("foo.txt"), "foo.txt");
-        assert_eq!(shell_quote("my-file_2.rs"), "my-file_2.rs");
+    fn shell_escape_safe_name() {
+        assert_eq!(shell_escape("foo.txt"), "foo.txt");
+        assert_eq!(shell_escape("my-file_2.rs"), "my-file_2.rs");
     }
 
     #[test]
-    fn shell_quote_name_with_space() {
-        assert_eq!(shell_quote("my file.txt"), "'my file.txt'");
+    fn shell_escape_name_with_space() {
+        assert_eq!(shell_escape("my file.txt"), r"my\ file.txt");
     }
 
     #[test]
-    fn shell_quote_name_with_single_quote() {
-        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+    fn shell_escape_name_with_single_quote() {
+        assert_eq!(shell_escape("it's"), r"it\'s");
+    }
+
+    #[test]
+    fn expand_filename_with_space() {
+        assert_eq!(expand("%f", &simple("my file.txt")).text, r"my\ file.txt");
     }
 }
