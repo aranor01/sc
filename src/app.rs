@@ -894,9 +894,8 @@ impl App {
         if pattern.is_empty() {
             return;
         }
-        let lc = pattern.to_lowercase();
         let found = self.active_panel().entries.iter().position(|e| {
-            e.name != ".." && e.name.to_lowercase().starts_with(&lc)
+            e.name != ".." && e.name.starts_with(pattern)
         });
         if let Some(idx) = found {
             let current = self.active_panel().cursor as i32;
