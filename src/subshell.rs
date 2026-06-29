@@ -155,6 +155,9 @@ impl Subshell {
         unsafe {
             let mut status = 0;
             let r = libc::waitpid(self.child_pid, &mut status, libc::WNOHANG);
+            // r == 0  → still running
+            // r > 0   → just exited (we consumed the exit status)
+            // r < 0   → ECHILD: already reaped elsewhere, i.e. also dead
             r == 0
         }
     }

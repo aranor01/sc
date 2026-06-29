@@ -2186,13 +2186,20 @@ impl App {
             }
             let _ = sub.start_passthrough(ipc_fd);
 
-            // Sync active panel to wherever the subshell ended up.
-            // /proc/<pid>/cwd is valid here because the subshell is still alive.
-            if let Ok(link) = std::fs::read_link(format!("/proc/{}/cwd", sub.child_pid)) {
-                let new_cwd = link.to_string_lossy().to_string();
-                let panel_cwd = self.active_panel().path.0.clone();
-                if new_cwd != panel_cwd {
-                    self.navigate_to_path(&new_cwd);
+            if !sub.is_alive() {
+                // The user typed `exit` (or the shell crashed). Drop the Subshell
+                // (which SIGTERMs and closes the master fd) and fall back to
+                // stateless mode so sc keeps working normally.
+                self.shell_mode = ShellMode::Stateless;
+                // Skip cwd sync — /proc/<pid>/cwd is gone.
+            } else {
+                // Sync active panel to wherever the subshell ended up.
+                if let Ok(link) = std::fs::read_link(format!("/proc/{}/cwd", sub.child_pid)) {
+                    let new_cwd = link.to_string_lossy().to_string();
+                    let panel_cwd = self.active_panel().path.0.clone();
+                    if new_cwd != panel_cwd {
+                        self.navigate_to_path(&new_cwd);
+                    }
                 }
             }
         }
