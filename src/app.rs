@@ -624,7 +624,7 @@ impl App {
             }
             Action::TagFile => {
                 let vh = self.active_vh();
-                self.active_panel_mut().tag_toggle(vh);
+                self.active_panel_mut().tag_toggle(vh, true);
             }
             Action::InvertTags => {
                 self.active_panel_mut().invert_tags();
@@ -1872,7 +1872,7 @@ impl App {
                     Side::Right => &mut self.right,
                 };
                 panel.move_cursor_to_row(entry_row, vh);
-                panel.tag_toggle(vh);
+                panel.tag_toggle(vh, false);
             }
             MouseButton::Middle => {}
         }

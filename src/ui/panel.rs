@@ -255,7 +255,7 @@ impl PanelState {
         }
     }
 
-    pub fn tag_toggle(&mut self, visible_height: usize) {
+    pub fn tag_toggle(&mut self, visible_height: usize, advance: bool) {
         if let Some(entry) = self.entries.get(self.cursor) {
             if entry.name != ".." {
                 let name = entry.name.clone();
@@ -266,7 +266,9 @@ impl PanelState {
                 }
             }
         }
-        self.move_cursor(1, visible_height);
+        if advance {
+            self.move_cursor(1, visible_height);
+        }
     }
 
     pub fn invert_tags(&mut self) {
