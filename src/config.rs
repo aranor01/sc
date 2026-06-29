@@ -330,6 +330,10 @@ pub struct ColorScheme {
     pub button_bar_fg: Color,
     pub button_bar_butt_bg: Color,
     pub button_bar_butt_fg: Color,
+    pub status_info_fg: Color,
+    pub status_info_bg: Color,
+    pub status_warn_fg: Color,
+    pub status_warn_bg: Color,
 }
 
 impl Default for ColorScheme {
@@ -356,6 +360,10 @@ impl Default for ColorScheme {
             button_bar_fg: rgb(0xffffff),
             button_bar_butt_bg: rgb(0x00aaff),
             button_bar_butt_fg: rgb(0x000000),
+            status_info_fg: rgb(0x000000),
+            status_info_bg: rgb(0x00aa55),
+            status_warn_fg: rgb(0x000000),
+            status_warn_bg: rgb(0xddaa00),
         }
     }
 }
@@ -537,6 +545,10 @@ impl Config {
                 button_bar_fg: pick("button_bar_fg", d.button_bar_fg)?,
                 button_bar_butt_bg: pick("button_bar_butt_bg", d.button_bar_butt_bg)?,
                 button_bar_butt_fg: pick("button_bar_butt_fg", d.button_bar_butt_fg)?,
+                status_info_fg: pick("status_info_fg", d.status_info_fg)?,
+                status_info_bg: pick("status_info_bg", d.status_info_bg)?,
+                status_warn_fg: pick("status_warn_fg", d.status_warn_fg)?,
+                status_warn_bg: pick("status_warn_bg", d.status_warn_bg)?,
             };
         }
 

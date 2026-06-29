@@ -33,6 +33,7 @@ use crate::provider::filesystem::FilesystemProvider;
 use crate::state::{AppState, Orientation};
 use crate::ui::button::Button;
 use crate::ui::button_bar::ButtonBarWidget;
+use crate::ui::status_bar::{StatusBarState, StatusBarWidget};
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupDirection, PopupListState, PopupListWidget};
 use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState};
@@ -357,6 +358,7 @@ pub struct App {
     shell_mode: ShellMode,
     needs_full_redraw: bool,
     ipc: Option<IpcServer>,
+    status: StatusBarState,
 }
 
 fn shell_escape_path(s: &str) -> String {
@@ -470,6 +472,7 @@ impl App {
             shell_mode: ShellMode::Stateless,
             needs_full_redraw: false,
             ipc: IpcServer::new(),
+            status: StatusBarState::default(),
             config,
         };
         // Try to spawn subshell if configured
@@ -497,6 +500,14 @@ impl App {
 
     fn action_mode(&self) -> bool {
         self.cmdline.is_empty() || self.explicit_action_mode || self.pending_chord.is_some()
+    }
+
+    fn set_status(&mut self, text: &str, warn: bool) {
+        self.status.set(text, warn);
+    }
+
+    fn status_active(&self) -> bool {
+        self.status.is_active()
     }
 
     fn active_panel(&self) -> &PanelState {
@@ -663,6 +674,7 @@ impl App {
             Action::Copy => {
                 let files = self.active_panel().op_files();
                 if files.is_empty() {
+                    self.set_status("Nothing to copy", true);
                     return;
                 }
                 let dst = self.inactive_panel().path.0.clone();
@@ -680,6 +692,7 @@ impl App {
             Action::Move => {
                 let files = self.active_panel().op_files();
                 if files.is_empty() {
+                    self.set_status("Nothing to move", true);
                     return;
                 }
                 let dst = self.inactive_panel().path.0.clone();
@@ -702,12 +715,16 @@ impl App {
                         files,
                         dst: None,
                     });
+                } else {
+                    self.set_status("Nothing to delete", true);
                 }
             }
             Action::CmdlineInsertFilename => {
                 let name = self.active_panel().current_name();
                 if !name.is_empty() && name != ".." {
                     self.cmdline.insert_str(&name);
+                } else {
+                    self.set_status("No file selected", true);
                 }
             }
             Action::CmdlineInsertFullpath => {
@@ -831,6 +848,8 @@ impl App {
                 let panel = self.active_panel_mut();
                 panel.show_hidden = !panel.show_hidden;
                 panel.refresh();
+                let msg = if panel.show_hidden { "Showing hidden files" } else { "Hiding hidden files" };
+                self.set_status(msg, false);
             }
             Action::BookmarkOpen => {
                 if self.bookmarks.is_empty() {
@@ -870,13 +889,20 @@ impl App {
                 self.modal = Modal::InputDialog(state);
             }
             Action::RefreshPanel => {
+                let path = self.active_panel().path.0.clone();
                 self.active_panel_mut().refresh();
+                if !std::path::Path::new(&path).exists() {
+                    self.set_status(&format!("Directory no longer exists: {path}"), true);
+                }
             }
             Action::BookmarkAdd => {
                 let path = self.active_panel().path.0.clone();
                 if !self.bookmarks.contains(&path) {
-                    self.bookmarks.push(path);
+                    self.bookmarks.push(path.clone());
                     let _ = crate::bookmarks::save(&self.bookmarks);
+                    self.set_status(&format!("Bookmarked: {path}"), false);
+                } else {
+                    self.set_status("Already bookmarked", true);
                 }
             }
         }
@@ -2082,7 +2108,7 @@ impl App {
                 self.handle_panel_down(col, row, MouseButton::Left);
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                if self.mouse_pressed == Some(pos) && self.show_button_bar {
+                if self.mouse_pressed == Some(pos) && self.show_button_bar && !self.status_active() {
                     let bb = self.button_bar_area.get();
                     if bb.contains(pos) {
                         self.handle_button_bar_click(pos);
@@ -2237,6 +2263,8 @@ impl App {
     }
 
     fn render(&mut self, frame: &mut Frame) {
+        self.status.expire();
+
         let area = frame.area();
         let press = self.mouse_pressed;
 
@@ -2259,11 +2287,12 @@ impl App {
             0
         };
 
+        let show_bottom_bar = self.show_button_bar || self.status_active();
         let layout = AppLayout::compute(
             area,
             self.orientation,
             self.show_cmdline,
-            self.show_button_bar,
+            show_bottom_bar,
             cmdline_height,
         );
 
@@ -2354,13 +2383,20 @@ impl App {
             }
         }
 
-        // Button bar
+        // Button bar / status bar
         if let Some(bb_area) = layout.button_bar {
             self.button_bar_area.set(bb_area);
-            frame.render_widget(
-                ButtonBarWidget { cs: &cs, kb: &self.config.keybindings, menu: &self.config.menu, press },
-                bb_area,
-            );
+            if self.status_active() {
+                frame.render_widget(
+                    StatusBarWidget { cs: &cs, state: &self.status },
+                    bb_area,
+                );
+            } else {
+                frame.render_widget(
+                    ButtonBarWidget { cs: &cs, kb: &self.config.keybindings, menu: &self.config.menu, press },
+                    bb_area,
+                );
+            }
         }
 
         // Output overlay — drawn after cmdline/button bar so it covers the full terminal area
