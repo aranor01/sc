@@ -162,6 +162,10 @@ impl CmdLineState {
                 self.backspace();
                 CmdlineOutcome::Consumed
             }
+            KeyCode::Delete if event.modifiers == KeyModifiers::NONE => {
+                self.delete_char();
+                CmdlineOutcome::Consumed
+            }
             KeyCode::Left if event.modifiers == KeyModifiers::NONE => {
                 self.move_left();
                 CmdlineOutcome::Consumed
@@ -204,6 +208,10 @@ impl CmdLineState {
             }
             KeyCode::Char('d') if event.modifiers == KeyModifiers::ALT => {
                 self.kill_word_right();
+                CmdlineOutcome::Consumed
+            }
+            KeyCode::Char('b') if event.modifiers == KeyModifiers::ALT => {
+                self.move_word_left();
                 CmdlineOutcome::Consumed
             }
             KeyCode::Char('f') if event.modifiers == KeyModifiers::ALT => {
