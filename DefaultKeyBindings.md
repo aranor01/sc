@@ -7,7 +7,7 @@
 
 # Default Key Bindings
 
-- Backspace, A-Up (Alt-Up)
+- A-Up (Alt-Up)
        go to the parent directory of the active panel
 
 - A-Left (Alt-Left)
