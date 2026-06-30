@@ -815,7 +815,10 @@ impl App {
             }
             Action::CmdlineComplete => {
                 if !self.cmdline.text.trim().is_empty() {
-                    let candidates = self.collect_candidates();
+                    let (candidates, warn) = self.collect_candidates();
+                    if let Some(msg) = warn {
+                        self.set_status(&msg, true);
+                    }
                     let word_start = last_word_start(&self.cmdline.text);
                     match candidates.len() {
                         0 => {}
@@ -1156,25 +1159,36 @@ impl App {
         }
     }
 
-    /// Call the completion script with the current cmdline text and return all candidates.
-    fn collect_candidates(&self) -> Vec<String> {
+    /// Call the completion script with the current cmdline text.
+    /// Returns `(candidates, warning)` where `warning` is set when the script is
+    /// missing or exits non-zero with no output.
+    fn collect_candidates(&self) -> (Vec<String>, Option<String>) {
         if self.cmdline.text.trim().is_empty() {
-            return vec![];
+            return (vec![], None);
         }
-        let Some(script) = find_complete_script() else { return vec![]; };
+        let Some(script) = find_complete_script() else {
+            return (vec![], Some("Completion script not found".to_string()));
+        };
         match std::process::Command::new("bash")
             .arg(&script)
             .arg(&self.cmdline.text)
             .current_dir(&self.active_panel().path.0)
             .output()
         {
-            Ok(out) => std::str::from_utf8(&out.stdout)
-                .unwrap_or("")
-                .lines()
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect(),
-            Err(_) => vec![],
+            Ok(out) => {
+                let candidates: Vec<String> = std::str::from_utf8(&out.stdout)
+                    .unwrap_or("")
+                    .lines()
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect();
+                if !out.status.success() && candidates.is_empty() {
+                    (vec![], Some("Completion script failed".to_string()))
+                } else {
+                    (candidates, None)
+                }
+            }
+            Err(_) => (vec![], Some("Completion script not found".to_string())),
         }
     }
 
@@ -1201,7 +1215,12 @@ impl App {
             self.completion = None;
             return;
         }
-        let candidates = self.collect_candidates();
+        let (candidates, warn) = self.collect_candidates();
+        if let Some(msg) = warn {
+            self.set_status(&msg, true);
+            self.completion = None;
+            return;
+        }
         let word_start = last_word_start(&self.cmdline.text);
         match candidates.len() {
             0 => {
