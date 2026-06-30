@@ -243,10 +243,7 @@ impl Default for KeyBindings {
             invert_tags: vec![KeyBinding::Single(ke(Char('*'), n))],
             copy: vec![KeyBinding::Single(ke(F(5), n))],
             move_entry: vec![KeyBinding::Single(ke(F(6), n))],
-            delete: vec![
-                KeyBinding::Single(ke(F(8), n)),
-                KeyBinding::Single(ke(Delete, n)),
-            ],
+            delete: vec![KeyBinding::Single(ke(F(8), n))],
             user_menu: vec![KeyBinding::Single(ke(F(2), n))],
             exit: vec![KeyBinding::Single(ke(F(10), n)), KeyBinding::Single(ke(Char('q'), c))],
             cmdline_insert_filename: vec![
