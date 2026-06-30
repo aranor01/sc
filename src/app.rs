@@ -2732,20 +2732,11 @@ impl App {
 }
 
 fn find_complete_script() -> Option<PathBuf> {
-    // Development build: look for scripts/sc-complete or scripts/complete.sh under CWD
-    for name in &["scripts/sc-complete", "scripts/complete.sh"] {
-        let p = Path::new(name);
+    let dir = crate::config::find_scripts_dir()?;
+    for name in &["sc-complete", "complete.sh"] {
+        let p = dir.join(name);
         if p.exists() {
-            return Some(p.canonicalize().unwrap_or_else(|_| p.to_path_buf()));
-        }
-    }
-    // Installed: look next to the binary
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let p = dir.join("sc-complete");
-            if p.exists() {
-                return Some(p);
-            }
+            return Some(p);
         }
     }
     None
