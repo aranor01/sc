@@ -37,7 +37,7 @@ fi
 
 # Empty cmdline → complete command names from empty prefix
 if [ "$n" -eq 0 ]; then
-    compgen -c -- ""
+    compgen -c -- "" | { sort -u 2>/dev/null || cat; }
     exit 0
 fi
 
@@ -57,7 +57,7 @@ fi
 
 # First word (no space yet): complete command names
 if [ "$n" -eq 1 ] && [ "$trailing_space" = false ]; then
-    compgen -c -- "$cur"
+    compgen -c -- "$cur" | { sort -u 2>/dev/null || cat; }
     exit 0
 fi
 
