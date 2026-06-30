@@ -203,6 +203,7 @@ pub struct KeyBindings {
     pub cmdline_insert_path: ActionBindings,
     pub cmdline_insert_path_other: ActionBindings,
     pub toggle_shell: ActionBindings,
+    pub toggle_shell_and_sync_command_line: ActionBindings,
     pub toggle_cmdline: ActionBindings,
     pub toggle_button_bar: ActionBindings,
     pub cmdline_history_prev: ActionBindings,
@@ -271,6 +272,7 @@ impl Default for KeyBindings {
                 ke(Char('p'), c),
             )],
             toggle_shell: vec![KeyBinding::Single(ke(Char('o'), c))],
+            toggle_shell_and_sync_command_line: vec![KeyBinding::Single(ke(Char('o'), a))],
             toggle_cmdline: vec![KeyBinding::Single(ke(Char('b'), ca))],
             toggle_button_bar: vec![KeyBinding::Single(ke(Char('b'), a))],
             cmdline_history_prev: vec![KeyBinding::Single(ke(Up, c))],
@@ -492,6 +494,9 @@ impl Config {
                         cfg.keybindings.cmdline_insert_path_other = bindings
                     }
                     "toggle_shell" => cfg.keybindings.toggle_shell = bindings,
+                    "toggle_shell_and_sync_command_line" => {
+                        cfg.keybindings.toggle_shell_and_sync_command_line = bindings
+                    }
                     "toggle_cmdline" => cfg.keybindings.toggle_cmdline = bindings,
                     "toggle_button_bar" => cfg.keybindings.toggle_button_bar = bindings,
                     "cmdline_history_prev" => cfg.keybindings.cmdline_history_prev = bindings,

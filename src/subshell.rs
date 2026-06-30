@@ -350,8 +350,25 @@ fn read_until_sentinel(fd: RawFd) -> Result<Vec<u8>> {
     Ok(output)
 }
 
+/// Returns true if `data` contains the Alt+O escape sequence (ESC O = 0x1B 0x4F)
+/// not followed by a capital letter (which would indicate an SS3 function-key prefix
+/// such as F1–F4).
+fn contains_alt_o(data: &[u8]) -> bool {
+    let mut i = 0;
+    while i + 1 < data.len() {
+        if data[i] == 0x1b && data[i + 1] == 0x4f {
+            let next = data.get(i + 2).copied();
+            if !matches!(next, Some(b'A'..=b'Z')) {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Passthrough loop that exits automatically when the sentinel prompt appears
-/// (command finished), on Ctrl+O / EOF, or when a ShowPanels IPC message arrives.
+/// (command finished), on Ctrl+O / Alt+O / EOF, or when a ShowPanels IPC message arrives.
 fn passthrough_loop_until_sentinel(master: RawFd, ipc_fd: Option<RawFd>) -> Result<()> {
     let stdin_fd  = libc::STDIN_FILENO;
     let stdout_fd = libc::STDOUT_FILENO;
@@ -371,7 +388,7 @@ fn passthrough_loop_until_sentinel(master: RawFd, ipc_fd: Option<RawFd>) -> Resu
             let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
             if n <= 0 { break; }
             let data = &buf[..n as usize];
-            if data.contains(&0x0F) { break; } // Ctrl-O: manual exit
+            if data.contains(&0x0F) || contains_alt_o(data) { break; } // Ctrl-O / Alt-O: manual exit
             unsafe { libc::write(master, data.as_ptr() as *const _, data.len()); }
         }
 
@@ -419,7 +436,7 @@ fn passthrough_loop(master: RawFd, ipc_fd: Option<RawFd>) -> Result<()> {
             let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
             if n <= 0 { break; }
             let data = &buf[..n as usize];
-            if data.contains(&0x0F) { break; } // Ctrl+O
+            if data.contains(&0x0F) || contains_alt_o(data) { break; } // Ctrl+O / Alt+O
             let _ = unsafe { libc::write(master, data.as_ptr() as *const _, data.len()) };
         }
 
