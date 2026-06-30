@@ -350,16 +350,24 @@ fn read_until_sentinel(fd: RawFd) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-/// Returns true if `data` contains the Alt+O escape sequence (ESC O = 0x1B 0x4F)
-/// not followed by a capital letter (which would indicate an SS3 function-key prefix
-/// such as F1–F4).
+/// Returns true if `data` contains an Alt+O escape sequence:
+/// - ESC o (0x1B 0x6F) — lowercase, sent by terminals for Alt+o
+/// - ESC O (0x1B 0x4F) — uppercase, sent for Alt+Shift+O; the SS3 function-key
+///   prefix also starts with ESC O, so we skip it if followed by a capital letter
+///   (e.g. ESC O P = F1, ESC O Q = F2, …)
 fn contains_alt_o(data: &[u8]) -> bool {
     let mut i = 0;
     while i + 1 < data.len() {
-        if data[i] == 0x1b && data[i + 1] == 0x4f {
-            let next = data.get(i + 2).copied();
-            if !matches!(next, Some(b'A'..=b'Z')) {
-                return true;
+        if data[i] == 0x1b {
+            match data[i + 1] {
+                0x6f => return true, // ESC o = Alt+o
+                0x4f => {            // ESC O = Alt+Shift+O or SS3 prefix
+                    let next = data.get(i + 2).copied();
+                    if !matches!(next, Some(b'A'..=b'Z')) {
+                        return true;
+                    }
+                }
+                _ => {}
             }
         }
         i += 1;
