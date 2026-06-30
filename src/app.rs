@@ -1245,16 +1245,12 @@ impl App {
     }
 
     /// Re-filter history after a cmdline edit during reverse-search.
-    /// Preserves the highlighted entry if it still appears in the new list.
     fn update_reverse_search(&mut self) {
         let Some(session) = &mut self.reverse_search else { return };
-        let prev = session.list.items.get(session.list.selected).cloned();
         let new_items = history_matches(&self.history, &self.cmdline.text);
-        let new_selected = prev
-            .and_then(|p| new_items.iter().rposition(|s| *s == p))
-            .unwrap_or_else(|| new_items.len().saturating_sub(1));
+        session.list.selected = new_items.len().saturating_sub(1);
         session.list.items = new_items;
-        session.list.selected = new_selected;
+        self.rev_search_popup_offset.set(0);
     }
 
     fn execute_menu_item(&mut self, cmd_template: String) {
