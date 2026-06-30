@@ -10,6 +10,19 @@ source /usr/share/bash-completion/bash_completion 2>/dev/null || true
 
 cmdline="${1-}"
 
+# Shell-quote a completion candidate for safe insertion into the cmdline,
+# without escaping a trailing space some completion functions (e.g. git's)
+# append to mark a word as complete — that space is a word separator, not
+# part of the filename/word itself.
+quote_candidate() {
+    local s="$1"
+    if [[ "$s" == *' ' ]]; then
+        printf '%q \n' "${s% }"
+    else
+        printf '%q\n' "$s"
+    fi
+}
+
 # Split into words; note whether input ends with whitespace (new word in progress)
 read -ra words <<< "$cmdline"
 n=${#words[@]}
@@ -76,7 +89,7 @@ if declare -f _completion_loader &>/dev/null; then
         "$func" "$cmd" "$cur" "$prev" 2>/dev/null
 
         if [ "${#COMPREPLY[@]}" -gt 0 ]; then
-            printf '%s\n' "${COMPREPLY[@]}" | while IFS= read -r f; do printf '%q\n' "$f"; done
+            printf '%s\n' "${COMPREPLY[@]}" | while IFS= read -r f; do quote_candidate "$f"; done
             exit 0
         fi
     fi
