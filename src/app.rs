@@ -2220,6 +2220,7 @@ impl App {
         let _ = disable_raw_mode();
 
         let ipc_fd = self.ipc.as_ref().map(|s| s.raw_fd());
+        let cmdline_text = self.cmdline.text.clone();
         if let ShellMode::Subshell(ref sub) = self.shell_mode {
             let cwd = self.active_panel().path.0.clone();
             // Discard any buffered readline echoes from `history -s` calls that
@@ -2239,13 +2240,27 @@ impl App {
                 let cd_cmd = format!("\x15 cd {}", shell_escape_path(&cwd));
                 let _ = sub.send_line(&cd_cmd);
                 // cd echo + post-cd prompt will be visible at session start
+                if !cmdline_text.is_empty() {
+                    sub.send_raw(cmdline_text.as_bytes());
+                }
             } else if self.subshell_prompt_needed {
                 // A sc cmdline command ran since last passthrough: drain() discarded
                 // bash's PS1, so we need \n to force a fresh one. \x15 clears any
                 // partial readline input first to prevent accidental execution.
                 self.subshell_prompt_needed = false;
                 let _ = sub.send_line("\x15");
+                if !cmdline_text.is_empty() {
+                    sub.send_raw(cmdline_text.as_bytes());
+                }
+            } else if !cmdline_text.is_empty() {
+                // Shell is idle at its prompt. \x15 clears any existing readline
+                // content before we inject the SC cmdline text.
+                sub.send_raw(b"\x15");
+                sub.send_raw(cmdline_text.as_bytes());
             }
+            // Clear stale rl_file so take_rl_line() only returns content written
+            // during this passthrough session (bash mode only; no-op otherwise).
+            sub.clear_rl_file();
             let _ = sub.start_passthrough(ipc_fd);
 
             if !sub.is_alive() {
@@ -2255,13 +2270,24 @@ impl App {
                 self.shell_mode = ShellMode::Stateless;
                 // Skip cwd sync — /proc/<pid>/cwd is gone.
             } else {
+                // Read all data from sub before the mutable borrow for navigate_to_path.
+                // Subshell → SC readline sync (bash only): whatever was in the readline
+                // buffer when Ctrl-O was pressed. None if not bash or another exit cause.
+                let rl_line = sub.take_rl_line();
+                let cwd_link = std::fs::read_link(format!("/proc/{}/cwd", sub.child_pid));
+                // sub borrow ends here — no further uses below.
+
                 // Sync active panel to wherever the subshell ended up.
-                if let Ok(link) = std::fs::read_link(format!("/proc/{}/cwd", sub.child_pid)) {
+                if let Ok(link) = cwd_link {
                     let new_cwd = link.to_string_lossy().to_string();
                     let panel_cwd = self.active_panel().path.0.clone();
                     if new_cwd != panel_cwd {
                         self.navigate_to_path(&new_cwd);
                     }
+                }
+                if let Some(rl) = rl_line {
+                    self.cmdline.text = rl.clone();
+                    self.cmdline.cursor = rl.len();
                 }
             }
         }

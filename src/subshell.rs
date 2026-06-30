@@ -3,18 +3,30 @@ use std::io;
 use std::os::unix::io::RawFd;
 
 const SENTINEL: &str = "__SC_PROMPT_SENTINEL__";
+const CTRL_O_FD: RawFd = 10; // fd passed to bash for Ctrl-O pipe signaling
 
 pub struct Subshell {
     pub master_fd: RawFd,
     pub child_pid: libc::pid_t,
     slave_name: String,
+    ctrl_o_pipe_read: RawFd, // -1 if not bash
+    rl_file: String,         // empty if not bash
 }
 
 impl Subshell {
     /// Spawn a subshell attached to a new PTY. The subshell is configured with
     /// a sentinel PS1 so we can detect the prompt in output.
+    ///
+    /// For bash: also sets up bidirectional readline sync via a pipe and an
+    /// `--init-file` that installs a Ctrl-O readline binding.
     pub fn spawn() -> Result<Self> {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+        let is_bash = std::path::Path::new(&shell)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == "bash")
+            .unwrap_or(false);
 
         unsafe {
             let mut master_fd: RawFd = -1;
@@ -33,10 +45,56 @@ impl Subshell {
                 bail!("openpty failed: {}", io::Error::last_os_error());
             }
 
+            // Bash readline sync: create a pipe and init file before fork so both
+            // ends are available in child and parent.
+            let mut ctrl_o_pipe_read: RawFd = -1;
+            let mut ctrl_o_pipe_write: RawFd = -1;
+            let mut rl_file = String::new();
+
+            if is_bash {
+                let mut pfd = [-1i32; 2];
+                if libc::pipe(pfd.as_mut_ptr()) == 0 {
+                    ctrl_o_pipe_read = pfd[0];
+                    ctrl_o_pipe_write = pfd[1];
+                    rl_file = format!("/tmp/sc_rl_{}", master_fd);
+                    let init_path = format!("/tmp/sc_init_{}", master_fd);
+                    // The init file sources ~/.bashrc (preserving the user's PS1),
+                    // appends a PROMPT_COMMAND entry that emits the sentinel inside a
+                    // DCS escape (\033P...\033\) — invisible to the terminal but
+                    // detectable by sc's byte-stream search — and installs the Ctrl-O
+                    // binding. CTRL_O_FD is inherited by bash as fd 10; the binding
+                    // writes one byte there to wake the passthrough_loop poll().
+                    let init_content = format!(
+                        "[ -f ~/.bashrc ] && source ~/.bashrc\n\
+                         _sc_send_sentinel() {{\n\
+                             printf '\\033P{sentinel}\\033\\\\'\n\
+                         }}\n\
+                         PROMPT_COMMAND=\"${{PROMPT_COMMAND:+${{PROMPT_COMMAND}}; }}_sc_send_sentinel\"\n\
+                         _sc_ctrl_o() {{\n\
+                             printf '%s' \"$READLINE_LINE\" > '{rl}'\n\
+                             printf 'x' >&{fd}\n\
+                         }}\n\
+                         bind -x '\"\\C-o\": _sc_ctrl_o'\n",
+                        sentinel = SENTINEL,
+                        rl = rl_file,
+                        fd = CTRL_O_FD,
+                    );
+                    if std::fs::write(&init_path, &init_content).is_err() {
+                        libc::close(ctrl_o_pipe_read);
+                        libc::close(ctrl_o_pipe_write);
+                        ctrl_o_pipe_read = -1;
+                        ctrl_o_pipe_write = -1;
+                        rl_file = String::new();
+                    }
+                }
+            }
+
             let child_pid = libc::fork();
             if child_pid < 0 {
                 libc::close(slave_fd);
                 libc::close(master_fd);
+                if ctrl_o_pipe_read >= 0 { libc::close(ctrl_o_pipe_read); }
+                if ctrl_o_pipe_write >= 0 { libc::close(ctrl_o_pipe_write); }
                 bail!("fork failed: {}", io::Error::last_os_error());
             }
 
@@ -50,26 +108,54 @@ impl Subshell {
                 libc::dup2(slave_fd, libc::STDERR_FILENO);
                 if slave_fd > 2 { libc::close(slave_fd); }
 
-                let ps1_env = format!("PS1={SENTINEL} $ \0");
-                // exec shell with customized PS1 and history settings
+                let ps1_env = format!("PS1={SENTINEL} $ ");
                 let shell_c = std::ffi::CString::new(shell).unwrap();
-                let ps1_cstr = std::ffi::CString::new(ps1_env.trim_end_matches('\0')).unwrap();
+                let ps1_cstr = std::ffi::CString::new(ps1_env).unwrap();
                 let histcontrol_cstr = std::ffi::CString::new("HISTCONTROL=ignorespace").unwrap();
                 let env_c = std::ffi::CString::new("env").unwrap();
-                let argv_env: Vec<*const libc::c_char> = vec![
-                    env_c.as_ptr(),
-                    ps1_cstr.as_ptr(),
-                    histcontrol_cstr.as_ptr(),
-                    shell_c.as_ptr(),
-                    std::ptr::null(),
-                ];
-                libc::execvp(env_c.as_ptr(), argv_env.as_ptr());
-                // If exec fails, exit child
+
+                if ctrl_o_pipe_write >= 0 {
+                    // Bash mode: move pipe_write to CTRL_O_FD, close the read end.
+                    if ctrl_o_pipe_write != CTRL_O_FD {
+                        libc::dup2(ctrl_o_pipe_write, CTRL_O_FD);
+                        libc::close(ctrl_o_pipe_write);
+                    }
+                    libc::close(ctrl_o_pipe_read);
+
+                    let init_path = format!("/tmp/sc_init_{}", master_fd);
+                    let init_c = std::ffi::CString::new(init_path).unwrap();
+                    let flag_c = std::ffi::CString::new("--init-file").unwrap();
+                    let argv: Vec<*const libc::c_char> = vec![
+                        env_c.as_ptr(),
+                        ps1_cstr.as_ptr(),
+                        histcontrol_cstr.as_ptr(),
+                        shell_c.as_ptr(),
+                        flag_c.as_ptr(),
+                        init_c.as_ptr(),
+                        std::ptr::null(),
+                    ];
+                    libc::execvp(env_c.as_ptr(), argv.as_ptr());
+                } else {
+                    // Non-bash mode: existing behaviour
+                    if ctrl_o_pipe_read >= 0 { libc::close(ctrl_o_pipe_read); }
+                    let argv: Vec<*const libc::c_char> = vec![
+                        env_c.as_ptr(),
+                        ps1_cstr.as_ptr(),
+                        histcontrol_cstr.as_ptr(),
+                        shell_c.as_ptr(),
+                        std::ptr::null(),
+                    ];
+                    libc::execvp(env_c.as_ptr(), argv.as_ptr());
+                }
                 libc::_exit(1);
             }
 
+            // Parent: close the write end (bash owns it via CTRL_O_FD).
+            if ctrl_o_pipe_write >= 0 {
+                libc::close(ctrl_o_pipe_write);
+            }
+
             // Parent: get slave device name for set_echo before closing the fd.
-            // ptsname only needs master_fd — slave_fd can already be closed.
             let slave_name = {
                 let ptr = libc::ptsname(master_fd);
                 if ptr.is_null() { String::new() }
@@ -81,7 +167,7 @@ impl Subshell {
             std::thread::sleep(std::time::Duration::from_millis(100));
             let _ = drain_fd(master_fd);
 
-            Ok(Subshell { master_fd, child_pid, slave_name })
+            Ok(Subshell { master_fd, child_pid, slave_name, ctrl_o_pipe_read, rl_file })
         }
     }
 
@@ -96,14 +182,22 @@ impl Subshell {
     /// Enter a raw passthrough loop: forward stdin↔PTY master until
     /// the user presses Ctrl+O or the shell exits.
     ///
+    /// For bash (ctrl_o_pipe_read >= 0): exits when bash's Ctrl-O binding
+    /// signals via the pipe. Call `clear_rl_file()` before and `take_rl_line()`
+    /// after to read back the readline content.
+    ///
     /// This call blocks until passthrough is exited.
     pub fn start_passthrough(&self, ipc_fd: Option<RawFd>) -> Result<()> {
         use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
         enable_raw_mode()?;
 
-        let master = self.master_fd;
-        let result = passthrough_loop(master, ipc_fd);
+        let ctrl_o_pipe = if self.ctrl_o_pipe_read >= 0 {
+            Some(self.ctrl_o_pipe_read)
+        } else {
+            None
+        };
+        let result = passthrough_loop(self.master_fd, ipc_fd, ctrl_o_pipe);
 
         disable_raw_mode()?;
         result
@@ -117,6 +211,26 @@ impl Subshell {
 
     pub fn send_raw(&self, bytes: &[u8]) {
         let _ = write_fd(self.master_fd, bytes);
+    }
+
+    /// Remove the readline sync file so that a subsequent `take_rl_line()` only
+    /// returns content written during the current passthrough session (not a
+    /// leftover from a previous one).
+    pub fn clear_rl_file(&self) {
+        if !self.rl_file.is_empty() {
+            let _ = std::fs::remove_file(&self.rl_file);
+        }
+    }
+
+    /// Read the readline content written by bash's Ctrl-O binding and remove
+    /// the file. Returns `None` for non-bash or when the file was not written
+    /// (passthrough exited via IPC/EOF rather than Ctrl-O).
+    pub fn take_rl_line(&self) -> Option<String> {
+        if self.rl_file.is_empty() { return None; }
+        if !std::path::Path::new(&self.rl_file).exists() { return None; }
+        let content = std::fs::read_to_string(&self.rl_file).unwrap_or_default();
+        let _ = std::fs::remove_file(&self.rl_file);
+        Some(content)
     }
 
     /// Control the ECHO flag on the PTY slave's line discipline.
@@ -180,6 +294,14 @@ impl Drop for Subshell {
         unsafe {
             libc::kill(self.child_pid, libc::SIGTERM);
             libc::close(self.master_fd);
+        }
+        if self.ctrl_o_pipe_read >= 0 {
+            unsafe { libc::close(self.ctrl_o_pipe_read); }
+            let _ = std::fs::remove_file(&self.rl_file);
+            // Derive the init file path from the rl file path
+            if let Some(suffix) = self.rl_file.strip_prefix("/tmp/sc_rl_") {
+                let _ = std::fs::remove_file(format!("/tmp/sc_init_{}", suffix));
+            }
         }
     }
 }
@@ -398,28 +520,37 @@ fn passthrough_loop_until_sentinel(master: RawFd, ipc_fd: Option<RawFd>) -> Resu
     Ok(())
 }
 
-/// Passthrough loop: copies stdin→master and master→stdout until Ctrl+O, EOF,
-/// or a ShowPanels IPC message arrives on `ipc_fd`.
-fn passthrough_loop(master: RawFd, ipc_fd: Option<RawFd>) -> Result<()> {
+/// Passthrough loop: copies stdin→master and master→stdout until Ctrl+O (or the
+/// bash pipe signals), EOF, or a ShowPanels IPC message arrives on `ipc_fd`.
+///
+/// `ctrl_o_pipe`: when `Some`, bash signals Ctrl-O via this fd (pipe read end)
+/// and we exit on that event instead of intercepting the raw 0x0F byte.
+/// When `None` (non-bash), we break on the raw Ctrl+O byte as before.
+fn passthrough_loop(master: RawFd, ipc_fd: Option<RawFd>, ctrl_o_pipe: Option<RawFd>) -> Result<()> {
     let stdin_fd = libc::STDIN_FILENO;
     let stdout_fd = libc::STDOUT_FILENO;
     let mut buf = [0u8; 4096];
+    let use_pipe = ctrl_o_pipe.is_some();
 
     loop {
+        // poll() ignores entries with fd < 0 (sets revents = 0), so we can
+        // always pass 4 slots regardless of which optional fds are active.
         let mut fds = [
-            libc::pollfd { fd: stdin_fd,                 events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: master,                   events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: ipc_fd.unwrap_or(-1),     events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: stdin_fd,                      events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: master,                        events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: ipc_fd.unwrap_or(-1),          events: libc::POLLIN, revents: 0 },
+            libc::pollfd { fd: ctrl_o_pipe.unwrap_or(-1),     events: libc::POLLIN, revents: 0 },
         ];
-        let nfds = if ipc_fd.is_some() { 3 } else { 2 };
-        let r = unsafe { libc::poll(fds.as_mut_ptr(), nfds, -1) };
+        let r = unsafe { libc::poll(fds.as_mut_ptr(), 4, -1) };
         if r < 0 { break; }
 
         if fds[0].revents & libc::POLLIN != 0 {
             let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
             if n <= 0 { break; }
             let data = &buf[..n as usize];
-            if data.contains(&0x0F) { break; } // Ctrl+O
+            // In bash mode Ctrl-O reaches bash's readline (bind -x fires, then
+            // signals us via the pipe). In non-bash mode intercept it directly.
+            if !use_pipe && data.contains(&0x0F) { break; }
             let _ = unsafe { libc::write(master, data.as_ptr() as *const _, data.len()) };
         }
 
@@ -436,6 +567,16 @@ fn passthrough_loop(master: RawFd, ipc_fd: Option<RawFd>) -> Result<()> {
                     break;
                 }
             }
+        }
+
+        // Bash Ctrl-O pipe: bash's bind -x wrote the readline content to rl_file
+        // then wrote one byte here to wake us up.
+        if fds[3].revents & libc::POLLIN != 0 {
+            if let Some(pipe_fd) = ctrl_o_pipe {
+                let mut tmp = [0u8; 64];
+                unsafe { libc::read(pipe_fd, tmp.as_mut_ptr() as *mut _, tmp.len()); }
+            }
+            break;
         }
     }
     Ok(())
