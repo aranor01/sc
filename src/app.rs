@@ -129,6 +129,7 @@ enum Action {
     CmdlineInsertPath,
     CmdlineInsertPathOther,
     ToggleShell,
+    ToggleShellAndSyncCommandLine,
     ToggleCmdline,
     ToggleButtonBar,
     CmdlineHistoryPrev,
@@ -575,6 +576,7 @@ impl App {
             (&kb.cmdline_insert_path, Action::CmdlineInsertPath),
             (&kb.cmdline_insert_path_other, Action::CmdlineInsertPathOther),
             (&kb.toggle_shell, Action::ToggleShell),
+            (&kb.toggle_shell_and_sync_command_line, Action::ToggleShellAndSyncCommandLine),
             (&kb.toggle_cmdline, Action::ToggleCmdline),
             (&kb.toggle_button_bar, Action::ToggleButtonBar),
             (&kb.cmdline_history_prev, Action::CmdlineHistoryPrev),
@@ -652,12 +654,23 @@ impl App {
             Action::ToggleShell => {
                 match &self.shell_mode {
                     ShellMode::Subshell(_) => {
-                        // Enter interactive passthrough
-                        self.run_subshell_passthrough();
+                        self.run_subshell_passthrough(false);
                         return;
                     }
                     ShellMode::Stateless => {
-                        // Toggle output overlay — only if there is cached output to show
+                        if self.last_output.is_some() {
+                            self.show_output = !self.show_output;
+                        }
+                    }
+                }
+            }
+            Action::ToggleShellAndSyncCommandLine => {
+                match &self.shell_mode {
+                    ShellMode::Subshell(_) => {
+                        self.run_subshell_passthrough(true);
+                        return;
+                    }
+                    ShellMode::Stateless => {
                         if self.last_output.is_some() {
                             self.show_output = !self.show_output;
                         }
@@ -2210,7 +2223,7 @@ impl App {
         }
     }
 
-    fn run_subshell_passthrough(&mut self) {
+    fn run_subshell_passthrough(&mut self, sync_cmdline: bool) {
         // Leave alternate screen so the subshell renders in the normal terminal
         if self.mouse {
             let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
@@ -2220,6 +2233,7 @@ impl App {
         let _ = disable_raw_mode();
 
         let ipc_fd = self.ipc.as_ref().map(|s| s.raw_fd());
+        let cmdline_text = if sync_cmdline { self.cmdline.text.clone() } else { String::new() };
         if let ShellMode::Subshell(ref sub) = self.shell_mode {
             let cwd = self.active_panel().path.0.clone();
             // Discard any buffered readline echoes from `history -s` calls that
@@ -2239,12 +2253,23 @@ impl App {
                 let cd_cmd = format!("\x15 cd {}", shell_escape_path(&cwd));
                 let _ = sub.send_line(&cd_cmd);
                 // cd echo + post-cd prompt will be visible at session start
+                if !cmdline_text.is_empty() {
+                    sub.send_raw(cmdline_text.as_bytes());
+                }
             } else if self.subshell_prompt_needed {
                 // A sc cmdline command ran since last passthrough: drain() discarded
                 // bash's PS1, so we need \n to force a fresh one. \x15 clears any
                 // partial readline input first to prevent accidental execution.
                 self.subshell_prompt_needed = false;
                 let _ = sub.send_line("\x15");
+                if !cmdline_text.is_empty() {
+                    sub.send_raw(cmdline_text.as_bytes());
+                }
+            } else if !cmdline_text.is_empty() {
+                // Shell is idle at its prompt. \x15 clears any existing readline
+                // content before we inject the SC cmdline text.
+                sub.send_raw(b"\x15");
+                sub.send_raw(cmdline_text.as_bytes());
             }
             let _ = sub.start_passthrough(ipc_fd);
 

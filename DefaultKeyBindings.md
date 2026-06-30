@@ -135,3 +135,8 @@
 - C-o
        toggle the output overlay of the last executed command (stateless mode);
        or toggle between sc UI and full interactive subshell access (subshell mode).
+
+- A-o (Alt-O)
+       same as C-o, but in subshell mode also copies the sc command line into the
+       subshell's readline buffer before entering passthrough.
+       Both C-o and A-o exit the subshell back to the SC UI.
