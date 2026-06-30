@@ -9,8 +9,9 @@ use unicode_width::UnicodeWidthChar;
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-        MouseButton, MouseEvent, MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
+        KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEvent,
+        MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     cursor::{Hide, Show},
@@ -129,6 +130,7 @@ enum Action {
     CmdlineInsertPath,
     CmdlineInsertPathOther,
     ToggleShell,
+    ToggleShellAndSyncCommandLine,
     ToggleCmdline,
     ToggleButtonBar,
     CmdlineHistoryPrev,
@@ -292,10 +294,15 @@ impl AppLayout {
 
 // ── TerminalGuard ─────────────────────────────────────────────────────────────
 
-struct TerminalGuard;
+struct TerminalGuard {
+    keyboard_enhanced: bool,
+}
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        if self.keyboard_enhanced {
+            let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
+        }
         let _ = disable_raw_mode();
         let _ = execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
     }
@@ -352,6 +359,7 @@ pub struct App {
     mouse_pressed: Option<Position>,
     should_quit: bool,
     mouse: bool,
+    keyboard_enhanced: bool,
     // True when cmdline is empty OR user pressed ESC to give panels focus temporarily.
     // Cleared after the first keystroke (if cmdline is non-empty).
     explicit_action_mode: bool,
@@ -473,6 +481,7 @@ impl App {
             mouse_pressed: None,
             should_quit: false,
             mouse,
+            keyboard_enhanced: false,
             explicit_action_mode: false,
             completion: None,
             reverse_search: None,
@@ -575,6 +584,7 @@ impl App {
             (&kb.cmdline_insert_path, Action::CmdlineInsertPath),
             (&kb.cmdline_insert_path_other, Action::CmdlineInsertPathOther),
             (&kb.toggle_shell, Action::ToggleShell),
+            (&kb.toggle_shell_and_sync_command_line, Action::ToggleShellAndSyncCommandLine),
             (&kb.toggle_cmdline, Action::ToggleCmdline),
             (&kb.toggle_button_bar, Action::ToggleButtonBar),
             (&kb.cmdline_history_prev, Action::CmdlineHistoryPrev),
@@ -652,12 +662,23 @@ impl App {
             Action::ToggleShell => {
                 match &self.shell_mode {
                     ShellMode::Subshell(_) => {
-                        // Enter interactive passthrough
-                        self.run_subshell_passthrough();
+                        self.run_subshell_passthrough(false);
                         return;
                     }
                     ShellMode::Stateless => {
-                        // Toggle output overlay — only if there is cached output to show
+                        if self.last_output.is_some() {
+                            self.show_output = !self.show_output;
+                        }
+                    }
+                }
+            }
+            Action::ToggleShellAndSyncCommandLine => {
+                match &self.shell_mode {
+                    ShellMode::Subshell(_) => {
+                        self.run_subshell_passthrough(true);
+                        return;
+                    }
+                    ShellMode::Stateless => {
                         if self.last_output.is_some() {
                             self.show_output = !self.show_output;
                         }
@@ -1247,6 +1268,9 @@ impl App {
         let cwd = self.active_panel().path.0.clone();
 
         // Tear down TUI so any spawned process gets a real terminal.
+        if self.keyboard_enhanced {
+            let _ = crossterm::execute!(stdout(), PopKeyboardEnhancementFlags);
+        }
         if self.mouse {
             let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
         } else {
@@ -1297,6 +1321,12 @@ impl App {
             let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableMouseCapture);
         } else {
             let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen);
+        }
+        if self.keyboard_enhanced {
+            let _ = crossterm::execute!(
+                stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            );
         }
 
         // Drain the IPC socket: picks up the ShowPanels message sent by sc-action
@@ -2210,8 +2240,11 @@ impl App {
         }
     }
 
-    fn run_subshell_passthrough(&mut self) {
+    fn run_subshell_passthrough(&mut self, sync_cmdline: bool) {
         // Leave alternate screen so the subshell renders in the normal terminal
+        if self.keyboard_enhanced {
+            let _ = crossterm::execute!(stdout(), PopKeyboardEnhancementFlags);
+        }
         if self.mouse {
             let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
         } else {
@@ -2220,6 +2253,7 @@ impl App {
         let _ = disable_raw_mode();
 
         let ipc_fd = self.ipc.as_ref().map(|s| s.raw_fd());
+        let cmdline_text = if sync_cmdline { self.cmdline.text.clone() } else { String::new() };
         if let ShellMode::Subshell(ref sub) = self.shell_mode {
             let cwd = self.active_panel().path.0.clone();
             // Discard any buffered readline echoes from `history -s` calls that
@@ -2239,12 +2273,23 @@ impl App {
                 let cd_cmd = format!("\x15 cd {}", shell_escape_path(&cwd));
                 let _ = sub.send_line(&cd_cmd);
                 // cd echo + post-cd prompt will be visible at session start
+                if !cmdline_text.is_empty() {
+                    sub.send_raw(cmdline_text.as_bytes());
+                }
             } else if self.subshell_prompt_needed {
                 // A sc cmdline command ran since last passthrough: drain() discarded
                 // bash's PS1, so we need \n to force a fresh one. \x15 clears any
                 // partial readline input first to prevent accidental execution.
                 self.subshell_prompt_needed = false;
                 let _ = sub.send_line("\x15");
+                if !cmdline_text.is_empty() {
+                    sub.send_raw(cmdline_text.as_bytes());
+                }
+            } else if !cmdline_text.is_empty() {
+                // Shell is idle at its prompt. \x15 clears any existing readline
+                // content before we inject the SC cmdline text.
+                sub.send_raw(b"\x15");
+                sub.send_raw(cmdline_text.as_bytes());
             }
             let _ = sub.start_passthrough(ipc_fd);
 
@@ -2272,6 +2317,12 @@ impl App {
             let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableMouseCapture);
         } else {
             let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen);
+        }
+        if self.keyboard_enhanced {
+            let _ = crossterm::execute!(
+                stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            );
         }
         // Refresh panels in case the subshell changed the filesystem
         self.needs_full_redraw = true;
@@ -2642,7 +2693,16 @@ impl App {
         } else {
             execute!(stdout(), EnterAlternateScreen)?;
         }
-        let _guard = TerminalGuard;
+        let keyboard_enhanced =
+            crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+        if keyboard_enhanced {
+            let _ = execute!(
+                stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            );
+        }
+        self.keyboard_enhanced = keyboard_enhanced;
+        let _guard = TerminalGuard { keyboard_enhanced };
 
         let backend = CrosstermBackend::new(stdout());
         let mut terminal = Terminal::new(backend)?;
@@ -2656,7 +2716,7 @@ impl App {
 
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
-                    Event::Key(key) => {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
                         self.handle_key_event(key);
                         if self.should_quit {
                             break;
