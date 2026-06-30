@@ -1197,6 +1197,9 @@ impl App {
         self.cmdline.text.truncate(word_start);
         self.cmdline.cursor = word_start;
         self.cmdline.insert_str(candidate);
+        if !candidate.ends_with(' ') || candidate.ends_with("\\ ") {
+            self.cmdline.insert_str(" ");
+        }
     }
 
     /// Apply the currently selected popup candidate and close the popup.
