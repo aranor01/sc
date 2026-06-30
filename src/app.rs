@@ -1412,6 +1412,15 @@ impl App {
     }
 
     fn handle_key_event(&mut self, event: KeyEvent) {
+        // Some terminals send ^H (0x08) for Backspace instead of DEL (0x7f).
+        // Crossterm maps 0x08 to Ctrl+H — normalize it back to Backspace.
+        let event = if event.code == KeyCode::Char('h')
+            && event.modifiers == KeyModifiers::CONTROL
+        {
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)
+        } else {
+            event
+        };
         let was_explicit = self.explicit_action_mode;
         self.handle_key_event_inner(event);
         // One-shot: clear ESC-triggered action mode after the first key is processed,
