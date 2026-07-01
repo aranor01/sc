@@ -1343,16 +1343,18 @@ impl App {
         }
         self.cmdline.text = result.text;
         self.cmdline.move_end();
-        self.execute_command();
+        self.execute_command(false);
     }
 
-    fn execute_command(&mut self) {
+    fn execute_command(&mut self, push_to_history:bool) {
         let cmd = self.cmdline.text.clone();
         if cmd.is_empty() {
             return;
         }
-        self.history.push(cmd.clone());
-        let _ = self.history.save(&crate::state::history_path());
+        if push_to_history {
+            self.history.push(cmd.clone());
+            let _ = self.history.save(&crate::state::history_path());
+        }
         self.cmdline.clear();
 
         let cwd = self.active_panel().path.0.clone();
@@ -1812,7 +1814,7 @@ impl App {
                 }
                 return;
             }
-            PanelOutcome::ExecuteCommand => { self.execute_command(); return; }
+            PanelOutcome::ExecuteCommand => { self.execute_command(true); return; }
             PanelOutcome::NavError(msg) => { self.set_status(&msg, true); return; }
             PanelOutcome::Passthrough => {}
         }
@@ -2025,7 +2027,7 @@ impl App {
                     }
                     self.cmdline.text = result.text;
                     self.cmdline.move_end();
-                    self.execute_command();
+                    self.execute_command(false);
                 }
             }
         }
