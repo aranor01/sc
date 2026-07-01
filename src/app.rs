@@ -95,6 +95,23 @@ fn absolutize(path: &Path, cwd: &Path) -> PathBuf {
     if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) }
 }
 
+/// Abbreviates the home directory prefix as `~` for display; leaves other paths unchanged.
+fn display_path(path: &str) -> String {
+    abbreviate_home(path, dirs::home_dir().as_deref())
+}
+
+fn abbreviate_home(path: &str, home: Option<&Path>) -> String {
+    let Some(home) = home else { return path.to_string(); };
+    let home = home.to_string_lossy();
+    if path == home.as_ref() {
+        return "~".to_string();
+    }
+    if let Some(rest) = path.strip_prefix(home.as_ref()).and_then(|r| r.strip_prefix('/')) {
+        return format!("~/{rest}");
+    }
+    path.to_string()
+}
+
 /// Like `absolutize`, but joins against the process cwd for call sites with no `cwd` on hand.
 fn absolutize_str(path: &str) -> String {
     let p = Path::new(path);
@@ -2474,14 +2491,14 @@ impl App {
 
         // Panels
         let left_active = self.active == Side::Left;
-        let left_title = self.left.path.0.clone();
+        let left_title = display_path(&self.left.path.0);
         frame.render_stateful_widget(
             PanelWidget { cs: &cs, active: left_active, title: left_title },
             layout.left,
             &mut self.left,
         );
         let right_active = self.active == Side::Right;
-        let right_title = self.right.path.0.clone();
+        let right_title = display_path(&self.right.path.0);
         frame.render_stateful_widget(
             PanelWidget { cs: &cs, active: right_active, title: right_title },
             layout.right,
@@ -2996,5 +3013,35 @@ mod tests {
     fn saved_relative_is_absolutized_against_cwd() {
         let r = rp(None, None, Some(true), false, Some(("rel/left", "/abs/right")), "/cwd");
         assert_eq!(r, StartupPaths { left: p("/cwd/rel/left"), right: p("/abs/right") });
+    }
+
+    #[test]
+    fn abbreviate_home_exact_match() {
+        let r = abbreviate_home("/home/alice", Some(Path::new("/home/alice")));
+        assert_eq!(r, "~");
+    }
+
+    #[test]
+    fn abbreviate_home_subdir() {
+        let r = abbreviate_home("/home/alice/projects", Some(Path::new("/home/alice")));
+        assert_eq!(r, "~/projects");
+    }
+
+    #[test]
+    fn abbreviate_home_respects_segment_boundary() {
+        let r = abbreviate_home("/home/alice2/projects", Some(Path::new("/home/alice")));
+        assert_eq!(r, "/home/alice2/projects");
+    }
+
+    #[test]
+    fn abbreviate_home_unrelated_path_unchanged() {
+        let r = abbreviate_home("/var/log", Some(Path::new("/home/alice")));
+        assert_eq!(r, "/var/log");
+    }
+
+    #[test]
+    fn abbreviate_home_no_home_dir_unchanged() {
+        let r = abbreviate_home("/var/log", None);
+        assert_eq!(r, "/var/log");
     }
 }
