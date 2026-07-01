@@ -1,5 +1,6 @@
 use crate::config::ColorScheme;
 use crate::ui::cmdline::CmdLineState;
+use crate::ui::focus::FocusRing;
 use crate::ui::modal_event::ModalOutcome;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -13,6 +14,21 @@ use ratatui::{
 use super::button::Button;
 use super::to_color;
 
+// ── CheckboxOptions ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct CheckboxOptions {
+    pub files_only: bool,
+    pub case_sensitive: bool,
+    pub is_regexp: bool,
+}
+
+impl Default for CheckboxOptions {
+    fn default() -> Self {
+        CheckboxOptions { files_only: true, case_sensitive: true, is_regexp: false }
+    }
+}
+
 // ── InputDialog ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,12 +40,23 @@ pub enum InputDialogAction {
     UnselectGroup,
 }
 
+// Focus ring indices for dialogs with checkboxes:
+//   0 = text input, 1 = files_only, 2 = case_sensitive, 3 = regexp, 4 = ok, 5 = cancel
+// Focus ring indices for dialogs without checkboxes:
+//   0 = text input, 1 = ok, 2 = cancel
+const FOCUS_CANCEL_WITH_CB: usize = 5;
+const FOCUS_CANCEL_NO_CB: usize = 2;
+const FOCUS_OK_WITH_CB: usize = 4;
+const FOCUS_OK_NO_CB: usize = 1;
+
 #[derive(Debug, Clone)]
 pub struct InputDialogState {
     pub action: InputDialogAction,
     pub title: &'static str,
     pub input: CmdLineState,
     pub error: Option<String>,
+    pub focus: FocusRing,
+    pub checkboxes: Option<CheckboxOptions>,
 }
 
 impl InputDialogState {
@@ -37,18 +64,88 @@ impl InputDialogState {
         let mut input = CmdLineState::new();
         input.text = prefill.to_string();
         input.cursor = prefill.len();
-        InputDialogState { action, title, input, error: None }
+        InputDialogState {
+            action,
+            title,
+            input,
+            error: None,
+            focus: FocusRing::new(3),
+            checkboxes: None,
+        }
+    }
+
+    pub fn new_pattern(
+        action: InputDialogAction,
+        title: &'static str,
+        prefill: &str,
+        opts: CheckboxOptions,
+    ) -> Self {
+        let mut input = CmdLineState::new();
+        input.text = prefill.to_string();
+        input.cursor = prefill.len();
+        InputDialogState {
+            action,
+            title,
+            input,
+            error: None,
+            focus: FocusRing::new(6),
+            checkboxes: Some(opts),
+        }
+    }
+
+    fn cancel_idx(&self) -> usize {
+        if self.checkboxes.is_some() { FOCUS_CANCEL_WITH_CB } else { FOCUS_CANCEL_NO_CB }
+    }
+
+    fn ok_idx(&self) -> usize {
+        if self.checkboxes.is_some() { FOCUS_OK_WITH_CB } else { FOCUS_OK_NO_CB }
     }
 
     pub fn handle_key(&mut self, event: &KeyEvent) -> ModalOutcome {
-        if event.code == KeyCode::Enter && event.modifiers == KeyModifiers::NONE {
-            return ModalOutcome::Confirmed;
+        // Tab / Shift-Tab: cycle focus
+        if event.code == KeyCode::Tab && event.modifiers == KeyModifiers::NONE {
+            self.focus.next();
+            return ModalOutcome::Consumed;
         }
+        if event.code == KeyCode::BackTab {
+            self.focus.prev();
+            return ModalOutcome::Consumed;
+        }
+
+        // Esc: always dismiss
         if event.code == KeyCode::Esc && event.modifiers == KeyModifiers::NONE {
             return ModalOutcome::Dismissed;
         }
-        self.input.handle_key(event);
-        self.error = None;
+
+        // Enter: confirm unless focus is on Cancel
+        if event.code == KeyCode::Enter && event.modifiers == KeyModifiers::NONE {
+            if self.focus.current() == self.cancel_idx() {
+                return ModalOutcome::Dismissed;
+            }
+            return ModalOutcome::Confirmed;
+        }
+
+        // Space: toggle focused checkbox, or activate OK/Cancel
+        if event.code == KeyCode::Char(' ') && event.modifiers == KeyModifiers::NONE {
+            if let Some(ref mut cb) = self.checkboxes {
+                match self.focus.current() {
+                    1 => { cb.files_only = !cb.files_only; return ModalOutcome::Consumed; }
+                    2 => { cb.case_sensitive = !cb.case_sensitive; return ModalOutcome::Consumed; }
+                    3 => { cb.is_regexp = !cb.is_regexp; return ModalOutcome::Consumed; }
+                    _ => {}
+                }
+            }
+            let ok_idx = self.ok_idx();
+            let cancel_idx = self.cancel_idx();
+            if self.focus.current() == ok_idx { return ModalOutcome::Confirmed; }
+            if self.focus.current() == cancel_idx { return ModalOutcome::Dismissed; }
+        }
+
+        // All other keys: delegate to input only when input is focused
+        if self.focus.current() == 0 {
+            self.input.handle_key(event);
+            self.error = None;
+        }
         ModalOutcome::Consumed
     }
 }
@@ -56,7 +153,44 @@ impl InputDialogState {
 pub struct InputDialogAreas {
     pub ok: Button,
     pub cancel: Button,
+    pub cb_files_only: Option<Rect>,
+    pub cb_case_sensitive: Option<Rect>,
+    pub cb_regexp: Option<Rect>,
 }
+
+// ── Checkbox render helper ────────────────────────────────────────────────────
+
+fn render_checkbox(
+    x: u16,
+    y: u16,
+    buf: &mut Buffer,
+    label: &str,
+    checked: bool,
+    focused: bool,
+    cs: &ColorScheme,
+) -> Rect {
+    let bracket_fg = if focused { to_color(cs.dialog_border_fg) } else { to_color(cs.dialog_fg) };
+    let bracket_style = Style::default().fg(bracket_fg).bg(to_color(cs.dialog_bg));
+    let mark_style = Style::default()
+        .fg(to_color(cs.tagged_fg))
+        .bg(to_color(cs.dialog_bg));
+    let label_style = Style::default()
+        .fg(if focused { to_color(cs.dialog_border_fg) } else { to_color(cs.dialog_fg) })
+        .bg(to_color(cs.dialog_bg));
+
+    buf.set_string(x, y, "[", bracket_style);
+    if checked {
+        buf.set_string(x + 1, y, "x", mark_style);
+    } else {
+        buf.set_string(x + 1, y, " ", bracket_style);
+    }
+    buf.set_string(x + 2, y, "] ", bracket_style);
+    buf.set_string(x + 4, y, label, label_style);
+
+    Rect { x, y, width: (4 + label.len()) as u16, height: 1 }
+}
+
+// ── Text input render helper ──────────────────────────────────────────────────
 
 fn render_text_input(
     area: Rect,
@@ -91,8 +225,9 @@ pub fn render_input_dialog(
     state: &InputDialogState,
     press: Option<Position>,
 ) -> (InputDialogAreas, Option<Position>) {
-    // height: 2 border + 1 input + 1 error/blank + 1 gap + 1 buttons = 6
-    let height = 6u16;
+    let has_cb = state.checkboxes.is_some();
+    // height: 2 border + 1 input + 1 error + (3 cb rows if has_cb) + 1 gap + 1 buttons
+    let height = if has_cb { 10u16 } else { 6u16 };
     let width = 52u16.min(area.width.saturating_sub(2));
     let dialog_area = centered_rect(width, height, area);
 
@@ -110,27 +245,50 @@ pub fn render_input_dialog(
     let inner = block.inner(dialog_area);
     block.render(dialog_area, buf);
 
-    // Input field with cmdline background for contrast
+    // Input field — use dialog_border_fg bg when focused to highlight
+    let input_focused = state.focus.is_focused(0);
+    let (input_fg, input_bg) = if input_focused {
+        (to_color(cs.cmdline_fg), to_color(cs.cmdline_bg))
+    } else {
+        (to_color(cs.cmdline_inactive_fg), to_color(cs.cmdline_inactive_bg))
+    };
     let input_area = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
-    let cursor_pos = render_text_input(
-        input_area,
-        buf,
-        &state.input,
-        to_color(cs.cmdline_fg),
-        to_color(cs.cmdline_bg),
-    );
+    let cursor_pos = render_text_input(input_area, buf, &state.input, input_fg, input_bg);
+    // Only expose cursor when input field is focused
+    let cursor_out = if input_focused { cursor_pos } else { None };
 
-    // Error line (row 1 inside inner)
+    // Error line (inner.y + 1)
     if let Some(ref err) = state.error {
         let err_style = Style::default().fg(Color::Red).bg(to_color(cs.dialog_bg));
         let truncated: String = err.chars().take(inner.width as usize).collect();
         buf.set_string(inner.x, inner.y + 1, &truncated, err_style);
     }
 
-    // Buttons (row 3 inside inner, row 2 is gap)
-    let button_row = inner.y + 3;
+    // Checkboxes (inner.y + 2..4) and buttons row
+    let (cb_fo_rect, cb_cs_rect, cb_re_rect, button_row) = if let Some(ref cb) = state.checkboxes {
+        let cb_x = inner.x + 1;
+        let fo = render_checkbox(
+            cb_x, inner.y + 2, buf, "Files only",
+            cb.files_only, state.focus.is_focused(1), cs,
+        );
+        let cs_r = render_checkbox(
+            cb_x, inner.y + 3, buf, "Case sensitive",
+            cb.case_sensitive, state.focus.is_focused(2), cs,
+        );
+        let re = render_checkbox(
+            cb_x, inner.y + 4, buf, "RegExp",
+            cb.is_regexp, state.focus.is_focused(3), cs,
+        );
+        (Some(fo), Some(cs_r), Some(re), inner.y + 6)
+    } else {
+        (None, None, None, inner.y + 3)
+    };
+
+    // Buttons
     const OK_LABEL: &str = "[ OK ]";
     const CANCEL_LABEL: &str = "[Cancel]";
+
+    let (ok_focus_idx, cancel_focus_idx) = if has_cb { (4, 5) } else { (1, 2) };
 
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
         let ok_btn = Button::build(OK_LABEL, inner.x + 1, button_row, cs);
@@ -140,11 +298,25 @@ pub fn render_input_dialog(
             button_row,
             cs,
         );
-        ok_btn.render(OK_LABEL, buf, press);
-        cancel_btn.render(CANCEL_LABEL, buf, press);
-        (InputDialogAreas { ok: ok_btn, cancel: cancel_btn }, cursor_pos)
+        ok_btn.render_state(OK_LABEL, buf,
+            state.focus.is_focused(ok_focus_idx) || ok_btn.is_pressed(press));
+        cancel_btn.render_state(CANCEL_LABEL, buf,
+            state.focus.is_focused(cancel_focus_idx) || cancel_btn.is_pressed(press));
+        (InputDialogAreas {
+            ok: ok_btn,
+            cancel: cancel_btn,
+            cb_files_only: cb_fo_rect,
+            cb_case_sensitive: cb_cs_rect,
+            cb_regexp: cb_re_rect,
+        }, cursor_out)
     } else {
-        (InputDialogAreas { ok: Button::default(), cancel: Button::default() }, cursor_pos)
+        (InputDialogAreas {
+            ok: Button::default(),
+            cancel: Button::default(),
+            cb_files_only: None,
+            cb_case_sensitive: None,
+            cb_regexp: None,
+        }, cursor_out)
     }
 }
 
@@ -162,9 +334,14 @@ pub struct ConfirmState {
     pub op: ConfirmOp,
     pub files: Vec<String>,
     pub dst: Option<String>,
+    pub focus: usize, // 0 = Yes, 1 = No
 }
 
 impl ConfirmState {
+    pub fn new(op: ConfirmOp, files: Vec<String>, dst: Option<String>) -> Self {
+        ConfirmState { op, files, dst, focus: 0 }
+    }
+
     pub fn title(&self) -> &'static str {
         match self.op {
             ConfirmOp::Copy => " Copy ",
@@ -201,14 +378,26 @@ impl ConfirmState {
         }
     }
 
-    pub fn handle_key(&self, event: &KeyEvent) -> ModalOutcome {
-        if matches!(event.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
-            ModalOutcome::Confirmed
-        } else if matches!(event.code, KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc) {
-            ModalOutcome::Dismissed
-        } else {
-            ModalOutcome::Consumed
+    pub fn handle_key(&mut self, event: &KeyEvent) -> ModalOutcome {
+        // Tab / Shift-Tab cycle Yes/No
+        if event.code == KeyCode::Tab && event.modifiers == KeyModifiers::NONE
+            || event.code == KeyCode::BackTab
+        {
+            self.focus = 1 - self.focus;
+            return ModalOutcome::Consumed;
         }
+        // Enter activates the focused button
+        if event.code == KeyCode::Enter && event.modifiers == KeyModifiers::NONE {
+            return if self.focus == 0 { ModalOutcome::Confirmed } else { ModalOutcome::Dismissed };
+        }
+        // Shortcut keys (kept for muscle memory)
+        if matches!(event.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+            return ModalOutcome::Confirmed;
+        }
+        if matches!(event.code, KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc) {
+            return ModalOutcome::Dismissed;
+        }
+        ModalOutcome::Consumed
     }
 }
 
@@ -274,7 +463,7 @@ pub fn render_confirm(
         .wrap(Wrap { trim: false });
     Widget::render(para, msg_area, buf);
 
-    // Buttons
+    // Buttons — highlight the focused one
     let button_row = inner.y + line_count + 1;
     const YES_LABEL: &str = "[Y]es";
     const NO_LABEL: &str = "[N]o";
@@ -282,8 +471,8 @@ pub fn render_confirm(
     let no_btn = Button::build(NO_LABEL, yes_btn.area.x + YES_LABEL.len() as u16 + 2, button_row, cs);
 
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
-        yes_btn.render(YES_LABEL, buf, press);
-        no_btn.render(NO_LABEL, buf, press);
+        yes_btn.render_state(YES_LABEL, buf, state.focus == 0 || yes_btn.is_pressed(press));
+        no_btn.render_state(NO_LABEL, buf, state.focus == 1 || no_btn.is_pressed(press));
         ConfirmButtonAreas { yes: yes_btn, no: no_btn }
     } else {
         ConfirmButtonAreas { yes: Button::default(), no: Button::default() }
@@ -295,7 +484,7 @@ pub fn render_error(
     buf: &mut Buffer,
     cs: &ColorScheme,
     message: &str,
-    press: Option<Position>,
+    _press: Option<Position>,
 ) -> ErrorButtonArea {
     let line_count = message.lines().count() as u16;
     // border(2) + message lines + blank line + button line
@@ -329,14 +518,14 @@ pub fn render_error(
         .wrap(Wrap { trim: false });
     Widget::render(para, msg_area, buf);
 
-    // Centered [ OK ] button
+    // Centered [ OK ] button — always shown as focused (only button)
     const OK_LABEL: &str = "[ OK ]";
     let button_row = inner.y + line_count + 1;
     let ok_x = inner.x + inner.width.saturating_sub(OK_LABEL.len() as u16) / 2;
     let ok_btn = Button::build(OK_LABEL, ok_x, button_row, cs);
 
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
-        ok_btn.render(OK_LABEL, buf, press);
+        ok_btn.render_state(OK_LABEL, buf, true);
         ErrorButtonArea { ok: ok_btn }
     } else {
         ErrorButtonArea { ok: Button::default() }

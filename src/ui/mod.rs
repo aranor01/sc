@@ -2,6 +2,7 @@ pub mod button;
 pub mod button_bar;
 pub mod cmdline;
 pub mod dialog;
+pub mod focus;
 pub mod modal_event;
 pub mod popup_list;
 pub mod menu;

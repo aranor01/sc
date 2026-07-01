@@ -36,11 +36,11 @@ use crate::ui::button_bar::ButtonBarWidget;
 use crate::ui::status_bar::{StatusBarState, StatusBarWidget};
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupDirection, PopupListState, PopupListWidget};
-use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState};
+use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, CheckboxOptions, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
 use crate::ui::modal_event::{CmdlineOutcome, ModalOutcome, OverlayOutcome, PanelOutcome, PopupOutcome};
-use crate::ui::panel::{validate_filter_pattern, PanelState, PanelWidget, SortKey};
+use crate::ui::panel::{build_filter_pattern, PanelState, PanelWidget, SortKey};
 
 // ── Mode enums ────────────────────────────────────────────────────────────────
 
@@ -333,6 +333,9 @@ pub struct App {
     menu_close_btn: Cell<Button>,
     input_ok_btn: Cell<Button>,
     input_cancel_btn: Cell<Button>,
+    input_cb_files_only: Cell<Option<Rect>>,
+    input_cb_case_sensitive: Cell<Option<Rect>>,
+    input_cb_regexp: Cell<Option<Rect>>,
     menu_list_area: Cell<Rect>,
     menu_list_offset: Cell<usize>,
     // Popup list hit-test areas and scroll offsets (reset each frame when not visible)
@@ -367,6 +370,15 @@ pub struct App {
 
 fn shell_escape_path(s: &str) -> String {
     crate::macros::shell_escape(s)
+}
+
+/// Parse an IPC pattern: strip the legacy `/` prefix for regex, return (text, is_regexp).
+fn ipc_pattern(pattern: &str) -> (&str, bool) {
+    if let Some(rest) = pattern.strip_prefix('/') {
+        (rest, true)
+    } else {
+        (pattern, false)
+    }
 }
 
 
@@ -456,6 +468,9 @@ impl App {
             menu_close_btn: Cell::new(Button::default()),
             input_ok_btn: Cell::new(Button::default()),
             input_cancel_btn: Cell::new(Button::default()),
+            input_cb_files_only: Cell::new(None),
+            input_cb_case_sensitive: Cell::new(None),
+            input_cb_regexp: Cell::new(None),
             menu_list_area: Cell::new(Rect::default()),
             menu_list_offset: Cell::new(0),
             completion_popup_area: Cell::new(Rect::default()),
@@ -703,11 +718,7 @@ impl App {
                     self.modal = Modal::Error("Source and destination are the same directory.".to_string());
                     return;
                 }
-                self.modal = Modal::Confirm(ConfirmState {
-                    op: ConfirmOp::Copy,
-                    files,
-                    dst: Some(dst),
-                });
+                self.modal = Modal::Confirm(ConfirmState::new(ConfirmOp::Copy, files, Some(dst)));
             }
             Action::Move => {
                 let files = self.active_panel().op_files();
@@ -721,20 +732,12 @@ impl App {
                     self.modal = Modal::Error("Source and destination are the same directory.".to_string());
                     return;
                 }
-                self.modal = Modal::Confirm(ConfirmState {
-                    op: ConfirmOp::Move,
-                    files,
-                    dst: Some(dst),
-                });
+                self.modal = Modal::Confirm(ConfirmState::new(ConfirmOp::Move, files, Some(dst)));
             }
             Action::Delete => {
                 let files = self.active_panel().op_files();
                 if !files.is_empty() {
-                    self.modal = Modal::Confirm(ConfirmState {
-                        op: ConfirmOp::Delete,
-                        files,
-                        dst: None,
-                    });
+                    self.modal = Modal::Confirm(ConfirmState::new(ConfirmOp::Delete, files, None));
                 } else {
                     self.set_status("Nothing to delete", true);
                 }
@@ -901,16 +904,29 @@ impl App {
                 }
             }
             Action::Filter => {
-                let current = self.active_panel().filter.as_ref().map(|p| p.raw.clone()).unwrap_or_default();
-                let state = InputDialogState::new(InputDialogAction::Filter, " Filter ", &current);
+                let (prefill, opts) = match self.active_panel().filter.as_ref() {
+                    Some(f) => (f.raw.clone(), CheckboxOptions {
+                        files_only: f.files_only,
+                        case_sensitive: f.case_sensitive,
+                        is_regexp: f.is_regex,
+                    }),
+                    None => (String::new(), CheckboxOptions::default()),
+                };
+                let state = InputDialogState::new_pattern(
+                    InputDialogAction::Filter, " Filter ", &prefill, opts,
+                );
                 self.modal = Modal::InputDialog(state);
             }
             Action::SelectGroup => {
-                let state = InputDialogState::new(InputDialogAction::SelectGroup, " Select group ", "");
+                let state = InputDialogState::new_pattern(
+                    InputDialogAction::SelectGroup, " Select group ", "", CheckboxOptions::default(),
+                );
                 self.modal = Modal::InputDialog(state);
             }
             Action::UnselectGroup => {
-                let state = InputDialogState::new(InputDialogAction::UnselectGroup, " Unselect group ", "");
+                let state = InputDialogState::new_pattern(
+                    InputDialogAction::UnselectGroup, " Unselect group ", "", CheckboxOptions::default(),
+                );
                 self.modal = Modal::InputDialog(state);
             }
             Action::RefreshPanel => {
@@ -1111,11 +1127,12 @@ impl App {
                 }
             }
             InputDialogAction::Filter => {
+                let opts = state.checkboxes.as_ref().cloned().unwrap_or_default();
                 if new_text.is_empty() {
                     self.active_panel_mut().filter = None;
                     self.active_panel_mut().refresh();
                 } else {
-                    match validate_filter_pattern(&new_text) {
+                    match build_filter_pattern(&new_text, opts.files_only, opts.case_sensitive, opts.is_regexp) {
                         Ok(pat) => {
                             self.active_panel_mut().filter = Some(pat);
                             self.active_panel_mut().refresh();
@@ -1129,10 +1146,15 @@ impl App {
             }
             InputDialogAction::SelectGroup => {
                 if new_text.is_empty() { return; }
-                match validate_filter_pattern(&new_text) {
+                let opts = state.checkboxes.as_ref().cloned().unwrap_or_default();
+                match build_filter_pattern(&new_text, opts.files_only, opts.case_sensitive, opts.is_regexp) {
                     Ok(pat) => {
                         let names: Vec<String> = self.active_panel().entries.iter()
-                            .filter(|e| e.name != ".." && pat.matches(&e.name))
+                            .filter(|e| {
+                                e.name != ".."
+                                    && !(opts.files_only && e.kind == NodeKind::Dir)
+                                    && pat.matches(&e.name)
+                            })
                             .map(|e| e.name.clone())
                             .collect();
                         let panel = self.active_panel_mut();
@@ -1146,10 +1168,24 @@ impl App {
             }
             InputDialogAction::UnselectGroup => {
                 if new_text.is_empty() { return; }
-                match validate_filter_pattern(&new_text) {
+                let opts = state.checkboxes.as_ref().cloned().unwrap_or_default();
+                // Collect directory names before the mutable borrow
+                let dir_names: std::collections::HashSet<String> = if opts.files_only {
+                    self.active_panel().entries.iter()
+                        .filter(|e| e.kind == NodeKind::Dir)
+                        .map(|e| e.name.clone())
+                        .collect()
+                } else {
+                    std::collections::HashSet::new()
+                };
+                match build_filter_pattern(&new_text, opts.files_only, opts.case_sensitive, opts.is_regexp) {
                     Ok(pat) => {
                         let panel = self.active_panel_mut();
-                        panel.tagged.retain(|n| !pat.matches(n));
+                        panel.tagged.retain(|n| {
+                            // If files_only and this is a directory, keep it tagged
+                            if pat.files_only && dir_names.contains(n) { return true; }
+                            !pat.matches(n)
+                        });
                     }
                     Err(e) => {
                         self.reopen_dialog_with_error(state, e);
@@ -1453,7 +1489,7 @@ impl App {
                 return;
             }
             Modal::Confirm(_) => {
-                let outcome = if let Modal::Confirm(ref s) = self.modal {
+                let outcome = if let Modal::Confirm(ref mut s) = self.modal {
                     s.handle_key(&event)
                 } else { ModalOutcome::Consumed };
                 match outcome {
@@ -1824,7 +1860,30 @@ impl App {
                 }
             }
             Modal::InputDialog(_) => {
-                if input_ok.clicked(down, up) {
+                // Check checkbox clicks
+                let cb_fo = self.input_cb_files_only.get();
+                let cb_cs = self.input_cb_case_sensitive.get();
+                let cb_re = self.input_cb_regexp.get();
+                let clicked_cb: Option<usize> = if down == Some(up) {
+                    if cb_fo.map_or(false, |r| r.contains(up)) { Some(1) }
+                    else if cb_cs.map_or(false, |r| r.contains(up)) { Some(2) }
+                    else if cb_re.map_or(false, |r| r.contains(up)) { Some(3) }
+                    else { None }
+                } else { None };
+
+                if let Some(cb_idx) = clicked_cb {
+                    if let Modal::InputDialog(ref mut s) = self.modal {
+                        if let Some(ref mut cb) = s.checkboxes {
+                            match cb_idx {
+                                1 => cb.files_only = !cb.files_only,
+                                2 => cb.case_sensitive = !cb.case_sensitive,
+                                3 => cb.is_regexp = !cb.is_regexp,
+                                _ => {}
+                            }
+                        }
+                        s.focus.set(cb_idx);
+                    }
+                } else if input_ok.clicked(down, up) {
                     if let Modal::InputDialog(state) =
                         std::mem::replace(&mut self.modal, Modal::None)
                     {
@@ -2576,6 +2635,9 @@ impl App {
             ModalAreas::InputDialog(a, cursor) => {
                 self.input_ok_btn.set(a.ok);
                 self.input_cancel_btn.set(a.cancel);
+                self.input_cb_files_only.set(a.cb_files_only);
+                self.input_cb_case_sensitive.set(a.cb_case_sensitive);
+                self.input_cb_regexp.set(a.cb_regexp);
                 input_dialog_cursor = cursor;
             }
             ModalAreas::SortPopup(r, offset) => {
@@ -2645,7 +2707,8 @@ impl App {
                 }
             }
             IpcMessage::SelectGroup(pattern) => {
-                if let Ok(pat) = validate_filter_pattern(&pattern) {
+                let (text, is_re) = ipc_pattern(&pattern);
+                if let Ok(pat) = build_filter_pattern(text, false, true, is_re) {
                     let names: Vec<String> = self.active_panel().entries.iter()
                         .filter(|e| e.name != ".." && pat.matches(&e.name))
                         .map(|e| e.name.clone())
@@ -2655,7 +2718,8 @@ impl App {
                 }
             }
             IpcMessage::UnselectGroup(pattern) => {
-                if let Ok(pat) = validate_filter_pattern(&pattern) {
+                let (text, is_re) = ipc_pattern(&pattern);
+                if let Ok(pat) = build_filter_pattern(text, false, true, is_re) {
                     self.active_panel_mut().tagged.retain(|n| !pat.matches(n));
                 }
             }
@@ -2667,8 +2731,11 @@ impl App {
             IpcMessage::Filter(pattern) => {
                 if pattern.is_empty() {
                     self.active_panel_mut().filter = None;
-                } else if let Ok(pat) = validate_filter_pattern(&pattern) {
-                    self.active_panel_mut().filter = Some(pat);
+                } else {
+                    let (text, is_re) = ipc_pattern(&pattern);
+                    if let Ok(pat) = build_filter_pattern(text, false, true, is_re) {
+                        self.active_panel_mut().filter = Some(pat);
+                    }
                 }
                 self.active_panel_mut().refresh();
             }

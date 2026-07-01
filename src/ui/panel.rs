@@ -26,38 +26,66 @@ pub enum SortKey {
     Unsorted,
 }
 
-/// A compiled filter/select-group pattern. Patterns starting with `/` are regex;
-/// others are shell globs.
+/// A compiled filter/select-group pattern.
 #[derive(Debug, Clone)]
 pub struct FilterPattern {
     pub raw: String,
-    is_regex: bool,
+    pub files_only: bool,
+    pub case_sensitive: bool,
+    pub is_regex: bool,
     regex: Option<regex::Regex>,
     glob: Option<glob::Pattern>,
 }
 
 impl FilterPattern {
+    /// Returns true if `name` matches the pattern, respecting case sensitivity.
+    /// Does NOT apply the `files_only` flag — callers handle that themselves.
     pub fn matches(&self, name: &str) -> bool {
         if self.is_regex {
             self.regex.as_ref().map_or(false, |r| r.is_match(name))
         } else {
-            self.glob.as_ref().map_or(false, |g| g.matches(name))
+            let opts = glob::MatchOptions {
+                case_sensitive: self.case_sensitive,
+                require_literal_separator: false,
+                require_literal_leading_dot: false,
+            };
+            self.glob.as_ref().map_or(false, |g| g.matches_with(name, opts))
         }
     }
 }
 
-/// Validate and compile a filter/select pattern.
+/// Build and compile a filter/select pattern with explicit options.
 /// Returns `Err(description)` on invalid patterns.
-pub fn validate_filter_pattern(input: &str) -> Result<FilterPattern, String> {
-    if input.starts_with('/') {
-        let re_src = &input[1..];
-        match regex::Regex::new(re_src) {
-            Ok(r) => Ok(FilterPattern { raw: input.to_string(), is_regex: true, regex: Some(r), glob: None }),
+pub fn build_filter_pattern(
+    text: &str,
+    files_only: bool,
+    case_sensitive: bool,
+    is_regexp: bool,
+) -> Result<FilterPattern, String> {
+    if is_regexp {
+        let mut builder = regex::RegexBuilder::new(text);
+        builder.case_insensitive(!case_sensitive);
+        match builder.build() {
+            Ok(r) => Ok(FilterPattern {
+                raw: text.to_string(),
+                files_only,
+                case_sensitive,
+                is_regex: true,
+                regex: Some(r),
+                glob: None,
+            }),
             Err(e) => Err(format!("Invalid regex: {e}")),
         }
     } else {
-        match glob::Pattern::new(input) {
-            Ok(g) => Ok(FilterPattern { raw: input.to_string(), is_regex: false, regex: None, glob: Some(g) }),
+        match glob::Pattern::new(text) {
+            Ok(g) => Ok(FilterPattern {
+                raw: text.to_string(),
+                files_only,
+                case_sensitive,
+                is_regex: false,
+                regex: None,
+                glob: Some(g),
+            }),
             Err(e) => Err(format!("Invalid glob: {e}")),
         }
     }
@@ -144,11 +172,19 @@ impl PanelState {
                 // Apply filter pattern (always keep "..")
                 if let Some(ref pat) = self.filter {
                     let hidden: HashSet<String> = entries.iter()
-                        .filter(|e| e.name != ".." && !pat.matches(&e.name))
+                        .filter(|e| {
+                            e.name != ".."
+                                && !(pat.files_only && e.kind == NodeKind::Dir)
+                                && !pat.matches(&e.name)
+                        })
                         .map(|e| e.name.clone())
                         .collect();
                     self.tagged.retain(|n| !hidden.contains(n));
-                    entries.retain(|e| e.name == ".." || pat.matches(&e.name));
+                    entries.retain(|e| {
+                        e.name == ".."
+                            || (pat.files_only && e.kind == NodeKind::Dir)
+                            || pat.matches(&e.name)
+                    });
                 }
                 // Keep ".." at position 0, sort the rest
                 let sort_start = if entries.first().map(|e| e.name == "..").unwrap_or(false) { 1 } else { 0 };

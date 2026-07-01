@@ -40,11 +40,12 @@
 
 - + (Plus)
        open the select group dialog: tags all visible entries in the active panel matching
-       the given pattern (shell glob, or regular expression if the pattern starts with `/`)
+       the given pattern (shell glob by default; enable **RegExp** in the dialog for regex matching);
+       the dialog also offers **Files only** and **Case sensitive** options
 
 - - (Minus)
        open the unselect group dialog: untags all visible entries in the active panel matching
-       the given pattern (same rules as `+`)
+       the given pattern (same options as `+`)
 
 - F5
        copy the tagged files (or if there are no tagged files, the selected file) in the active panel to the directory shown by the inactive panel
@@ -113,7 +114,8 @@
 
 - C-f
        open the filter dialog for the active panel: hides entries not matching the given
-       pattern (shell glob, or regular expression if the pattern starts with `/`);
+       pattern (shell glob by default; enable **RegExp** in the dialog for regex matching);
+       the dialog also offers **Files only** (directories always shown) and **Case sensitive** options;
        an empty pattern removes the filter; the filter persists across directory navigation
        within the session but is not saved to disk
 
