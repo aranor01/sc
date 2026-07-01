@@ -694,10 +694,10 @@ impl App {
             }
             Action::UserMenu => {
                 if self.config.menu.is_empty() {
-                    self.modal = Modal::Error("No user menu entries configured.".to_string());
-                } else {
-                    self.modal = Modal::UserMenu(UserMenuState::new(self.config.menu.clone()));
+                    self.set_status("No user menu entries configured.", true);
+                    return;
                 }
+                self.modal = Modal::UserMenu(UserMenuState::new(self.config.menu.clone()));
             }
             Action::TagFile => {
                 let vh = self.active_vh();
@@ -879,11 +879,11 @@ impl App {
             }
             Action::BookmarkOpen => {
                 if self.bookmarks.is_empty() {
-                    self.modal = Modal::Error("No bookmarks saved. Use C-b to add one.".to_string());
-                } else {
-                    let popup = PopupListState::new(self.bookmarks.clone());
-                    self.modal = Modal::BookmarkList(popup);
+                    self.set_status("No bookmarks saved. Use C-b to add one.", true);
+                    return;
                 }
+                let popup = PopupListState::new(self.bookmarks.clone());
+                self.modal = Modal::BookmarkList(popup);
             }
             Action::Mkdir => {
                 let state = InputDialogState::new(InputDialogAction::Mkdir, " Create directory ", "");
@@ -895,13 +895,13 @@ impl App {
                     Side::Right => &self.panel_history_right,
                 };
                 if history.entries.is_empty() {
-                    self.modal = Modal::Error("No path history.".to_string());
-                } else {
-                    let popup = PopupListState::new(
-                        history.unique_entries().into_iter().map(str::to_owned).collect()
-                    );
-                    self.modal = Modal::PathHistoryList(popup);
+                    self.set_status("No path history.", true);
+                    return;
                 }
+                let popup = PopupListState::new(
+                    history.unique_entries().into_iter().map(str::to_owned).collect()
+                );
+                self.modal = Modal::PathHistoryList(popup);
             }
             Action::Filter => {
                 let (prefill, opts) = match self.active_panel().filter.as_ref() {
