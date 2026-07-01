@@ -385,6 +385,22 @@ fn truncate_str(s: &str, max: usize) -> String {
     }
 }
 
+/// Truncates from the front with a leading `...`, keeping the tail (the most specific,
+/// currently-relevant part of a path) visible instead of the start.
+fn truncate_path_front(s: &str, max: usize) -> String {
+    let len = s.chars().count();
+    if len <= max {
+        return s.to_string();
+    }
+    const ELLIPSIS: &str = "...";
+    if max <= ELLIPSIS.chars().count() {
+        return s.chars().skip(len - max).collect();
+    }
+    let keep = max - ELLIPSIS.chars().count();
+    let tail: String = s.chars().skip(len - keep).collect();
+    format!("{ELLIPSIS}{tail}")
+}
+
 pub struct PanelWidget<'a> {
     pub cs: &'a ColorScheme,
     pub active: bool,
@@ -415,11 +431,15 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
             (text, Style::default().fg(border_color))
         };
 
+        // 2 corners + 2 padding spaces around the title text itself.
+        let title_max = (area.width as usize).saturating_sub(4);
+        let title_text = truncate_path_front(&self.title, title_max);
+
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
             .title(Span::styled(
-                format!(" {} ", self.title),
+                format!(" {} ", title_text),
                 Style::default().fg(border_color),
             ))
             .title_bottom(Span::styled(footer_text, footer_style));
@@ -551,5 +571,30 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
 
         let entries_area = Rect { x: inner.x, y: entries_y, width: inner.width, height: entries_height };
         StatefulWidget::render(list, entries_area, buf, &mut list_state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_path_front_fits_unchanged() {
+        assert_eq!(truncate_path_front("/tmp/short", 20), "/tmp/short");
+    }
+
+    #[test]
+    fn truncate_path_front_collapses_with_leading_ellipsis() {
+        assert_eq!(truncate_path_front("/home/alice/projects/sc", 15), ".../projects/sc");
+    }
+
+    #[test]
+    fn truncate_path_front_exact_fit_unchanged() {
+        assert_eq!(truncate_path_front("/abcde", 6), "/abcde");
+    }
+
+    #[test]
+    fn truncate_path_front_keeps_tail_when_too_narrow_for_ellipsis() {
+        assert_eq!(truncate_path_front("/home/alice/projects", 2), "ts");
     }
 }
