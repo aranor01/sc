@@ -291,13 +291,10 @@ pub fn render_input_dialog(
     let (ok_focus_idx, cancel_focus_idx) = if has_cb { (4, 5) } else { (1, 2) };
 
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
-        let ok_btn = Button::build(OK_LABEL, inner.x + 1, button_row, cs);
-        let cancel_btn = Button::build(
-            CANCEL_LABEL,
-            ok_btn.area.x + OK_LABEL.len() as u16 + 2,
-            button_row,
-            cs,
-        );
+        const BUTTONS_TOTAL: u16 = (OK_LABEL.len() + 2 + CANCEL_LABEL.len()) as u16;
+        let ok_x = inner.x + inner.width.saturating_sub(BUTTONS_TOTAL) / 2;
+        let ok_btn = Button::build(OK_LABEL, ok_x, button_row, cs);
+        let cancel_btn = Button::build(CANCEL_LABEL, ok_x + OK_LABEL.len() as u16 + 2, button_row, cs);
         ok_btn.render_state(OK_LABEL, buf,
             state.focus.is_focused(ok_focus_idx) || ok_btn.is_pressed(press));
         cancel_btn.render_state(CANCEL_LABEL, buf,
@@ -469,8 +466,10 @@ pub fn render_confirm(
     const YES_ACCESS_KEY: char = 'Y';
     const NO_LABEL: &str = "[ No ]";
     const NO_ACCESS_KEY: char = 'N';
-    let yes_btn = Button::build_with_access_key(YES_LABEL, inner.x + 1, button_row, cs, YES_ACCESS_KEY);
-    let no_btn = Button::build_with_access_key(NO_LABEL, yes_btn.area.x + YES_LABEL.len() as u16 + 2, button_row, cs, NO_ACCESS_KEY);
+    const BUTTONS_TOTAL: u16 = (YES_LABEL.len() + 2 + NO_LABEL.len()) as u16;
+    let yes_x = inner.x + inner.width.saturating_sub(BUTTONS_TOTAL) / 2;
+    let yes_btn = Button::build_with_access_key(YES_LABEL, yes_x, button_row, cs, YES_ACCESS_KEY);
+    let no_btn = Button::build_with_access_key(NO_LABEL, yes_x + YES_LABEL.len() as u16 + 2, button_row, cs, NO_ACCESS_KEY);
 
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
         yes_btn.render_state(YES_LABEL, buf, state.focus == 0 || yes_btn.is_pressed(press));
