@@ -983,21 +983,12 @@ impl App {
                 self.modal = Modal::InputDialog(state);
             }
             Action::RefreshPanel => {
-                let path = self.active_panel().path.0.clone();
                 self.active_panel_mut().refresh();
-                if !std::path::Path::new(&path).exists() {
-                    self.set_status(&format!("Directory no longer exists: {path}"), true);
-                }
             }
             Action::GoToParent => {
                 let current = self.active_panel().path.clone();
                 let parent_opt = self.active_panel().provider.parent(&current);
                 let Some(parent_path) = parent_opt else { return; };
-                let list_err = self.active_panel().provider.list(&parent_path).err();
-                if let Some(e) = list_err {
-                    self.set_status(&format!("Error: {e}"), true);
-                    return;
-                }
                 let dest = parent_path.0.clone();
                 let panel = self.active_panel_mut();
                 panel.path = parent_path;

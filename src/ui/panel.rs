@@ -238,13 +238,19 @@ impl PanelState {
         let Some(entry) = self.entries.get(self.cursor) else {
             return None;
         };
-        let new_path = if entry.name == ".." {
-            self.provider.parent(&self.path)?
-        } else if entry.kind == NodeKind::Dir {
-            self.provider.join(&self.path, &entry.name)
-        } else {
+        if entry.name == ".." {
+            let parent = self.provider.parent(&self.path)?;
+            self.path = parent;
+            self.cursor = 0;
+            self.scroll = 0;
+            self.tagged.clear();
+            self.refresh();
             return None;
-        };
+        }
+        if entry.kind != NodeKind::Dir {
+            return None;
+        }
+        let new_path = self.provider.join(&self.path, &entry.name);
         if let Err(e) = self.provider.list(&new_path) {
             return Some(format!("Error: {}", e));
         }
@@ -596,5 +602,87 @@ mod tests {
     #[test]
     fn truncate_path_front_keeps_tail_when_too_narrow_for_ellipsis() {
         assert_eq!(truncate_path_front("/home/alice/projects", 2), "ts");
+    }
+
+    use crate::provider::filesystem::FilesystemProvider;
+
+    fn make_dirs(name: &str, depth: usize) -> std::path::PathBuf {
+        let base = std::env::temp_dir().join(format!("sc_panel_test_{name}"));
+        let _ = std::fs::remove_dir_all(&base);
+        let mut leaf = base.clone();
+        for i in 0..depth {
+            leaf = leaf.join(format!("d{i}"));
+        }
+        std::fs::create_dir_all(&leaf).unwrap();
+        base
+    }
+
+    #[test]
+    fn enter_dir_parent_missing_advances_one_level_with_error_footer() {
+        let base = make_dirs("parent_missing", 2); // base/d0/d1
+        let leaf = NodePath(base.join("d0").join("d1").to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), leaf);
+
+        std::fs::remove_dir_all(base.join("d0")).unwrap();
+
+        let result = panel.enter_dir(); // cursor starts on ".."
+        assert_eq!(result, None);
+        assert_eq!(panel.path.0, base.join("d0").to_string_lossy());
+        assert!(panel.error.as_deref().unwrap_or("").contains("no longer exists"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn enter_dir_two_missing_levels_requires_two_calls() {
+        let base = make_dirs("two_missing", 3); // base/d0/d1/d2
+        let leaf = NodePath(base.join("d0").join("d1").join("d2").to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), leaf);
+
+        std::fs::remove_dir_all(base.join("d0").join("d1")).unwrap();
+
+        // First call lands on the still-missing intermediate parent: no skip.
+        assert_eq!(panel.enter_dir(), None);
+        assert_eq!(panel.path.0, base.join("d0").join("d1").to_string_lossy());
+        assert!(panel.error.is_some());
+
+        // Second call reaches the real, listable ancestor.
+        assert_eq!(panel.enter_dir(), None);
+        assert_eq!(panel.path.0, base.join("d0").to_string_lossy());
+        assert!(panel.error.is_none());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn enter_dir_into_existing_subdirectory_still_works() {
+        let base = make_dirs("subdir_ok", 1); // base/d0
+        let root = NodePath(base.to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), root);
+
+        let idx = panel.entries.iter().position(|e| e.name == "d0").unwrap();
+        panel.cursor = idx;
+        assert_eq!(panel.enter_dir(), None);
+        assert_eq!(panel.path.0, base.join("d0").to_string_lossy());
+        assert!(panel.error.is_none());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn enter_dir_into_missing_subdirectory_blocks_navigation() {
+        let base = make_dirs("subdir_missing", 1); // base/d0
+        let root = NodePath(base.to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), root);
+
+        let idx = panel.entries.iter().position(|e| e.name == "d0").unwrap();
+        panel.cursor = idx;
+        std::fs::remove_dir_all(base.join("d0")).unwrap();
+
+        let result = panel.enter_dir();
+        assert!(result.unwrap().starts_with("Error:"));
+        assert_eq!(panel.path.0, base.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
