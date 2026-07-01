@@ -197,7 +197,7 @@ impl PanelState {
                     .downcast_ref::<std::io::Error>()
                     .map_or(false, |io| io.kind() == std::io::ErrorKind::NotFound);
                 self.error = Some(if is_not_found {
-                    format!("directory no longer exists: {}", self.path.0)
+                    format!("Cannot find directory: {}", self.path.0)
                 } else {
                     e.to_string()
                 });
@@ -628,7 +628,7 @@ mod tests {
         let result = panel.enter_dir(); // cursor starts on ".."
         assert_eq!(result, None);
         assert_eq!(panel.path.0, base.join("d0").to_string_lossy());
-        assert!(panel.error.as_deref().unwrap_or("").contains("no longer exists"));
+        assert!(panel.error.as_deref().unwrap_or("").contains("Cannot find directory"));
 
         let _ = std::fs::remove_dir_all(&base);
     }

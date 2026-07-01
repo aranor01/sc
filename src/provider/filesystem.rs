@@ -24,9 +24,9 @@ impl TreeProvider for FilesystemProvider {
         let mut entries = Vec::new();
 
         for raw in
-            std::fs::read_dir(dir).with_context(|| format!("listing {:?}", dir))?
+            std::fs::read_dir(dir).with_context(|| format!("Cannot list {:?}", dir))?
         {
-            let raw = raw.with_context(|| format!("reading entry in {:?}", dir))?;
+            let raw = raw.with_context(|| format!("Cannot read entry in {:?}", dir))?;
             let entry_path = raw.path();
             let name = raw.file_name().to_string_lossy().into_owned();
 
