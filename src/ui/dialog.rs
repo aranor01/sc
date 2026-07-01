@@ -172,7 +172,7 @@ fn render_checkbox(
     let bracket_fg = if focused { to_color(cs.dialog_border_fg) } else { to_color(cs.dialog_fg) };
     let bracket_style = Style::default().fg(bracket_fg).bg(to_color(cs.dialog_bg));
     let mark_style = Style::default()
-        .fg(to_color(cs.tagged_fg))
+        .fg(to_color(cs.dialog_mark_fg))
         .bg(to_color(cs.dialog_bg));
     let label_style = Style::default()
         .fg(if focused { to_color(cs.dialog_border_fg) } else { to_color(cs.dialog_fg) })
@@ -259,7 +259,7 @@ pub fn render_input_dialog(
 
     // Error line (inner.y + 1)
     if let Some(ref err) = state.error {
-        let err_style = Style::default().fg(Color::Red).bg(to_color(cs.dialog_bg));
+        let err_style = Style::default().fg(to_color(cs.dialog_error_fg)).bg(to_color(cs.dialog_bg));
         let truncated: String = err.chars().take(inner.width as usize).collect();
         buf.set_string(inner.x, inner.y + 1, &truncated, err_style);
     }
@@ -498,10 +498,10 @@ pub fn render_error(
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Red))
+        .border_style(Style::default().fg(to_color(cs.dialog_error_fg)))
         .title(Span::styled(
             " Error ",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Style::default().fg(to_color(cs.dialog_error_fg)).add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(to_color(cs.dialog_bg)));
 

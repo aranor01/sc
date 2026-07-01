@@ -6,7 +6,7 @@ use chrono::{DateTime, Local};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, StatefulWidget, Widget},
 };
@@ -403,7 +403,7 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
 
         let tagged_count = state.tagged.len();
         let (footer_text, footer_style) = if let Some(err) = &state.error {
-            (format!(" {} ", err), Style::default().fg(Color::Red))
+            (format!(" {} ", err), Style::default().fg(to_color(self.cs.panel_error_fg)))
         } else {
             let has_dotdot = state.entries.first().map(|e| e.name == "..").unwrap_or(false);
             let total = state.entries.len().saturating_sub(has_dotdot as usize);
