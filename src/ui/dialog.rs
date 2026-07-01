@@ -226,8 +226,8 @@ pub fn render_input_dialog(
     press: Option<Position>,
 ) -> (InputDialogAreas, Option<Position>) {
     let has_cb = state.checkboxes.is_some();
-    // height: 2 border + 1 input + 1 error + (3 cb rows if has_cb) + 1 gap + 1 buttons
-    let height = if has_cb { 10u16 } else { 6u16 };
+    // height: 2 border + 1 input + 1 error + (3 cb rows + 1 gap if has_cb) + 1 buttons
+    let height = if has_cb { 9u16 } else { 5u16 };
     let width = 52u16.min(area.width.saturating_sub(2));
     let dialog_area = centered_rect(width, height, area);
 
@@ -281,7 +281,7 @@ pub fn render_input_dialog(
         );
         (Some(fo), Some(cs_r), Some(re), inner.y + 6)
     } else {
-        (None, None, None, inner.y + 3)
+        (None, None, None, inner.y + 2)
     };
 
     // Buttons
