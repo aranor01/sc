@@ -3,6 +3,7 @@ use crate::ui::cmdline::CmdLineState;
 use crate::ui::focus::FocusRing;
 use crate::ui::modal_event::ModalOutcome;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use unicode_width::UnicodeWidthStr;
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -480,6 +481,22 @@ pub fn render_confirm(
     }
 }
 
+// ratatui's Paragraph::line_count() would do this via the real wrapper, but it's gated
+// behind the unstable `unstable-rendered-line-info` feature (ratatui#293), so approximate
+// wrapping with a plain width division instead.
+fn visual_line_count(text: &str, width: u16) -> u16 {
+    if width == 0 {
+        return text.lines().count() as u16;
+    }
+    text.lines()
+        .map(|line| {
+            let w = line.width() as u16;
+            ((w + width - 1) / width).max(1)
+        })
+        .sum::<u16>()
+        .max(1)
+}
+
 pub fn render_error(
     area: Rect,
     buf: &mut Buffer,
@@ -487,10 +504,11 @@ pub fn render_error(
     message: &str,
     _press: Option<Position>,
 ) -> ErrorButtonArea {
-    let line_count = message.lines().count() as u16;
+    let width = 50u16.min(area.width.saturating_sub(2));
+    let inner_width = width.saturating_sub(2);
+    let line_count = visual_line_count(message, inner_width);
     // border(2) + message lines + blank line + button line
     let height = line_count + 4;
-    let width = 50u16.min(area.width.saturating_sub(2));
     let dialog_area = centered_rect(width, height, area);
 
     Widget::render(Clear, dialog_area, buf);
