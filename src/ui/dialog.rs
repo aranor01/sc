@@ -465,10 +465,12 @@ pub fn render_confirm(
 
     // Buttons — highlight the focused one
     let button_row = inner.y + line_count + 1;
-    const YES_LABEL: &str = "[Y]es";
-    const NO_LABEL: &str = "[N]o";
-    let yes_btn = Button::build(YES_LABEL, inner.x + 1, button_row, cs);
-    let no_btn = Button::build(NO_LABEL, yes_btn.area.x + YES_LABEL.len() as u16 + 2, button_row, cs);
+    const YES_LABEL: &str = "[ Yes ]";
+    const YES_ACCESS_KEY: char = 'Y';
+    const NO_LABEL: &str = "[ No ]";
+    const NO_ACCESS_KEY: char = 'N';
+    let yes_btn = Button::build_with_access_key(YES_LABEL, inner.x + 1, button_row, cs, YES_ACCESS_KEY);
+    let no_btn = Button::build_with_access_key(NO_LABEL, yes_btn.area.x + YES_LABEL.len() as u16 + 2, button_row, cs, NO_ACCESS_KEY);
 
     if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
         yes_btn.render_state(YES_LABEL, buf, state.focus == 0 || yes_btn.is_pressed(press));

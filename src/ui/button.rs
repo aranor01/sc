@@ -16,12 +16,13 @@ pub struct Button {
     pub area: Rect,
     fg: Color,
     bg: Color,
+    access_key: Option<char>,
 }
 
 impl Default for Button {
     fn default() -> Self {
         // zero area → contains() always returns false (safe sentinel value)
-        Button { area: Rect::default(), fg: Color::Reset, bg: Color::Reset }
+        Button { area: Rect::default(), fg: Color::Reset, bg: Color::Reset, access_key: None }
     }
 }
 
@@ -32,6 +33,18 @@ impl Button {
             area: Rect { x, y, width: label.len() as u16, height: 1 },
             fg: to_color(cs.dialog_butt_fg),
             bg: to_color(cs.dialog_butt_bg),
+            access_key: None,
+        }
+    }
+
+    /// Like `build`, but the first occurrence of `access_key` in `label` is
+    /// rendered bold and underlined (e.g. to mark a mnemonic/hotkey letter).
+    pub fn build_with_access_key(label: &str, x: u16, y: u16, cs: &ColorScheme, access_key: char) -> Self {
+        Button {
+            area: Rect { x, y, width: label.len() as u16, height: 1 },
+            fg: to_color(cs.dialog_butt_fg),
+            bg: to_color(cs.dialog_butt_bg),
+            access_key: Some(access_key),
         }
     }
 
@@ -40,6 +53,7 @@ impl Button {
             area: Rect { x, y, width: label.len() as u16, height: 1 },
             fg,
             bg,
+            access_key: None,
         }
     }
 
@@ -70,6 +84,25 @@ impl Button {
         } else {
             Style::default().fg(self.fg).bg(self.bg).add_modifier(Modifier::BOLD)
         };
-        buf.set_string(self.area.x, self.area.y, label, style);
+        match self.access_key.and_then(|c| label.find(c)) {
+            Some(idx) => {
+                let (before, rest) = label.split_at(idx);
+                let mut chars = rest.chars();
+                let key_char = chars.next().unwrap();
+                let after = chars.as_str();
+                let mut x = self.area.x;
+                buf.set_string(x, self.area.y, before, style);
+                x += before.chars().count() as u16;
+                buf.set_string(
+                    x,
+                    self.area.y,
+                    key_char.to_string(),
+                    style.add_modifier(Modifier::UNDERLINED),
+                );
+                x += 1;
+                buf.set_string(x, self.area.y, after, style);
+            }
+            None => buf.set_string(self.area.x, self.area.y, label, style),
+        }
     }
 }
