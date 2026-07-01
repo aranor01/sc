@@ -72,16 +72,16 @@ pub fn resolve_startup_paths(
     if let Some(d1) = dir1 {
         let right = dir2.unwrap_or(d1);
         return StartupPaths {
-            left: d1.to_path_buf(),
-            right: right.to_path_buf(),
+            left: absolutize(d1, cwd),
+            right: absolutize(right, cwd),
         };
     }
     let restore = flag.unwrap_or(restore_paths_config);
     if restore {
         if let Some((left, right)) = saved {
             return StartupPaths {
-                left: left.to_path_buf(),
-                right: right.to_path_buf(),
+                left: absolutize(left, cwd),
+                right: absolutize(right, cwd),
             };
         }
     }
@@ -89,6 +89,20 @@ pub fn resolve_startup_paths(
         left: cwd.to_path_buf(),
         right: cwd.to_path_buf(),
     }
+}
+
+fn absolutize(path: &Path, cwd: &Path) -> PathBuf {
+    if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) }
+}
+
+/// Like `absolutize`, but joins against the process cwd for call sites with no `cwd` on hand.
+fn absolutize_str(path: &str) -> String {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        return path.to_string();
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    cwd.join(p).to_string_lossy().into_owned()
 }
 
 // ── Side ─────────────────────────────────────────────────────────────────────
@@ -960,6 +974,7 @@ impl App {
                     Side::Right => self.panel_history_right.go_back(),
                 };
                 let Some(path) = path_opt else { return; };
+                let path = absolutize_str(&path);
                 if !std::path::Path::new(&path).exists() {
                     match self.active {
                         Side::Left => { self.panel_history_left.go_forward(); }
@@ -981,6 +996,7 @@ impl App {
                     Side::Right => self.panel_history_right.go_forward(),
                 };
                 let Some(path) = path_opt else { return; };
+                let path = absolutize_str(&path);
                 if !std::path::Path::new(&path).exists() {
                     match self.active {
                         Side::Left => { self.panel_history_left.go_back(); }
@@ -1017,33 +1033,35 @@ impl App {
     }
 
     fn navigate_to_path(&mut self, path: &str) {
-        if !std::path::Path::new(path).exists() {
+        let path = absolutize_str(path);
+        if !std::path::Path::new(&path).exists() {
             self.modal = Modal::Error(format!("Path no longer exists: {path}"));
             return;
         }
         let panel = self.active_panel_mut();
-        panel.path = crate::provider::NodePath(path.to_string());
+        panel.path = crate::provider::NodePath(path.clone());
         panel.cursor = 0;
         panel.scroll = 0;
         panel.tagged.clear();
         panel.refresh();
-        self.push_path_history(path);
+        self.push_path_history(&path);
     }
 
     fn navigate_to_bookmark(&mut self, path: &str) {
-        if !std::path::Path::new(path).exists() {
-            self.bookmarks.retain(|b| b != path);
+        let path = absolutize_str(path);
+        if !std::path::Path::new(&path).exists() {
+            self.bookmarks.retain(|b| b != &path);
             let _ = crate::bookmarks::save(&self.bookmarks);
             self.modal = Modal::Error(format!("Path no longer exists: {path}"));
             return;
         }
         let panel = self.active_panel_mut();
-        panel.path = crate::provider::NodePath(path.to_string());
+        panel.path = crate::provider::NodePath(path.clone());
         panel.cursor = 0;
         panel.scroll = 0;
         panel.tagged.clear();
         panel.refresh();
-        self.push_path_history(path);
+        self.push_path_history(&path);
     }
 
     fn quicksearch_jump(&mut self, pattern: &str) {
@@ -2966,5 +2984,17 @@ mod tests {
     fn restore_with_no_saved_state_falls_back_to_cwd() {
         let r = rp(None, None, Some(true), true, None, "/cwd");
         assert_eq!(r, StartupPaths { left: p("/cwd"), right: p("/cwd") });
+    }
+
+    #[test]
+    fn dir1_relative_is_absolutized_against_cwd() {
+        let r = rp(Some("subdir"), None, None, false, None, "/cwd");
+        assert_eq!(r, StartupPaths { left: p("/cwd/subdir"), right: p("/cwd/subdir") });
+    }
+
+    #[test]
+    fn saved_relative_is_absolutized_against_cwd() {
+        let r = rp(None, None, Some(true), false, Some(("rel/left", "/abs/right")), "/cwd");
+        assert_eq!(r, StartupPaths { left: p("/cwd/rel/left"), right: p("/abs/right") });
     }
 }
