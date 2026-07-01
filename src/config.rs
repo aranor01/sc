@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn empty_json_gives_all_defaults() {
         let cfg = Config::load_from_str("{}").unwrap();
-        assert_eq!(cfg.startup.restore_paths, false);
+        assert!(!cfg.startup.restore_paths);
         assert!(cfg.menu.is_empty());
         assert_eq!(cfg.colorscheme, ColorScheme::default());
         // spot-check a keybinding
@@ -611,7 +611,7 @@ mod tests {
     #[test]
     fn partial_json_merges_defaults() {
         let cfg = Config::load_from_str(r#"{"startup":{"restore_paths":true}}"#).unwrap();
-        assert_eq!(cfg.startup.restore_paths, true);
+        assert!(cfg.startup.restore_paths);
         // other fields still have defaults
         assert_eq!(cfg.colorscheme.panel_bg, rgb(0x1a1a2e));
         assert!(cfg.keybindings.exit.contains(&single(F(10), M::NONE)));

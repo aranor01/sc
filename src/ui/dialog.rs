@@ -491,7 +491,7 @@ fn visual_line_count(text: &str, width: u16) -> u16 {
     text.lines()
         .map(|line| {
             let w = line.width() as u16;
-            ((w + width - 1) / width).max(1)
+            w.div_ceil(width).max(1)
         })
         .sum::<u16>()
         .max(1)

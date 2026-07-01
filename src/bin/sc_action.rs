@@ -16,7 +16,7 @@ fn main() {
     let extra_args: Vec<String> = if args.get(3).map(|s| s.as_str()) == Some("-") {
         // Read one filename per line from stdin
         let stdin = io::stdin();
-        stdin.lock().lines().filter_map(|l| l.ok()).filter(|l| !l.trim().is_empty()).collect()
+        stdin.lock().lines().map_while(Result::ok).filter(|l| !l.trim().is_empty()).collect()
     } else {
         args[3..].to_vec()
     };

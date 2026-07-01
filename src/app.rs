@@ -554,9 +554,9 @@ impl App {
         };
         // Try to spawn subshell if configured
         if app.config.startup.subshell {
-            match crate::subshell::Subshell::spawn() {
-                Ok(sub) => app.shell_mode = ShellMode::Subshell(sub),
-                Err(_) => {} // fall back to stateless silently
+            // Err falls back to stateless silently.
+            if let Ok(sub) = crate::subshell::Subshell::spawn() {
+                app.shell_mode = ShellMode::Subshell(sub);
             }
         }
         // Restore saved sort and hidden state, then re-sort
@@ -723,7 +723,6 @@ impl App {
                 match &self.shell_mode {
                     ShellMode::Subshell(_) => {
                         self.run_subshell_passthrough(false);
-                        return;
                     }
                     ShellMode::Stateless => {
                         if self.last_output.is_some() {
@@ -736,7 +735,6 @@ impl App {
                 match &self.shell_mode {
                     ShellMode::Subshell(_) => {
                         self.run_subshell_passthrough(true);
-                        return;
                     }
                     ShellMode::Stateless => {
                         if self.last_output.is_some() {
@@ -1187,7 +1185,6 @@ impl App {
                         }
                         Err(e) => {
                             self.reopen_dialog_with_error(state, e);
-                            return;
                         }
                     }
                 }
@@ -1210,7 +1207,6 @@ impl App {
                     }
                     Err(e) => {
                         self.reopen_dialog_with_error(state, e);
-                        return;
                     }
                 }
             }
@@ -1237,7 +1233,6 @@ impl App {
                     }
                     Err(e) => {
                         self.reopen_dialog_with_error(state, e);
-                        return;
                     }
                 }
             }
@@ -1913,9 +1908,9 @@ impl App {
                 let cb_cs = self.input_cb_case_sensitive.get();
                 let cb_re = self.input_cb_regexp.get();
                 let clicked_cb: Option<usize> = if down == Some(up) {
-                    if cb_fo.map_or(false, |r| r.contains(up)) { Some(1) }
-                    else if cb_cs.map_or(false, |r| r.contains(up)) { Some(2) }
-                    else if cb_re.map_or(false, |r| r.contains(up)) { Some(3) }
+                    if cb_fo.is_some_and(|r| r.contains(up)) { Some(1) }
+                    else if cb_cs.is_some_and(|r| r.contains(up)) { Some(2) }
+                    else if cb_re.is_some_and(|r| r.contains(up)) { Some(3) }
                     else { None }
                 } else { None };
 
@@ -2084,7 +2079,7 @@ impl App {
                     panel.sort_asc = true;
                 }
                 panel.refresh();
-            } else if rel_x >= 2 + name_width + 1 && rel_x < 2 + name_width + 9 {
+            } else if rel_x > 2 + name_width && rel_x < 2 + name_width + 9 {
                 // Size column
                 if panel.sort_key == SortKey::Size {
                     panel.sort_asc = !panel.sort_asc;

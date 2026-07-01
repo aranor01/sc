@@ -42,14 +42,14 @@ impl FilterPattern {
     /// Does NOT apply the `files_only` flag — callers handle that themselves.
     pub fn matches(&self, name: &str) -> bool {
         if self.is_regex {
-            self.regex.as_ref().map_or(false, |r| r.is_match(name))
+            self.regex.as_ref().is_some_and(|r| r.is_match(name))
         } else {
             let opts = glob::MatchOptions {
                 case_sensitive: self.case_sensitive,
                 require_literal_separator: false,
                 require_literal_leading_dot: false,
             };
-            self.glob.as_ref().map_or(false, |g| g.matches_with(name, opts))
+            self.glob.as_ref().is_some_and(|g| g.matches_with(name, opts))
         }
     }
 }
@@ -195,7 +195,7 @@ impl PanelState {
             Err(e) => {
                 let is_not_found = e.root_cause()
                     .downcast_ref::<std::io::Error>()
-                    .map_or(false, |io| io.kind() == std::io::ErrorKind::NotFound);
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound);
                 self.error = Some(if is_not_found {
                     format!("Cannot find directory: {}", self.path.0)
                 } else {
@@ -235,9 +235,7 @@ impl PanelState {
     }
 
     pub fn enter_dir(&mut self) -> Option<String> {
-        let Some(entry) = self.entries.get(self.cursor) else {
-            return None;
-        };
+        let entry = self.entries.get(self.cursor)?;
         if entry.name == ".." {
             let parent = self.provider.parent(&self.path)?;
             self.path = parent;
