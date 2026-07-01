@@ -2359,15 +2359,17 @@ impl App {
         let cs = self.config.colorscheme.clone();
 
         // Build the cmdline widget early so we can query needed_lines() before layout.
-        let am = self.action_mode();
-        let prompt = if self.reverse_search.is_some() {
-            "(reverse-i-search): "
+        let prompt;
+        let mut command_line_is_active = true;
+        if self.reverse_search.is_some() {
+            prompt = "(reverse-i-search): ";
         } else if self.quicksearch.is_some() {
-            "Search: "
+            prompt = "Search: ";
         } else {
-            "$ "
-        };
-        let cmdline_widget = CmdLineWidget { cs: &cs, prompt, active: !am };
+            prompt = "$ ";
+            command_line_is_active = !self.action_mode();
+        }
+        let cmdline_widget = CmdLineWidget { cs: &cs, prompt, active: command_line_is_active };
         let cmdline_height = if self.show_cmdline {
             cmdline_widget.needed_lines(&self.cmdline, area.width)
         } else {
@@ -2427,7 +2429,7 @@ impl App {
             };
             let cursor_pos = cmdline_widget.render_with_cursor(cmdline_area, buf, render_state);
             if let Some(pos) = cursor_pos {
-                if matches!(self.modal, Modal::None) && !self.show_output && (!am || self.quicksearch.is_some()) {
+                if matches!(self.modal, Modal::None) && !self.show_output && command_line_is_active {
                     frame.set_cursor_position(pos);
                 }
             }
