@@ -1,6 +1,6 @@
 use std::cell::Cell;
 use std::io::stdout;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -92,7 +92,27 @@ pub fn resolve_startup_paths(
 }
 
 fn absolutize(path: &Path, cwd: &Path) -> PathBuf {
-    if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) }
+    let joined = if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) };
+    normalize_lexical(&joined)
+}
+
+/// Lexically collapses `.` and `..` components. Deliberately not `fs::canonicalize`: that
+/// requires the path to exist (breaks the deleted-directory corner case) and resolves
+/// symlinks, which would surprise a user navigating through one.
+fn normalize_lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Abbreviates the home directory prefix as `~` for display; leaves other paths unchanged.
@@ -115,11 +135,13 @@ fn abbreviate_home(path: &str, home: Option<&Path>) -> String {
 /// Like `absolutize`, but joins against the process cwd for call sites with no `cwd` on hand.
 fn absolutize_str(path: &str) -> String {
     let p = Path::new(path);
-    if p.is_absolute() {
-        return path.to_string();
-    }
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    cwd.join(p).to_string_lossy().into_owned()
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        cwd.join(p)
+    };
+    normalize_lexical(&joined).to_string_lossy().into_owned()
 }
 
 // ── Side ─────────────────────────────────────────────────────────────────────
@@ -3013,6 +3035,48 @@ mod tests {
     fn saved_relative_is_absolutized_against_cwd() {
         let r = rp(None, None, Some(true), false, Some(("rel/left", "/abs/right")), "/cwd");
         assert_eq!(r, StartupPaths { left: p("/cwd/rel/left"), right: p("/abs/right") });
+    }
+
+    #[test]
+    fn dir1_with_dotdot_is_normalized() {
+        let r = rp(Some("../../dir"), None, None, false, None, "/cwd/a/b");
+        assert_eq!(r, StartupPaths { left: p("/cwd/dir"), right: p("/cwd/dir") });
+    }
+
+    #[test]
+    fn dir1_with_trailing_dot_is_normalized() {
+        let r = rp(Some("."), None, None, false, None, "/cwd/a");
+        assert_eq!(r, StartupPaths { left: p("/cwd/a"), right: p("/cwd/a") });
+    }
+
+    #[test]
+    fn normalize_lexical_collapses_dotdot() {
+        let r = normalize_lexical(Path::new("/tmp/a/b/../../dir"));
+        assert_eq!(r, p("/tmp/dir"));
+    }
+
+    #[test]
+    fn normalize_lexical_collapses_trailing_dot() {
+        let r = normalize_lexical(Path::new("/tmp/a/b/."));
+        assert_eq!(r, p("/tmp/a/b"));
+    }
+
+    #[test]
+    fn normalize_lexical_dotdot_above_root_stays_at_root() {
+        let r = normalize_lexical(Path::new("/../../foo"));
+        assert_eq!(r, p("/foo"));
+    }
+
+    #[test]
+    fn normalize_lexical_no_change_for_clean_path() {
+        let r = normalize_lexical(Path::new("/tmp/a/b"));
+        assert_eq!(r, p("/tmp/a/b"));
+    }
+
+    #[test]
+    fn absolutize_str_normalizes_absolute_input_with_dotdot() {
+        let r = absolutize_str("/tmp/a/b/../../dir");
+        assert_eq!(r, "/tmp/dir");
     }
 
     #[test]
