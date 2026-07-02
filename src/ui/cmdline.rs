@@ -7,6 +7,61 @@ use ratatui::{
     style::Style,
 };
 
+// Unicode's explicit bidirectional-control characters: the embedding/
+// override/isolate pairs plus the two directional marks. None of these are
+// covered by `char::is_control()` below (Unicode classifies them as
+// ordinary, zero-width "format" characters, not control characters), but
+// they let the *visual* order of the surrounding text diverge from its
+// actual left-to-right byte order — the same "Trojan Source" technique used
+// to make source code or file names display as something other than what
+// they are. In a command line that's about to be handed to a shell, that's
+// a direct visual-spoofing risk: text can be made to *look* different from
+// what will actually execute when Enter is pressed. There is no legitimate
+// reason for a shell command or a file name to require one of these, so
+// they're blocked outright rather than merely discouraged.
+const BIDI_CONTROL_CHARS: [char; 11] = [
+    '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', // LRE, RLE, PDF, LRO, RLO
+    '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',             // LRI, RLI, FSI, PDI
+    '\u{200E}', '\u{200F}',                                     // LRM, RLM
+];
+
+/// Whether `c` is safe to store in the command-line buffer.
+///
+/// This is the single chokepoint every source of command-line text funnels
+/// through — normal typing, autocomplete, yanking previously-killed text,
+/// copying a file/path name in with Alt-Enter or Ctrl-x-t, and text injected
+/// over IPC via `InjectToCommandLine` (see docs/IpcActions.md) — because all
+/// of them ultimately call `insert_char`/`insert_str` below. That matters
+/// because more than one of those sources can carry attacker-influenced
+/// bytes: a file name on Linux may contain any byte except NUL and `/`,
+/// including raw control characters, and `InjectToCommandLine`'s text comes
+/// straight from whatever connected to the IPC socket (see ipc.rs's
+/// `SO_PEERCRED` check for who that can be).
+///
+/// Two things are rejected:
+///
+/// - **Unicode control characters** (`char::is_control()`: C0 0x00-0x1F, DEL
+///   0x7F, C1 0x80-0x9F). This is what actually matters most: every ANSI/CSI/
+///   OSC terminal escape sequence begins with the ESC control character
+///   (0x1B), and the command line is rendered straight to the real terminal
+///   (`CmdLineWidget::render_with_cursor` below writes it into the Ratatui
+///   buffer verbatim, which the terminal backend then prints as-is). If ESC
+///   — or any other control byte — can never be stored here, no escape
+///   sequence can ever be assembled from this buffer's contents, full stop,
+///   regardless of what would otherwise follow it. Without this, a
+///   maliciously-named file or a hostile IPC caller could send raw escape
+///   sequences straight through to whatever terminal emulator is hosting
+///   `sc`.
+/// - **Bidi control characters** (`BIDI_CONTROL_CHARS` above): see its own
+///   comment.
+///
+/// Everything else passes through untouched — this is not an ASCII filter;
+/// every printable character in every script, including multi-byte UTF-8,
+/// is left alone.
+fn is_cmdline_safe(c: char) -> bool {
+    !c.is_control() && !BIDI_CONTROL_CHARS.contains(&c)
+}
+
 #[derive(Debug, Clone)]
 pub struct CmdLineState {
     pub text: String,
@@ -24,13 +79,23 @@ impl CmdLineState {
     }
 
     pub fn insert_char(&mut self, c: char) {
+        if !is_cmdline_safe(c) {
+            return;
+        }
         self.text.insert(self.cursor, c);
         self.cursor += c.len_utf8();
     }
 
     pub fn insert_str(&mut self, s: &str) {
-        self.text.insert_str(self.cursor, s);
-        self.cursor += s.len();
+        // Filter rather than reject outright: a mostly-safe string with one
+        // stray disallowed character (e.g. a file name someone accidentally
+        // gave a stray control byte) should still insert the rest, the same
+        // way a single disallowed keystroke is simply dropped in
+        // `insert_char` above rather than discarding whatever else the user
+        // was typing.
+        let filtered: String = s.chars().filter(|&c| is_cmdline_safe(c)).collect();
+        self.text.insert_str(self.cursor, &filtered);
+        self.cursor += filtered.len();
     }
 
     pub fn backspace(&mut self) {
@@ -309,5 +374,57 @@ impl<'a> CmdLineWidget<'a> {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_str_strips_control_characters() {
+        let mut s = CmdLineState::new();
+        s.insert_str("safe\x1b[31mtext");
+        assert_eq!(s.text, "safe[31mtext");
+    }
+
+    #[test]
+    fn insert_str_strips_bidi_override() {
+        let mut s = CmdLineState::new();
+        s.insert_str("a\u{202E}b");
+        assert_eq!(s.text, "ab");
+    }
+
+    #[test]
+    fn insert_str_keeps_printable_unicode() {
+        let mut s = CmdLineState::new();
+        s.insert_str("héllo 世界 🎉");
+        assert_eq!(s.text, "héllo 世界 🎉");
+    }
+
+    #[test]
+    fn insert_str_advances_cursor_by_filtered_length_not_original() {
+        let mut s = CmdLineState::new();
+        s.insert_str("a\x1bb");
+        assert_eq!(s.text, "ab");
+        assert_eq!(s.cursor, s.text.len());
+    }
+
+    #[test]
+    fn insert_char_drops_control_character() {
+        let mut s = CmdLineState::new();
+        s.insert_char('a');
+        s.insert_char('\x1b');
+        s.insert_char('b');
+        assert_eq!(s.text, "ab");
+        assert_eq!(s.cursor, 2);
+    }
+
+    #[test]
+    fn insert_char_keeps_printable_char() {
+        let mut s = CmdLineState::new();
+        s.insert_char('x');
+        assert_eq!(s.text, "x");
+        assert_eq!(s.cursor, 1);
     }
 }

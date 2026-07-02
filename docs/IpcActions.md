@@ -12,12 +12,20 @@ so it still holds if the socket ends up somewhere more exposed than usual (e.g. 
 `sudo sc`, where `$XDG_RUNTIME_DIR` is typically unset and the socket falls back to a
 shared temp directory). The socket file is also always created mode `0600`, regardless of
 the umask in effect when `sc` started. A connection that doesn't finish sending a message
-within 500ms, or that sends more than 1 MiB, is dropped.
+within 500ms, or that sends more than 8 MiB, is dropped.
 
 There's no scoping *within* a valid connection: `$SC_TOKEN` is all-or-nothing access to
 every action in the table below, and every child process launched from the command line or
 user menu gets it automatically. Treat it like any other credential your child processes —
 and whatever they in turn run — can see.
+
+Text handed to `InjectToCommandLine` is filtered before it reaches the command line: control
+characters (so a connected peer can't smuggle terminal escape sequences into what gets
+rendered) and Unicode bidi-override characters (so it can't make the command line *display*
+something different from what it actually contains) are stripped. Everything else, including
+non-ASCII text, passes through unchanged. The same filter applies to every other way text
+reaches the command line — typing, autocomplete, yanking, and copying a file or path name in
+— since a file name can also carry arbitrary bytes.
 
 ## `sc-action`
 
