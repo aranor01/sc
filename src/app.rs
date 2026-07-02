@@ -32,7 +32,7 @@ use crate::provider::{NodeKind, NodePath, TreeProvider};
 use crate::provider::filesystem::FilesystemProvider;
 use crate::state::{AppState, Orientation};
 use crate::ui::button::Button;
-use crate::ui::button_bar::ButtonBarWidget;
+use crate::ui::button_bar::{BarAction, ButtonBarWidget};
 use crate::ui::status_bar::{StatusBarState, StatusBarWidget};
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupDirection, PopupListState, PopupListWidget};
@@ -2058,8 +2058,10 @@ impl App {
 
     fn handle_button_bar_click(&mut self, pos: Position) {
         let bb_area = self.button_bar_area.get();
-        if let Some(n) = ButtonBarWidget::button_at(&self.config.keybindings, &self.config.menu, bb_area, pos) {
-            self.handle_key_event(KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE));
+        match ButtonBarWidget::button_at(&self.config.keybindings, &self.config.menu, bb_area, pos) {
+            Some(BarAction::Fkey(n)) => self.handle_key_event(KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE)),
+            Some(BarAction::Menu(cmd)) => self.execute_menu_item(cmd),
+            None => {}
         }
     }
 

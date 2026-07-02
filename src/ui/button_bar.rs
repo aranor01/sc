@@ -32,12 +32,19 @@ fn first_fkey(bindings: &ActionBindings) -> Option<u8> {
     None
 }
 
+/// What happens when a button bar entry is clicked.
+#[derive(Clone)]
+pub enum BarAction {
+    Fkey(u8),
+    Menu(String),
+}
+
 /// A single button bar entry: a key label + human label.
 #[derive(Clone)]
 pub struct BarEntry {
     pub key_label: String,
     pub label: String,
-    pub fkey: Option<u8>,
+    pub action: BarAction,
 }
 
 pub struct ButtonBarWidget<'a> {
@@ -51,7 +58,7 @@ impl<'a> ButtonBarWidget<'a> {
     /// Returns bar entries: built-in Fkey bindings, then menu Fkey items, both sorted by Fkey;
     /// then non-Fkey `add_to_bar` menu items in config order.
     pub fn entries(kb: &KeyBindings, menu: &[MenuItem]) -> Vec<BarEntry> {
-        let mut fkey_entries: Vec<BarEntry> = Vec::new();
+        let mut fkey_entries: Vec<(u8, BarEntry)> = Vec::new();
         let mut extra_entries: Vec<BarEntry> = Vec::new();
 
         // Built-in bindings
@@ -65,11 +72,11 @@ impl<'a> ButtonBarWidget<'a> {
         ];
         for (bindings, label) in pairs {
             if let Some(n) = first_fkey(bindings) {
-                fkey_entries.push(BarEntry {
+                fkey_entries.push((n, BarEntry {
                     key_label: format!("F{n}"),
                     label: label.to_string(),
-                    fkey: Some(n),
-                });
+                    action: BarAction::Fkey(n),
+                }));
             }
         }
 
@@ -85,39 +92,42 @@ impl<'a> ButtonBarWidget<'a> {
                     if let Some(k) = ke {
                         if let KeyCode::F(n) = k.code {
                             if k.modifiers == KeyModifiers::NONE {
-                                fkey_entries.push(BarEntry {
+                                fkey_entries.push((n, BarEntry {
                                     key_label: format!("F{n}"),
                                     label: item.label.clone(),
-                                    fkey: Some(n),
-                                });
+                                    action: BarAction::Fkey(n),
+                                }));
                                 continue;
                             }
                         }
-                        // Non-Fkey binding
+                        // Non-Fkey (or modified-key) binding — run the command directly
+                        // rather than reconstructing a fake KeyEvent that would lose
+                        // whatever modifier it actually used.
                         extra_entries.push(BarEntry {
                             key_label: format_key(&k),
                             label: item.label.clone(),
-                            fkey: None,
+                            action: BarAction::Menu(item.command.clone()),
                         });
                         continue;
                     }
                 }
             }
-            // No keys but add_to_bar — show label without key
+            // No keys but add_to_bar — show label without key, still directly runnable.
             extra_entries.push(BarEntry {
                 key_label: String::new(),
                 label: item.label.clone(),
-                fkey: None,
+                action: BarAction::Menu(item.command.clone()),
             });
         }
 
-        fkey_entries.sort_by_key(|e| e.fkey);
-        fkey_entries.extend(extra_entries);
-        fkey_entries
+        fkey_entries.sort_by_key(|(n, _)| *n);
+        let mut entries: Vec<BarEntry> = fkey_entries.into_iter().map(|(_, e)| e).collect();
+        entries.extend(extra_entries);
+        entries
     }
 
-    /// Returns the Fkey number (or None for non-Fkey entries) whose area contains `pos`.
-    pub fn button_at(kb: &KeyBindings, menu: &[MenuItem], bb_area: Rect, pos: Position) -> Option<u8> {
+    /// Returns the action of the button whose area contains `pos`, if any.
+    pub fn button_at(kb: &KeyBindings, menu: &[MenuItem], bb_area: Rect, pos: Position) -> Option<BarAction> {
         if pos.y != bb_area.y {
             return None;
         }
@@ -125,7 +135,7 @@ impl<'a> ButtonBarWidget<'a> {
         for entry in Self::entries(kb, menu) {
             let w = (entry.key_label.len() + entry.label.len() + 1) as u16;
             if pos.x >= x && pos.x < x + w {
-                return entry.fkey;
+                return Some(entry.action);
             }
             x += w;
             if x >= bb_area.x + bb_area.width {
