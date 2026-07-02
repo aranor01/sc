@@ -25,7 +25,7 @@ If `SC_TOKEN` is unset or invalid, `sc-action` exits quietly without doing anyth
 | `SelectGroup` | pattern | Tag entries in the active panel matching the pattern. |
 | `UnselectGroup` | pattern | Untag entries in the active panel matching the pattern. |
 | `Filter` | pattern | Set the active panel's filter to the pattern; an empty pattern clears it. |
-| `InjectToCommandLine` | text | Insert text into the command line at the current cursor position, showing the command line if it's hidden. |
+| `InjectToCommandLine` | text | Insert text into the command line, showing it if hidden. An optional mode may precede the text: `Insert` (default) at the current cursor position, `Append` at the end, or `Replace` for the entire command line. |
 | `ToggleShell` | — | Toggle the output/shell overlay, same as `Ctrl-o`. |
 | `RefreshPanel` | — | Force the active panel to re-read its directory from disk. |
 | `ShowPanels` | optional directory | Return from the output/shell overlay to the panel view; if a directory is given and differs from the active panel's current path, navigate there. |
@@ -37,9 +37,19 @@ Patterns given to `SelectGroup` / `UnselectGroup` / `Filter` are shell globs (e.
 by default; prefix with `/` to use a regular expression instead (e.g. `/\.rs$` matches any
 name ending in `.rs`). Matching is case-sensitive and applies to both files and directories.
 
+For `InjectToCommandLine`, the optional mode must be exactly `Insert`, `Append`, or
+`Replace` as the first argument; if the first argument doesn't match one of these,
+it's treated as part of the text and `Insert` is used.
+
 ## Examples
 
 ```sh
 # From a script or user-menu command: tag every file a build just touched.
 git diff --name-only | sc-action "$SC_TOKEN" TagOnly -
+```
+
+```sh
+# Insert at the cursor (default), or explicitly append/replace.
+sc-action "$SC_TOKEN" InjectToCommandLine "picked-file.txt"
+sc-action "$SC_TOKEN" InjectToCommandLine Append "picked-file.txt"
 ```

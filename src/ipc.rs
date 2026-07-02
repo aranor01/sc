@@ -14,11 +14,18 @@ pub enum IpcMessage {
     TagOnly(Vec<String>),
     SelectGroup(String),
     UnselectGroup(String),
-    InjectToCommandLine(String),
+    InjectToCommandLine(String, CmdlineInjectMode),
     Filter(String),
     ToggleShell,
     RefreshPanel,
     ShowPanels(Option<String>),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CmdlineInjectMode {
+    Insert,
+    Append,
+    Replace,
 }
 
 impl IpcServer {
@@ -61,7 +68,7 @@ fn socket_path(pid: u32) -> PathBuf {
     std::env::temp_dir().join(name)
 }
 
-fn parse_message(raw: &str) -> Option<IpcMessage> {
+pub(crate) fn parse_message(raw: &str) -> Option<IpcMessage> {
     let mut lines = raw.lines();
     let action = lines.next()?.trim();
     let args: Vec<String> = lines.map(|l| l.trim().to_string()).filter(|s| !s.is_empty()).collect();
@@ -72,7 +79,12 @@ fn parse_message(raw: &str) -> Option<IpcMessage> {
         "TagOnly"             => Some(IpcMessage::TagOnly(args)),
         "SelectGroup"         => Some(IpcMessage::SelectGroup(args.into_iter().next()?)),
         "UnselectGroup"       => Some(IpcMessage::UnselectGroup(args.into_iter().next()?)),
-        "InjectToCommandLine" => Some(IpcMessage::InjectToCommandLine(args.join(" "))),
+        "InjectToCommandLine" => Some(match args.split_first() {
+            Some((m, rest)) if m == "Insert"  => IpcMessage::InjectToCommandLine(rest.join(" "), CmdlineInjectMode::Insert),
+            Some((m, rest)) if m == "Append"  => IpcMessage::InjectToCommandLine(rest.join(" "), CmdlineInjectMode::Append),
+            Some((m, rest)) if m == "Replace" => IpcMessage::InjectToCommandLine(rest.join(" "), CmdlineInjectMode::Replace),
+            _                                  => IpcMessage::InjectToCommandLine(args.join(" "), CmdlineInjectMode::Insert),
+        }),
         "Filter"              => Some(IpcMessage::Filter(args.into_iter().next().unwrap_or_default())),
         "ToggleShell"         => Some(IpcMessage::ToggleShell),
         "RefreshPanel"        => Some(IpcMessage::RefreshPanel),

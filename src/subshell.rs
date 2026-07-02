@@ -97,7 +97,7 @@ impl Subshell {
     /// the user presses Ctrl+O or the shell exits.
     ///
     /// This call blocks until passthrough is exited.
-    pub fn start_passthrough(&self, ipc_fd: Option<RawFd>) -> Result<()> {
+    pub fn start_passthrough(&self, ipc_fd: Option<RawFd>) -> Result<Vec<String>> {
         use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
         enable_raw_mode()?;
@@ -399,11 +399,14 @@ fn passthrough_loop_until_sentinel(master: RawFd, ipc_fd: Option<RawFd>) -> Resu
 }
 
 /// Passthrough loop: copies stdin→master and master→stdout until Ctrl+O, EOF,
-/// or a ShowPanels IPC message arrives on `ipc_fd`.
-fn passthrough_loop(master: RawFd, ipc_fd: Option<RawFd>) -> Result<()> {
+/// or a ShowPanels IPC message arrives on `ipc_fd`. Any other IPC message received
+/// while looping is queued and returned so the caller can process it once passthrough
+/// exits, instead of being silently discarded.
+fn passthrough_loop(master: RawFd, ipc_fd: Option<RawFd>) -> Result<Vec<String>> {
     let stdin_fd = libc::STDIN_FILENO;
     let stdout_fd = libc::STDOUT_FILENO;
     let mut buf = [0u8; 4096];
+    let mut pending: Vec<String> = Vec::new();
 
     loop {
         let mut fds = [
@@ -432,18 +435,21 @@ fn passthrough_loop(master: RawFd, ipc_fd: Option<RawFd>) -> Result<()> {
 
         if fds[2].revents & libc::POLLIN != 0 {
             if let Some(fd) = ipc_fd {
-                if ipc_accept_shows_panels(fd) {
-                    break;
+                if let Some(raw) = ipc_accept_message(fd) {
+                    if raw.lines().next().map(|l| l.trim()) == Some("ShowPanels") {
+                        break;
+                    }
+                    pending.push(raw);
                 }
             }
         }
     }
-    Ok(())
+    Ok(pending)
 }
 
-/// Non-blocking accept on the IPC listener fd. Returns true if the message is "ShowPanels".
-/// Silently ignores accept errors and unrecognized messages.
-pub fn ipc_accept_shows_panels(listener_fd: RawFd) -> bool {
+/// Non-blocking accept on the IPC listener fd. Returns the raw message payload if a
+/// connection was accepted, or `None` if there was nothing to accept.
+pub fn ipc_accept_message(listener_fd: RawFd) -> Option<String> {
     use std::os::unix::net::UnixListener;
     use std::os::unix::io::FromRawFd;
     use std::io::Read;
@@ -451,11 +457,17 @@ pub fn ipc_accept_shows_panels(listener_fd: RawFd) -> bool {
     // Safety: we borrow the fd temporarily; ManuallyDrop prevents double-close.
     let listener = std::mem::ManuallyDrop::new(unsafe { UnixListener::from_raw_fd(listener_fd) });
     let _ = listener.set_nonblocking(true);
-    if let Ok((mut stream, _)) = listener.accept() {
-        let _ = stream.set_nonblocking(false);
-        let mut buf = String::new();
-        let _ = stream.read_to_string(&mut buf);
-        return buf.lines().next().map(|l| l.trim()) == Some("ShowPanels");
-    }
-    false
+    let (mut stream, _) = listener.accept().ok()?;
+    let _ = stream.set_nonblocking(false);
+    let mut buf = String::new();
+    let _ = stream.read_to_string(&mut buf);
+    Some(buf)
+}
+
+/// Non-blocking accept on the IPC listener fd. Returns true if the message is "ShowPanels".
+/// Silently ignores accept errors and unrecognized messages.
+pub fn ipc_accept_shows_panels(listener_fd: RawFd) -> bool {
+    ipc_accept_message(listener_fd)
+        .and_then(|buf| buf.lines().next().map(|l| l.trim() == "ShowPanels"))
+        .unwrap_or(false)
 }

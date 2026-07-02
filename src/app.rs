@@ -25,7 +25,7 @@ use ratatui::{
 };
 
 use crate::config::{ActionBindings, Config, KeyBinding};
-use crate::ipc::{IpcMessage, IpcServer};
+use crate::ipc::{parse_message, CmdlineInjectMode, IpcMessage, IpcServer};
 use crate::history::CommandHistory;
 use crate::macros::{MacroContext, PanelContext};
 use crate::provider::{NodeKind, NodePath, TreeProvider};
@@ -1342,6 +1342,7 @@ impl App {
     }
 
     fn execute_menu_item(&mut self, cmd_template: String) {
+        let prior_cmdline = self.cmdline.clone();
         let result = self.expand_menu_command(&cmd_template);
         if result.untag_active {
             self.active_panel_mut().tagged.clear();
@@ -1351,10 +1352,10 @@ impl App {
         }
         self.cmdline.text = result.text;
         self.cmdline.move_end();
-        self.execute_command(false);
+        self.execute_command(false, prior_cmdline);
     }
 
-    fn execute_command(&mut self, push_to_history:bool) {
+    fn execute_command(&mut self, push_to_history: bool, restore_to: CmdLineState) {
         let cmd = self.cmdline.text.clone();
         if cmd.is_empty() {
             return;
@@ -1363,7 +1364,7 @@ impl App {
             self.history.push(cmd.clone());
             let _ = self.history.save(&crate::state::history_path());
         }
-        self.cmdline.clear();
+        self.cmdline = restore_to;
 
         let cwd = self.active_panel().path.0.clone();
 
@@ -1845,7 +1846,7 @@ impl App {
                 }
                 return;
             }
-            PanelOutcome::ExecuteCommand => { self.execute_command(true); return; }
+            PanelOutcome::ExecuteCommand => { self.execute_command(true, CmdLineState::new()); return; }
             PanelOutcome::NavError(msg) => { self.set_status(&msg, true); return; }
             PanelOutcome::Passthrough => {}
         }
@@ -2049,16 +2050,7 @@ impl App {
                     self.modal = Modal::None;
                 } else if let Some(cmd_template) = menu_item_cmd {
                     self.modal = Modal::None;
-                    let result = self.expand_menu_command(&cmd_template);
-                    if result.untag_active {
-                        self.active_panel_mut().tagged.clear();
-                    }
-                    if result.untag_inactive {
-                        self.inactive_panel_mut().tagged.clear();
-                    }
-                    self.cmdline.text = result.text;
-                    self.cmdline.move_end();
-                    self.execute_command(false);
+                    self.execute_menu_item(cmd_template);
                 }
             }
         }
@@ -2397,6 +2389,7 @@ impl App {
 
         let ipc_fd = self.ipc.as_ref().map(|s| s.raw_fd());
         let cmdline_text = if sync_cmdline { self.cmdline.text.clone() } else { String::new() };
+        let mut pending_ipc: Vec<String> = Vec::new();
         if let ShellMode::Subshell(ref sub) = self.shell_mode {
             let cwd = self.active_panel().path.0.clone();
             // Discard any buffered readline echoes from `history -s` calls that
@@ -2434,7 +2427,7 @@ impl App {
                 sub.send_raw(b"\x15");
                 sub.send_raw(cmdline_text.as_bytes());
             }
-            let _ = sub.start_passthrough(ipc_fd);
+            pending_ipc = sub.start_passthrough(ipc_fd).unwrap_or_default();
 
             if !sub.is_alive() {
                 // The user typed `exit` (or the shell crashed). Drop the Subshell
@@ -2451,6 +2444,12 @@ impl App {
                         self.navigate_to_path(&new_cwd);
                     }
                 }
+            }
+        }
+
+        for raw in pending_ipc {
+            if let Some(msg) = parse_message(&raw) {
+                self.handle_ipc(msg);
             }
         }
 
@@ -2799,8 +2798,12 @@ impl App {
                     self.active_panel_mut().tagged.retain(|n| !pat.matches(n));
                 }
             }
-            IpcMessage::InjectToCommandLine(text) => {
-                self.cmdline.cursor = self.cmdline.text.len();
+            IpcMessage::InjectToCommandLine(text, mode) => {
+                match mode {
+                    CmdlineInjectMode::Insert => {}
+                    CmdlineInjectMode::Append => self.cmdline.cursor = self.cmdline.text.len(),
+                    CmdlineInjectMode::Replace => self.cmdline.clear(),
+                }
                 self.cmdline.insert_str(&text);
                 self.show_cmdline = true;
             }
