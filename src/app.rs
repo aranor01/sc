@@ -1731,13 +1731,23 @@ impl App {
             match event.code {
                 // Navigation keys: dismiss then execute
                 KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
-                | KeyCode::Home | KeyCode::End => {
+                | KeyCode::Home | KeyCode::End | KeyCode::Enter => {
                     self.quicksearch = None;
                     let am = self.action_mode();
                     let vh = self.active_vh();
-                    self.active_panel_mut().handle_key(&event, vh, am);
+                    let path_before = self.active_panel().path.0.clone();
+                    match self.active_panel_mut().handle_key(&event, vh, am) {
+                        PanelOutcome::Consumed => {
+                            let path_after = self.active_panel().path.0.clone();
+                            if path_after != path_before {
+                                self.push_path_history(&path_after);
+                            }
+                        }
+                        PanelOutcome::NavError(msg) => self.set_status(&msg, true),
+                        PanelOutcome::ExecuteCommand | PanelOutcome::Passthrough => {}
+                    }
                 }
-                KeyCode::Enter | KeyCode::Esc => {
+                KeyCode::Esc => {
                     self.quicksearch = None;
                 }
                 KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {

@@ -107,7 +107,9 @@
 - / (Slash)
        open quicksearch in the active panel: the cmdline area shows a `Search:` prompt and
        the cursor jumps to the first entry whose name starts with the typed string
-       (case-insensitive prefix match); Enter or Esc closes the prompt
+       (case-insensitive prefix match); Esc closes the prompt. Enter closes the prompt and
+       is also passed to the panel, same as Home/End/PgUp/PgDown/Up/Down: it opens the
+       currently selected directory (or does nothing if the entry isn't a directory)
 
 - A-s
        same as / (alternate quicksearch shortcut)
