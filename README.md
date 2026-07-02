@@ -56,7 +56,7 @@ how `DIR1`/`DIR2` interact with the `--restore-paths` option.
 See [`docs/Configuration.md`](docs/Configuration.md)
 Default key bindings are listed in [`docs/CheatSheet.md`](docs/CheatSheet.md)
 
-## Combining panels and the command line
+## Combining Panels and the Command Line
 
 The command line and the panels work together: shortcuts let you pull file names and paths,
 without typing them by hand.
@@ -80,7 +80,7 @@ selected file's name at the cursor, although you may prefer the auto completion
 (`Alt-Tab` or `Ctrl-Space`). See [`docs/CheatSheet.md`](docs/CheatSheet.md) for the complete list
 of command-line shortcuts.
 
-## Custom menu commands
+## Custom Menu Commands
 
 Add entries to the `"menu"` array in `~/.config/sc/config.json` (see
 [`docs/Configuration.md`](docs/Configuration.md) for the full schema). Each entry needs a
@@ -88,7 +88,7 @@ Add entries to the `"menu"` array in `~/.config/sc/config.json` (see
 either panel's directory using the macros documented in
 [`docs/MacroSubstitution.md`](docs/MacroSubstitution.md). An optional `keys` runs the
 command directly without opening the menu, and `add_to_bar: true` also shows it as a button
-in the button bar (see [Customizing the button bar](#customizing-the-button-bar) below).
+in the button bar (see [Customizing the Button Bar](#customizing-the-button-bar) below).
 
 If `~/.config/sc/config.json` doesn't exist yet, sc creates one the first time it runs,
 already wired up with `View` / `Edit` / `Edit config` entries — so you're extending
@@ -119,7 +119,7 @@ Two examples:
 none are tagged) — see `docs/MacroSubstitution.md` for the rest.
 More complex command should delegate to a script file and should check if nothing (or `..`) is selected.
 
-## Customizing the button bar
+## Customizing the Button Bar
 
 The button bar always shows the built-in function-key actions (Copy, Move, Delete, ...). To
 add your own commands to it, give a menu entry (see above) `"add_to_bar": true`:
