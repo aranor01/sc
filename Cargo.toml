@@ -2,6 +2,14 @@
 name = "sc"
 version = "0.1.0"
 edition = "2021"
+description = "A visual shell for Linux terminals, in the spirit of Midnight Commander"
+authors = ["aranor01"]
+license = "MIT"
+repository = "https://github.com/aranor01/sc"
+readme = "README.md"
+keywords = ["tui", "file-manager", "terminal", "ratatui"]
+categories = ["command-line-utilities", "filesystem"]
+publish = false
 
 [[bin]]
 name = "sc"
@@ -25,3 +33,36 @@ glob       = "0.3"
 nix        = { version = "0.29", features = ["process", "signal", "term", "fs"] }
 libc        = "0.2"
 clap = { version = "4.6.1", features = ["derive"] }
+
+# `cargo deb` runs `cargo build` as a child process, so it inherits the shell
+# environment. Debian policy forbids packages from installing under
+# /usr/local (that's reserved for the local admin), so the deb build must
+# override the compile-time default with:
+#
+#   SC_INSTALL_PREFIX=/usr cargo deb
+#
+# See build.rs for how SC_INSTALL_PREFIX is baked into the binary, and
+# src/config.rs (find_scripts_dir) for how it's used at runtime.
+[package.metadata.deb]
+maintainer = "aranor01 <38322408+aranor01@users.noreply.github.com>"
+copyright = "2026, aranor01"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+Sunset Commander (sc) is a two-panel, keyboard- and mouse-driven visual \
+shell for Linux terminals, in the spirit of Midnight Commander. It supports \
+tagging and multi-file selection, copy/move/delete between the two panels, \
+a configurable user command menu, and fully configurable key bindings and \
+color scheme."""
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/sc", "usr/bin/", "755"],
+    ["target/release/sc-action", "usr/bin/", "755"],
+    ["scripts/edit.sh", "usr/share/sc/scripts/", "755"],
+    ["scripts/view.sh", "usr/share/sc/scripts/", "755"],
+    ["scripts/complete.sh", "usr/share/sc/scripts/", "755"],
+    ["README.md", "usr/share/doc/sc/", "644"],
+    ["docs/CheatSheet.md", "usr/share/doc/sc/", "644"],
+    ["docs/Configuration.md", "usr/share/doc/sc/", "644"],
+]
