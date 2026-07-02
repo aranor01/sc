@@ -21,6 +21,8 @@ sc [OPTIONS] [DIR1] [DIR2]
 | `--no-restore-paths` | Override `startup.restore_paths` in config: start panels at the current working directory. Conflicts with `--restore-paths`. |
 | `--subshell` | Override `startup.subshell` in config: start in subshell mode. Conflicts with `--no-subshell`. |
 | `--no-subshell` | Override `startup.subshell` in config: start in stateless mode. Conflicts with `--subshell`. |
+| `--ipc-scripting` | Override `startup.ipc_scripting` in config: enable IPC actions beyond `ShowPanels` (see [IpcActions.md](IpcActions.md)). Conflicts with `--no-ipc-scripting`. |
+| `--no-ipc-scripting` | Override `startup.ipc_scripting` in config: keep only `ShowPanels` enabled. Conflicts with `--ipc-scripting`. |
 | `-d`, `--no-mouse` | Disable mouse support (no `EnableMouseCapture`), so the terminal's native mouse selection/copy-paste works instead. |
 | `-h`, `--help` | Print help and exit. |
 | `-V`, `--version` | Print version and exit. |

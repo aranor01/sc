@@ -383,11 +383,12 @@ impl Default for ColorScheme {
 pub struct StartupConfig {
     pub restore_paths: bool,
     pub subshell: bool,
+    pub ipc_scripting: bool,
 }
 
 impl Default for StartupConfig {
     fn default() -> Self {
-        StartupConfig { restore_paths: false, subshell: true }
+        StartupConfig { restore_paths: false, subshell: true, ipc_scripting: false }
     }
 }
 
@@ -578,6 +579,9 @@ impl Config {
             if let Some(v) = startup.get("subshell").and_then(|v| v.as_bool()) {
                 cfg.startup.subshell = v;
             }
+            if let Some(v) = startup.get("ipc_scripting").and_then(|v| v.as_bool()) {
+                cfg.startup.ipc_scripting = v;
+            }
         }
 
         Ok(cfg)
@@ -615,6 +619,13 @@ mod tests {
         // other fields still have defaults
         assert_eq!(cfg.colorscheme.panel_bg, rgb(0x1a1a2e));
         assert!(cfg.keybindings.exit.contains(&single(F(10), M::NONE)));
+    }
+
+    #[test]
+    fn ipc_scripting_defaults_to_false_and_can_be_enabled() {
+        assert!(!Config::load_from_str("{}").unwrap().startup.ipc_scripting);
+        let cfg = Config::load_from_str(r#"{"startup":{"ipc_scripting":true}}"#).unwrap();
+        assert!(cfg.startup.ipc_scripting);
     }
 
     #[test]

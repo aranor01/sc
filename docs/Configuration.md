@@ -103,7 +103,8 @@ Notes:
 {
   "startup": {
     "restore_paths": false,
-    "subshell": true
+    "subshell": true,
+    "ipc_scripting": false
   }
 }
 ```
@@ -113,8 +114,10 @@ Notes:
   directory. Defaults to `false`.
 - `subshell` — if `true`, `Ctrl-o` toggles a full interactive subshell instead of a stateless
   output overlay. Defaults to `true`.
+- `ipc_scripting` — if `true`, IPC actions beyond `ShowPanels` are enabled (see
+  [IpcActions.md](IpcActions.md)). Defaults to `false`.
 
-Both can be overridden per-launch on the command line; see
+All three can be overridden per-launch on the command line; see
 [`CommandLineArgs.md`](CommandLineArgs.md).
 
 ## User menu

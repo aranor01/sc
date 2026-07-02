@@ -14,10 +14,17 @@ shared temp directory). The socket file is also always created mode `0600`, rega
 the umask in effect when `sc` started. A connection that doesn't finish sending a message
 within 500ms, or that sends more than 8 MiB, is dropped.
 
-There's no scoping *within* a valid connection: `$SC_TOKEN` is all-or-nothing access to
-every action in the table below, and every child process launched from the command line or
-user menu gets it automatically. Treat it like any other credential your child processes —
-and whatever they in turn run — can see.
+By default, only `ShowPanels` is enabled; every other action below requires opting in via
+`ipc_scripting` in config.json (or `--ipc-scripting` on the command line — see
+[CommandLineArgs.md](CommandLineArgs.md)).
+
+There's no scoping *within* that opt-in: `$SC_TOKEN` is then all-or-nothing access to every
+action, and every child process launched from the command line or user menu gets it
+automatically — treat it like any other secret visible to those processes and everything
+they launch in turn. Misuse ranges from mild (a same-uid peer can keep reconnecting to
+degrade UI responsiveness — no single stall is unbounded, but nothing caps how often it
+repeats) to serious: `InjectToCommandLine` can queue a command into your command line for
+you to run unknowingly, and `Tag`/`TagOnly`/`SelectGroup` can retarget what F5/F6/F8 act on.
 
 Text handed to `InjectToCommandLine` is filtered before it reaches the command line: control
 characters (so a connected peer can't smuggle terminal escape sequences into what gets
@@ -65,6 +72,10 @@ For `InjectToCommandLine`, the optional mode must be exactly `Insert`, `Append`,
 it's treated as part of the text and `Insert` is used.
 
 ## Examples
+
+Both examples below use actions other than `ShowPanels`, so they require `ipc_scripting`
+to be enabled (see Security above) — otherwise `sc-action` runs normally but sc silently
+ignores the message.
 
 ```sh
 # From a script or user-menu command: tag every file a build just touched.

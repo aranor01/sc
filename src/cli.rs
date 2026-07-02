@@ -30,6 +30,14 @@ pub struct Cli {
     #[arg(long, conflicts_with = "subshell")]
     no_subshell: bool,
 
+    /// Enable IPC actions beyond ShowPanels, overriding the config file
+    #[arg(long, conflicts_with = "no_ipc_scripting")]
+    ipc_scripting: bool,
+
+    /// Disable IPC actions beyond ShowPanels, overriding the config file
+    #[arg(long, conflicts_with = "ipc_scripting")]
+    no_ipc_scripting: bool,
+
     /// Disable mouse support
     #[arg(short = 'd', long = "no-mouse")]
     no_mouse: bool,
@@ -58,6 +66,17 @@ impl Cli {
         }
     }
 
+    /// Collapses `--ipc-scripting` / `--no-ipc-scripting` into a single override.
+    pub fn ipc_scripting_flag(&self) -> Option<bool> {
+        if self.ipc_scripting {
+            Some(true)
+        } else if self.no_ipc_scripting {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
     pub fn mouse(&self) -> bool {
         !self.no_mouse
     }
@@ -74,6 +93,7 @@ mod tests {
         assert_eq!(cli.dir2, None);
         assert_eq!(cli.restore_paths_flag(), None);
         assert_eq!(cli.subshell_flag(), None);
+        assert_eq!(cli.ipc_scripting_flag(), None);
         assert!(cli.mouse());
     }
 
@@ -124,6 +144,24 @@ mod tests {
     #[test]
     fn conflicting_subshell_flags_error() {
         let result = Cli::try_parse_from(["sc", "--subshell", "--no-subshell"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn ipc_scripting_flag_true() {
+        let cli = Cli::parse_from(["sc", "--ipc-scripting"]);
+        assert_eq!(cli.ipc_scripting_flag(), Some(true));
+    }
+
+    #[test]
+    fn ipc_scripting_flag_false() {
+        let cli = Cli::parse_from(["sc", "--no-ipc-scripting"]);
+        assert_eq!(cli.ipc_scripting_flag(), Some(false));
+    }
+
+    #[test]
+    fn conflicting_ipc_scripting_flags_error() {
+        let result = Cli::try_parse_from(["sc", "--ipc-scripting", "--no-ipc-scripting"]);
         assert!(result.is_err());
     }
 

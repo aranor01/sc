@@ -27,6 +27,9 @@ fn main() -> anyhow::Result<()> {
     if let Some(flag) = cli.subshell_flag() {
         config.startup.subshell = flag;
     }
+    if let Some(flag) = cli.ipc_scripting_flag() {
+        config.startup.ipc_scripting = flag;
+    }
     let saved_state = AppState::load();
     let (ph_left, ph_right) = panel_history::load();
 

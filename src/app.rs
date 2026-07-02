@@ -2750,6 +2750,14 @@ impl App {
     }
 
     fn handle_ipc(&mut self, msg: IpcMessage) {
+        // Every action except ShowPanels is opt-in (see startup.ipc_scripting):
+        // ShowPanels is load-bearing for core cd-navigation (stateless commands
+        // report their final $PWD back this way) and the Ctrl+O "return to
+        // panels" signal, so it's dispatched unconditionally; everything else
+        // is dropped unless the user explicitly enabled it.
+        if !self.config.startup.ipc_scripting && !matches!(msg, IpcMessage::ShowPanels(_)) {
+            return;
+        }
         match msg {
             IpcMessage::Tag(names) => {
                 let entries: Vec<String> = self.active_panel().entries.iter()
