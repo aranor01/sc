@@ -557,6 +557,10 @@ impl App {
             // Err falls back to stateless silently.
             if let Ok(sub) = crate::subshell::Subshell::spawn() {
                 app.shell_mode = ShellMode::Subshell(sub);
+                // spawn() drains the shell's freshly-emitted first prompt from the
+                // PTY buffer, so the next passthrough entry must force a new one
+                // (same reasoning as the post-stateless-command case below).
+                app.subshell_prompt_needed = true;
             }
         }
         // Restore saved sort and hidden state, then re-sort
