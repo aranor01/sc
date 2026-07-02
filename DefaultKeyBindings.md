@@ -123,7 +123,8 @@
        open the path history popup for the active panel (most recent directory first)
 
 - C-\
-       open the bookmarks popup: navigate the active panel to a bookmarked directory
+       open the bookmarks popup: navigate the active panel to a bookmarked directory.
+       Del removes the currently selected entry from the list
 
 - C-b
        add the active panel's current directory to bookmarks

@@ -45,6 +45,7 @@ Defaults use the notation accepted by the config parser (e.g. `A-Up`, `C-s`, `C-
 |---|---|---|
 | Open Bookmarks | Open bookmarks popup to navigate the active panel to a bookmarked directory | `bookmark_open`: `C-\` |
 | Add Bookmark | Add the active panel's current directory to bookmarks | `bookmark_add`: `C-b` |
+| Remove Bookmark | While the bookmarks popup is open, remove the currently selected entry | `Del` |
 
 ## File Selection
 

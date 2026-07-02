@@ -56,6 +56,19 @@ impl PopupListState {
         self.items.get(self.selected).map(String::as_str)
     }
 
+    /// Removes the currently selected item, clamping `selected` to stay in bounds.
+    /// Returns the removed item, if any.
+    pub fn remove_selected(&mut self) -> Option<String> {
+        if self.items.is_empty() {
+            return None;
+        }
+        let removed = self.items.remove(self.selected);
+        if self.selected >= self.items.len() && self.selected > 0 {
+            self.selected -= 1;
+        }
+        Some(removed)
+    }
+
     pub fn handle_key(&mut self, event: &KeyEvent, visible_height: usize) -> PopupOutcome {
         match event.code {
             KeyCode::Enter | KeyCode::Tab if event.modifiers == KeyModifiers::NONE => {
@@ -92,6 +105,44 @@ impl PopupListState {
             KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => PopupOutcome::Backspace,
             _ => PopupOutcome::Passthrough,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remove_selected_on_empty_list_is_noop() {
+        let mut s = PopupListState::new(vec![]);
+        assert_eq!(s.remove_selected(), None);
+        assert_eq!(s.selected, 0);
+    }
+
+    #[test]
+    fn remove_selected_middle_keeps_index() {
+        let mut s = PopupListState::new(vec!["a".into(), "b".into(), "c".into()]);
+        s.selected = 1;
+        assert_eq!(s.remove_selected(), Some("b".to_string()));
+        assert_eq!(s.items, vec!["a", "c"]);
+        assert_eq!(s.selected, 1);
+    }
+
+    #[test]
+    fn remove_selected_last_item_clamps_index() {
+        let mut s = PopupListState::new(vec!["a".into(), "b".into(), "c".into()]);
+        s.selected = 2;
+        assert_eq!(s.remove_selected(), Some("c".to_string()));
+        assert_eq!(s.items, vec!["a", "b"]);
+        assert_eq!(s.selected, 1);
+    }
+
+    #[test]
+    fn remove_selected_only_item_leaves_empty_list() {
+        let mut s = PopupListState::new(vec!["a".into()]);
+        assert_eq!(s.remove_selected(), Some("a".to_string()));
+        assert!(s.items.is_empty());
+        assert_eq!(s.selected, 0);
     }
 }
 

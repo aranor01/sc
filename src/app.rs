@@ -1596,6 +1596,25 @@ impl App {
                 return;
             }
             Modal::BookmarkList(_) => {
+                if event.code == KeyCode::Delete && event.modifiers == KeyModifiers::NONE {
+                    // Remove by index (not by value) so a duplicate path elsewhere in the
+                    // list can't cause the popup's items and self.bookmarks to desync.
+                    let removed = if let Modal::BookmarkList(ref mut s) = self.modal {
+                        let idx = s.selected;
+                        s.remove_selected().map(|path| (idx, path))
+                    } else { None };
+                    if let Some((idx, path)) = removed {
+                        if idx < self.bookmarks.len() {
+                            self.bookmarks.remove(idx);
+                        }
+                        let _ = crate::bookmarks::save(&self.bookmarks);
+                        self.set_status(&format!("Bookmark removed: {path}"), false);
+                    }
+                    if self.bookmarks.is_empty() {
+                        self.modal = Modal::None;
+                    }
+                    return;
+                }
                 let vh = self.bookmark_popup_area.get().height.saturating_sub(2) as usize;
                 let outcome = if let Modal::BookmarkList(ref mut s) = self.modal {
                     s.handle_key(&event, vh)
