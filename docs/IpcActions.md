@@ -26,7 +26,7 @@ If `SC_TOKEN` is unset or invalid, `sc-action` exits quietly without doing anyth
 | `UnselectGroup` | pattern | Untag entries in the active panel matching the pattern. |
 | `Filter` | pattern | Set the active panel's filter to the pattern; an empty pattern clears it. |
 | `InjectToCommandLine` | text | Insert text into the command line at the current cursor position, showing the command line if it's hidden. |
-| `ToggleShell` | — | Toggle the output/shell overlay, same as `C-o`. |
+| `ToggleShell` | — | Toggle the output/shell overlay, same as `Ctrl-o`. |
 | `RefreshPanel` | — | Force the active panel to re-read its directory from disk. |
 | `ShowPanels` | optional directory | Return from the output/shell overlay to the panel view; if a directory is given and differs from the active panel's current path, navigate there. |
 

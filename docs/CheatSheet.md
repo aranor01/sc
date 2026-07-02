@@ -1,15 +1,13 @@
 # Sunset Commander — Key Bindings Cheat Sheet
 
 Config keys refer to the field names in the `keybindings` section of `~/.config/sc/config.json`.
-Defaults use the notation accepted by the config parser (e.g. `A-Up`, `C-s`, `C-x t`).
+Defaults use the notation accepted by the config parser (e.g. `Alt-Up`, `Ctrl-s`, `Ctrl-x t`).
 
 ## Modifier Keys
 
-- `A-` = Alt
-- `C-` = Ctrl
-- `S-` = Shift
-
-Modifiers are combinable and order-independent, e.g. `C-A-b` for Ctrl-Alt-b.
+`Alt-`, `Ctrl-`, and `Shift-` are combinable and order-independent, e.g. `Ctrl-Alt-b`. The
+config parser also accepts the short forms `A-`, `C-`, `S-` — see
+[`Configuration.md`](Configuration.md#key-spec-syntax).
 
 ---
 
@@ -17,22 +15,22 @@ Modifiers are combinable and order-independent, e.g. `C-A-b` for Ctrl-Alt-b.
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Go to Parent | Navigate to the parent directory of the active panel | `go_to_parent`: `A-Up` |
-| Go Back | Go back to the previous directory in the active panel's history | `go_back`: `A-Left` |
-| Go Forward | Go forward in the active panel's history | `go_forward`: `A-Right` |
-| Quick Search | Jump to the first entry whose name starts with the typed string (case-insensitive prefix) | `quicksearch`: `/`, `A-s` |
-| Filter | Open a dialog to hide entries not matching a pattern (shell glob by default; dialog offers RegExp, Files only, and Case sensitive options); empty pattern removes the filter | `filter`: `C-f` |
-| Toggle Hidden Files | Toggle visibility of dotfiles in the active panel | `toggle_hidden`: `A-.` |
-| Directory History | Open path history popup for the active panel (most recent first) | `path_history`: `A-H`, `A-Down` |
+| Go to Parent | Navigate to the parent directory of the active panel | `go_to_parent`: `Alt-Up` |
+| Go Back | Go back to the previous directory in the active panel's history | `go_back`: `Alt-Left` |
+| Go Forward | Go forward in the active panel's history | `go_forward`: `Alt-Right` |
+| Quick Search | Jump to the first entry whose name starts with the typed string (case-insensitive prefix) | `quicksearch`: `/`, `Alt-s` |
+| Filter | Open a dialog to hide entries not matching a pattern (shell glob by default; dialog offers RegExp, Files only, and Case sensitive options); empty pattern removes the filter | `filter`: `Ctrl-f` |
+| Toggle Hidden Files | Toggle visibility of dotfiles in the active panel | `toggle_hidden`: `Alt-.` |
+| Directory History | Open path history popup for the active panel (most recent first) | `path_history`: `Alt-H`, `Alt-Down` |
 
 ## Panels
 
 | Action | Description | Config key: default |
 |---|---|---|
 | Switch Panel | Switch focus to the other panel | `switch_panel`: `Tab` |
-| Sort Panel | Open sort popup: choose sort order (Name, Extension, Size, Modified, Unsorted; asc/desc) | `sort_panel`: `C-s` |
-| Sync Panels | Open in the inactive panel the same directory shown in the active panel | `sync_panels`: `A-i` |
-| Refresh Panel | Force-refresh the active panel's directory listing (re-reads from disk) | `refresh_panel`: `A-r` |
+| Sort Panel | Open sort popup: choose sort order (Name, Extension, Size, Modified, Unsorted; asc/desc) | `sort_panel`: `Ctrl-s` |
+| Sync Panels | Open in the inactive panel the same directory shown in the active panel | `sync_panels`: `Alt-i` |
+| Refresh Panel | Force-refresh the active panel's directory listing (re-reads from disk) | `refresh_panel`: `Alt-r` |
 
 ## General Navigation and Interaction Keys (non-configurable)
 
@@ -51,8 +49,8 @@ Modifiers are combinable and order-independent, e.g. `C-A-b` for Ctrl-Alt-b.
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Open Bookmarks | Open bookmarks popup to navigate the active panel to a bookmarked directory | `bookmark_open`: `C-\` |
-| Add Bookmark | Add the active panel's current directory to bookmarks | `bookmark_add`: `C-b` |
+| Open Bookmarks | Open bookmarks popup to navigate the active panel to a bookmarked directory | `bookmark_open`: `Ctrl-\` |
+| Add Bookmark | Add the active panel's current directory to bookmarks | `bookmark_add`: `Ctrl-b` |
 | Remove Bookmark | While the bookmarks popup is open, remove the currently selected entry | `Del` |
 
 ## File Selection
@@ -71,42 +69,42 @@ Modifiers are combinable and order-independent, e.g. `C-A-b` for Ctrl-Alt-b.
 | Copy | Copy tagged files (or the selected file) to the inactive panel's directory | `copy`: `F5` |
 | Move | Move tagged files (or the selected file) to the inactive panel's directory | `move_entry`: `F6` |
 | Delete | Delete the tagged files (or the selected file) in the active panel | `delete`: `F8` |
-| Rename | Rename the currently selected file | `rename`: `S-F6` |
+| Rename | Rename the currently selected file | `rename`: `Shift-F6` |
 | Make Directory | Create a new directory in the active panel | `mkdir`: `F7` |
 
 ## Command Line
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Insert Filename | Copy the selected file name to the command line | `cmdline_insert_filename`: `A-Enter`, `C-Enter` |
-| Insert Full Path | Copy the full path of the selected file to the command line | `cmdline_insert_fullpath`: `C-S-Enter` |
-| Autocomplete | Autocomplete filenames, commands, variables, usernames, and hostnames | `cmdline_complete`: `A-Tab`, `C-Space` |
-| Insert Tagged (Active) | Copy tagged files of the active panel to the command line | `cmdline_insert_tagged`: `C-x t` |
-| Insert Tagged (Inactive) | Copy tagged files of the inactive panel to the command line | `cmdline_insert_tagged_other`: `C-x C-t` |
-| Insert Path (Active) | Copy the active panel's directory path to the command line | `cmdline_insert_path`: `C-x p` |
-| Insert Path (Inactive) | Copy the inactive panel's directory path to the command line | `cmdline_insert_path_other`: `C-x C-p` |
-| History Previous | Go to the previous command in the history | `cmdline_history_prev`: `C-Up` |
-| History Next | Go to the next command in the history | `cmdline_history_next`: `C-Down` |
-| Reverse Search | Filter command history by the current command line text, showing matches above the command line (most recent highlighted, Backspace re-filters); Enter/Tab accepts the highlighted entry, Esc cancels | `reverse_search`: `C-r`, `A-h` |
+| Insert Filename | Copy the selected file name to the command line | `cmdline_insert_filename`: `Alt-Enter`, `Ctrl-Enter` |
+| Insert Full Path | Copy the full path of the selected file to the command line | `cmdline_insert_fullpath`: `Ctrl-Shift-Enter` |
+| Autocomplete | Autocomplete filenames, commands, variables, usernames, and hostnames | `cmdline_complete`: `Alt-Tab`, `Ctrl-Space` |
+| Insert Tagged (Active) | Copy tagged files of the active panel to the command line | `cmdline_insert_tagged`: `Ctrl-x t` |
+| Insert Tagged (Inactive) | Copy tagged files of the inactive panel to the command line | `cmdline_insert_tagged_other`: `Ctrl-x Ctrl-t` |
+| Insert Path (Active) | Copy the active panel's directory path to the command line | `cmdline_insert_path`: `Ctrl-x p` |
+| Insert Path (Inactive) | Copy the inactive panel's directory path to the command line | `cmdline_insert_path_other`: `Ctrl-x Ctrl-p` |
+| History Previous | Go to the previous command in the history | `cmdline_history_prev`: `Ctrl-Up` |
+| History Next | Go to the next command in the history | `cmdline_history_next`: `Ctrl-Down` |
+| Reverse Search | Filter command history by the current command line text, showing matches above the command line (most recent highlighted, Backspace re-filters); Enter/Tab accepts the highlighted entry, Esc cancels | `reverse_search`: `Ctrl-r`, `Alt-h` |
 
 ## Shell
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Toggle Shell | Toggle output overlay (stateless mode) or full interactive subshell (subshell mode); C-o and A-o also exit subshell passthrough back to the sc UI | `toggle_shell`: `C-o` |
-| Toggle Shell & Sync | Like Toggle Shell; also copies the SC command line into the subshell's readline buffer | `toggle_shell_and_sync_command_line`: `A-o` |
+| Toggle Shell | Toggle output overlay (stateless mode) or full interactive subshell (subshell mode); Ctrl-o and Alt-o also exit subshell passthrough back to the sc UI | `toggle_shell`: `Ctrl-o` |
+| Toggle Shell & Sync | Like Toggle Shell; also copies the SC command line into the subshell's readline buffer | `toggle_shell_and_sync_command_line`: `Alt-o` |
 
 ## Layout
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Toggle Layout | Toggle panel layout between vertical and horizontal | `toggle_layout`: `A-,` |
-| Toggle Command Line | Toggle command line visibility | `toggle_cmdline`: `C-A-b` |
-| Toggle Button Bar | Toggle button bar visibility | `toggle_button_bar`: `A-b` |
+| Toggle Layout | Toggle panel layout between vertical and horizontal | `toggle_layout`: `Alt-,` |
+| Toggle Command Line | Toggle command line visibility | `toggle_cmdline`: `Ctrl-Alt-b` |
+| Toggle Button Bar | Toggle button bar visibility | `toggle_button_bar`: `Alt-b` |
 
 ## Miscellaneous
 
 | Action | Description | Config key: default |
 |---|---|---|
 | User Menu | Open the user menu | `user_menu`: `F2` |
-| Exit | Exit the application | `exit`: `F10`, `C-q` |
+| Exit | Exit the application | `exit`: `F10`, `Ctrl-q` |

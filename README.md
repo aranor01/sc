@@ -70,14 +70,14 @@ another directory (`*.md`) except one, you can:
 - Change active panel with `Tab`
 - Navigate to the directory where you want to create the archive
 - Type `tar czf archive.tar.gz -C ` on the command line.
-- Press `C-x C-p` to append the other panel's directory.
+- Press `Ctrl-x Ctrl-p` to append the other panel's directory.
 - Add a space.
-- Press `C-x C-t` to append the tagged files from the other panel.
+- Press `Ctrl-x Ctrl-t` to append the tagged files from the other panel.
 - Press `Enter`
 
-The same idea works for quick one-off commands on a single file: `C-Enter` inserts the
+The same idea works for quick one-off commands on a single file: `Ctrl-Enter` inserts the
 selected file's name at the cursor, although you may prefer the auto completion
-(`A-Tab` or `C-Space`). See [`docs/CheatSheet.md`](docs/CheatSheet.md) for the complete list
+(`Alt-Tab` or `Ctrl-Space`). See [`docs/CheatSheet.md`](docs/CheatSheet.md) for the complete list
 of command-line shortcuts.
 
 ## Custom menu commands

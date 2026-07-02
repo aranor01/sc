@@ -28,7 +28,7 @@ triggers the action):
 {
   "keybindings": {
     "copy": "F5",
-    "exit": ["F10", "C-q"]
+    "exit": ["F10", "Ctrl-q"]
   }
 }
 ```
@@ -36,30 +36,30 @@ triggers the action):
 ### Key spec syntax
 
 - Modifier prefixes, combinable and in any order: `C-`/`Ctrl-` (Control), `A-`/`Alt-` (Alt),
-  `S-`/`Shift-` (Shift). Example: `C-A-b` or `Ctrl-Alt-b`.
+  `S-`/`Shift-` (Shift). Example: `Ctrl-Alt-b`.
 - Named keys: `Enter`, `Tab`, `Backspace`, `Delete`/`Del`, `Insert`, `Up`, `Down`, `Left`,
   `Right`, `Home`, `End`, `PageUp`, `PageDown`, `Esc`, `F1`–`F12`.
 - A single printable character otherwise, e.g. `,`, `/`, `b`.
 - A **chord** (two keys pressed in sequence, à la Emacs) is written as two key specs
-  separated by one space, e.g. `"C-x t"` for Ctrl-x then t.
+  separated by one space, e.g. `"Ctrl-x t"` for Ctrl-x then t.
 
 ### Available actions and their defaults
 
 | Action | Default |
 |---|---|
-| `go_to_parent` | `A-Up` |
-| `go_back` | `A-Left` |
-| `go_forward` | `A-Right` |
+| `go_to_parent` | `Alt-Up` |
+| `go_back` | `Alt-Left` |
+| `go_forward` | `Alt-Right` |
 | `switch_panel` | `Tab` |
-| `toggle_layout` | `A-,` |
-| `sync_panels` | `A-i` |
-| `refresh_panel` | `A-r` |
-| `sort_panel` | `C-s` |
-| `quicksearch` | `/`, `A-s` |
-| `filter` | `C-f` |
-| `toggle_hidden` | `A-.` |
-| `bookmark_open` | `C-\` |
-| `bookmark_add` | `C-b` |
+| `toggle_layout` | `Alt-,` |
+| `sync_panels` | `Alt-i` |
+| `refresh_panel` | `Alt-r` |
+| `sort_panel` | `Ctrl-s` |
+| `quicksearch` | `/`, `Alt-s` |
+| `filter` | `Ctrl-f` |
+| `toggle_hidden` | `Alt-.` |
+| `bookmark_open` | `Ctrl-\` |
+| `bookmark_add` | `Ctrl-b` |
 | `tag_file` | `Insert` |
 | `invert_tags` | `*` |
 | `select_group` | `+` |
@@ -67,25 +67,25 @@ triggers the action):
 | `copy` | `F5` |
 | `move` | `F6` |
 | `delete` | `F8` |
-| `rename` | `S-F6` |
+| `rename` | `Shift-F6` |
 | `mkdir` | `F7` |
-| `cmdline_insert_filename` | `A-Enter`, `C-Enter` |
-| `cmdline_insert_fullpath` | `C-S-Enter` |
-| `cmdline_complete` | `A-Tab`, `C-Space` |
-| `cmdline_insert_tagged` | `C-x t` |
-| `cmdline_insert_tagged_other` | `C-x C-t` |
-| `cmdline_insert_path` | `C-x p` |
-| `cmdline_insert_path_other` | `C-x C-p` |
-| `cmdline_history_prev` | `C-Up` |
-| `cmdline_history_next` | `C-Down` |
-| `reverse_search` | `C-r`, `A-h` |
-| `toggle_shell` | `C-o` |
-| `toggle_shell_and_sync_command_line` | `A-o` |
-| `toggle_cmdline` | `C-A-b` |
-| `toggle_button_bar` | `A-b` |
+| `cmdline_insert_filename` | `Alt-Enter`, `Ctrl-Enter` |
+| `cmdline_insert_fullpath` | `Ctrl-Shift-Enter` |
+| `cmdline_complete` | `Alt-Tab`, `Ctrl-Space` |
+| `cmdline_insert_tagged` | `Ctrl-x t` |
+| `cmdline_insert_tagged_other` | `Ctrl-x Ctrl-t` |
+| `cmdline_insert_path` | `Ctrl-x p` |
+| `cmdline_insert_path_other` | `Ctrl-x Ctrl-p` |
+| `cmdline_history_prev` | `Ctrl-Up` |
+| `cmdline_history_next` | `Ctrl-Down` |
+| `reverse_search` | `Ctrl-r`, `Alt-h` |
+| `toggle_shell` | `Ctrl-o` |
+| `toggle_shell_and_sync_command_line` | `Alt-o` |
+| `toggle_cmdline` | `Ctrl-Alt-b` |
+| `toggle_button_bar` | `Alt-b` |
 | `user_menu` | `F2` |
-| `exit` | `F10`, `C-q` |
-| `path_history` | `A-H`, `A-Down` |
+| `exit` | `F10`, `Ctrl-q` |
+| `path_history` | `Alt-H`, `Alt-Down` |
 
 Notes:
 
@@ -111,7 +111,7 @@ Notes:
 - `restore_paths` — if `true`, panels restore the last-visited paths from
   `~/.local/share/sc/state.json` on launch instead of starting at the current working
   directory. Defaults to `false`.
-- `subshell` — if `true`, `C-o` toggles a full interactive subshell instead of a stateless
+- `subshell` — if `true`, `Ctrl-o` toggles a full interactive subshell instead of a stateless
   output overlay. Defaults to `true`.
 
 Both can be overridden per-launch on the command line; see
@@ -204,7 +204,7 @@ Besides `config.json`, sc keeps a few other files under `~/.config/sc/` and
 | File | Contents |
 |---|---|
 | `~/.config/sc/config.json` | This file. |
-| `~/.config/sc/bookmarks.json` | Bookmarked directories (`C-b` to add, `C-\` to browse). |
+| `~/.config/sc/bookmarks.json` | Bookmarked directories (`Ctrl-b` to add, `Ctrl-\` to browse). |
 | `~/.local/share/sc/state.json` | Panel layout, visibility toggles, and last-visited paths. |
 | `~/.local/share/sc/command_history` | Command line history. |
 | `~/.local/share/sc/panel_history.json` | Per-panel directory navigation history. |
