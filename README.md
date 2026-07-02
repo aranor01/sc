@@ -103,7 +103,7 @@ Two examples:
     { "label": "Archive to other panel", "command": "tar czf %D/archive.tar.gz %s" },
 
     // Similar to the manual example in "Combining panels and the command line"
-    { "label": "Archive from other panel", "command": "tar czf `basename %D`.tar.gz -C %D %S" },
+    { "label": "Archive from other panel", "command": "tar czf \"`basename %D`\".tar.gz -C %D %S" },
 
     // Count lines in the tagged files, or the selected file if none are tagged.
     { "label": "Word count", "command": "wc -l %s", "keys": "F9" }
