@@ -18,31 +18,64 @@ pub struct IpcServer {
 // over this sc instance" — see the doc comment on `read_authenticated_message`
 // for the full reasoning.
 
-/// Hard ceiling on a single IPC message's size, in bytes. `read_to_string` has
-/// no built-in limit, so without this a peer could stream an unbounded amount
-/// of data into a `String` before we ever get a chance to parse (and likely
-/// reject) it, growing our memory usage without bound. No legitimate action —
-/// a handful of filenames, a filter pattern, some command-line text — comes
-/// anywhere close to this size. If a real payload somehow did exceed it, it
-/// would simply be truncated, which will typically just make `parse_message`
-/// fail rather than doing anything harmful.
-const MAX_MESSAGE_BYTES: u64 = 1024 * 1024; // 1 MiB
+/// Hard ceiling on a single IPC message's size, in bytes. The underlying read
+/// has no built-in limit, so without this a peer could stream an unbounded
+/// amount of data into memory before we ever get a chance to parse (and
+/// likely reject) it. Most legitimate actions — a handful of filenames, a
+/// filter pattern, some command-line text — are a few dozen bytes. The one
+/// documented use case that can legitimately get large is `TagOnly`/`Tag`
+/// fed from stdin (see docs/IpcActions.md's `git diff --name-only | sc-action
+/// ... TagOnly -` example): at roughly 40-60 bytes per path including the
+/// newline, 8 MiB comfortably covers well over 100,000 changed files, which
+/// is generous even for a large monorepo diff. If a payload somehow did
+/// exceed the cap anyway, it's truncated rather than erroring, which will
+/// typically just make `parse_message` fail (or, worse, silently succeed
+/// with a partial list) rather than doing anything harmful — the cap exists
+/// to bound memory, not to validate input, so callers of actions that could
+/// plausibly produce a very large payload should keep it well under this.
+const MAX_MESSAGE_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB
 
-/// How long we're willing to block waiting for a connected peer to finish
-/// sending its message. A legitimate `sc-action` client does a single
-/// `write_all` and then exits (which closes its end of the socket and
+/// Total wall-clock time we're willing to spend reading one peer's message,
+/// from the moment we start reading. A legitimate `sc-action` client does a
+/// single `write_all` and then exits (which closes its end of the socket and
 /// delivers EOF) in well under a millisecond, so half a second is enormous
 /// headroom for a same-host Unix socket under any realistic system load. Its
-/// real purpose is to bound the alternative: without a read timeout, a peer
-/// that connects and simply never sends anything (or never closes) would
-/// block the accepting thread's `read_to_string` forever. Both places that
-/// accept IPC connections do so on their one and only thread — the main TUI
-/// render loop, and the Ctrl+O subshell's PTY-shuffling loop — so "blocks
-/// forever" would mean "sc, or the subshell session, freezes solid until the
-/// peer goes away." A bounded timeout turns that into "this one message is
-/// dropped after at most half a second," which is a much smaller blast radius
-/// for the same trigger (just opening a connection and doing nothing).
+/// real purpose is to bound the alternative: without a deadline, a peer that
+/// connects and simply never sends anything (or never closes) would block the
+/// accepting thread forever. Both places that accept IPC connections do so on
+/// their one and only thread — the main TUI render loop, and the Ctrl+O
+/// subshell's PTY-shuffling loop — so "blocks forever" would mean "sc, or the
+/// subshell session, freezes solid until the peer goes away."
+///
+/// This is deliberately enforced as a wall-clock deadline in
+/// `read_authenticated_message`'s manual read loop, not as a naive
+/// `set_read_timeout` on a single `read_to_string` call. `SO_RCVTIMEO` (what
+/// `set_read_timeout` configures) resets on every individual `read()`
+/// syscall rather than counting down cumulatively, so a peer trickling in a
+/// few bytes at a time — each arriving just under the timeout — could keep a
+/// naive implementation blocked far longer than this constant would suggest.
+/// Recomputing the remaining budget before each `read()` closes that gap:
+/// the total time spent in the read loop is capped at `IPC_READ_TIMEOUT`
+/// regardless of how the peer paces its sends.
 const IPC_READ_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// How many rejected or timed-out connections `IpcServer::try_recv` will
+/// skip past, within a single call, while looking for one real message.
+/// This exists in tension with `IPC_READ_TIMEOUT`: `try_recv` needs to look
+/// past a bad connection rather than stopping at it (see the comment in
+/// `try_recv` itself for why), but each connection it looks past can cost up
+/// to `IPC_READ_TIMEOUT`. Without a cap here, a same-uid peer that floods the
+/// accept backlog with connections that immediately stall (still possible
+/// even after the SO_PEERCRED check — that check narrows the attacker to
+/// "already running code as the same OS user," it doesn't rate-limit them)
+/// could make a *single* `try_recv()` call block for
+/// `IPC_READ_TIMEOUT * backlog_size`, which is far worse than the bound this
+/// whole module exists to establish. Eight is generous headroom for the
+/// realistic non-adversarial case (a stray probe or a slow legitimate sender
+/// mixed in with real messages) while keeping the worst case for one call at
+/// a known, small multiple of `IPC_READ_TIMEOUT` (currently 4 seconds) rather
+/// than unbounded.
+const MAX_BAD_CONNECTIONS_PER_CALL: u32 = 8;
 
 #[derive(Debug)]
 pub enum IpcMessage {
@@ -97,6 +130,25 @@ impl IpcServer {
         // permissive than intended. If we can't confirm the mode, we fail
         // closed (no IPC this session) rather than run with an unknown-privacy
         // socket.
+        //
+        // This has to be a path-based `chmod(2)` (`std::fs::set_permissions`)
+        // rather than `fchmod` on the listener's own fd, even though `fchmod`
+        // looks like the more obvious, TOCTOU-proof choice at first: on
+        // Linux, `fchmod` on a bound AF_UNIX socket's fd does not change the
+        // permission bits visible at its path, and does not error either —
+        // it silently no-ops (verified empirically; this is a genuine, easy
+        // trap, not a hypothetical one). Only `chmod(path)` actually reaches
+        // the directory entry the kernel checks on `connect()`, so
+        // path-based `set_permissions` is the only thing that works here,
+        // despite re-resolving `path` and thus (in principle) being
+        // susceptible to a TOCTOU race if something else could unlink and
+        // replace whatever's at `path` between `bind()` and this call. In
+        // practice that window isn't exploitable for the two directories
+        // `socket_path` actually uses: `$XDG_RUNTIME_DIR` is mode 0700 and
+        // owned by us, and the `/tmp` fallback has the sticky bit set, so in
+        // both cases no other user can unlink our file out from under us to
+        // begin with — the SO_PEERCRED check in `read_authenticated_message`
+        // remains the real boundary regardless.
         use std::os::unix::fs::PermissionsExt;
         if std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).is_err() {
             let _ = std::fs::remove_file(&path);
@@ -116,9 +168,31 @@ impl IpcServer {
     }
 
     pub fn try_recv(&self) -> Option<IpcMessage> {
-        let (stream, _) = self.listener.accept().ok()?;
-        let buf = read_authenticated_message(stream)?;
-        parse_message(&buf)
+        // A rejected (wrong uid) or timed-out connection must NOT make this
+        // function return `None` the same way "the accept backlog is empty"
+        // does: callers (see app.rs's post-command drain, which loops via
+        // `std::iter::from_fn(|| ipc.try_recv())` until it sees a `None`)
+        // treat `None` as "nothing left to process." If one bad connection
+        // could produce that same `None`, it would prematurely end the drain
+        // and strand any legitimate messages still queued behind it in the
+        // backlog. So we skip past bad connections internally and keep
+        // trying, and only bottom out via `accept().ok()?` once the backlog
+        // is genuinely empty.
+        //
+        // That skipping is itself bounded (`MAX_BAD_CONNECTIONS_PER_CALL`)
+        // rather than unconditional, so a same-uid peer that floods the
+        // backlog with stalling connections can't turn a single `try_recv()`
+        // call into an unbounded block by chaining `IPC_READ_TIMEOUT`s
+        // end-to-end — see that constant's doc comment for why "same-uid
+        // peer floods connections" is a real, if narrower, residual risk
+        // this bound is meant to contain rather than fully eliminate.
+        for _ in 0..MAX_BAD_CONNECTIONS_PER_CALL {
+            let (stream, _) = self.listener.accept().ok()?;
+            if let Some(buf) = read_authenticated_message(stream) {
+                return parse_message(&buf);
+            }
+        }
+        None
     }
 }
 
@@ -169,12 +243,13 @@ fn socket_path(pid: u32) -> PathBuf {
 ///    running as root under `sudo` and an unrelated, unprivileged local
 ///    process tries to connect and drive it.
 ///
-/// 2. **Read timeout.** See `IPC_READ_TIMEOUT`'s doc comment: bounds how long
-///    a stalled or silent peer can block the calling thread.
+/// 2. **Wall-clock read deadline.** See `IPC_READ_TIMEOUT`'s doc comment:
+///    bounds the *total* time a stalled, silent, or slow-trickling peer can
+///    block the calling thread — not just the time between individual reads.
 ///
 /// 3. **Size cap.** See `MAX_MESSAGE_BYTES`'s doc comment: bounds how much
 ///    memory a single message can consume.
-pub(crate) fn read_authenticated_message(stream: UnixStream) -> Option<String> {
+pub(crate) fn read_authenticated_message(mut stream: UnixStream) -> Option<String> {
     // SAFETY: getuid(2) has no failure mode — it always succeeds and simply
     // returns the calling process's real user ID. This asks "who are we?" so
     // we can compare it below against "who is the peer?"
@@ -186,19 +261,55 @@ pub(crate) fn read_authenticated_message(stream: UnixStream) -> Option<String> {
 
     // The listener is non-blocking so `accept()` never stalls the event loop,
     // but accepted connections don't reliably inherit that flag, so we set it
-    // explicitly here before arming the read timeout below (a timeout on a
-    // socket already in non-blocking mode wouldn't do anything useful, since
-    // reads would already return immediately with WouldBlock).
+    // explicitly here before we start reading below.
     stream.set_nonblocking(false).ok()?;
-    stream.set_read_timeout(Some(IPC_READ_TIMEOUT)).ok()?;
 
-    // `Read::take` caps how many bytes `read_to_string` is willing to pull
-    // off the stream; it stops yielding bytes at the limit rather than
-    // erroring, so an oversized payload is silently truncated instead of
-    // exhausting memory.
-    let mut buf = String::new();
-    stream.take(MAX_MESSAGE_BYTES).read_to_string(&mut buf).ok()?;
-    Some(buf)
+    // Read in a loop, bounded by both a total-size cap and a wall-clock
+    // deadline, rather than a single `read_to_string` call. This is *not*
+    // just `stream.set_read_timeout(...)` followed by `read_to_string`: that
+    // would set `SO_RCVTIMEO`, which the kernel resets on every individual
+    // `read()` syscall rather than treating as a cumulative budget. A peer
+    // that trickles in a few bytes at a time, each arriving just under the
+    // timeout, would keep that naive version blocked far longer than
+    // `IPC_READ_TIMEOUT` — silently reintroducing the same "freezes the UI"
+    // failure mode this whole function exists to prevent, just stretched out
+    // instead of eliminated. Recomputing the remaining time budget before
+    // every `read()` call here closes that gap: no matter how the peer paces
+    // its sends, the total time spent in this loop cannot exceed
+    // `IPC_READ_TIMEOUT`.
+    let deadline = std::time::Instant::now() + IPC_READ_TIMEOUT;
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        stream.set_read_timeout(Some(remaining)).ok()?;
+
+        match stream.read(&mut chunk) {
+            Ok(0) => break, // peer closed its end: message complete
+            Ok(n) => {
+                bytes.extend_from_slice(&chunk[..n]);
+                if bytes.len() as u64 >= MAX_MESSAGE_BYTES {
+                    break;
+                }
+            }
+            // WouldBlock/TimedOut here means our own deadline elapsed
+            // mid-read; treat that the same as "ran out of time" rather than
+            // as a hard failure, so a peer that sent a complete, small
+            // message right up against the deadline still gets processed
+            // with whatever arrived instead of being discarded outright.
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => break,
+            Err(_) => return None,
+        }
+    }
+
+    // `MAX_MESSAGE_BYTES` is meant as a hard ceiling, but the loop above can
+    // overshoot it by up to one 4 KiB chunk before noticing; trim back to
+    // the exact cap so callers never see more than they were promised.
+    bytes.truncate(MAX_MESSAGE_BYTES as usize);
+    String::from_utf8(bytes).ok()
 }
 
 /// Asks the kernel for the real user ID of whoever is on the other end of
