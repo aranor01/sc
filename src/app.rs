@@ -744,6 +744,14 @@ impl App {
                 }
             }
             Action::UserMenu => {
+                // Reload menu entries from config.json so edits (new/fixed commands)
+                // show up without restarting sc. Always re-read rather than checking
+                // mtime first: the file is tiny and F2 is a rare, human-paced event,
+                // so a stat-based skip would add complexity for no real savings.
+                match Config::load() {
+                    Ok(fresh) => self.config.menu = fresh.menu,
+                    Err(e) => self.set_status(&format!("Config reload failed: {e:#}"), true),
+                }
                 if self.config.menu.is_empty() {
                     self.set_status("No user menu entries configured.", true);
                     return;
