@@ -31,8 +31,8 @@ pub struct Cli {
     no_subshell: bool,
 
     /// Disable mouse support
-    #[arg(short = 'd', long = "nomouse")]
-    nomouse: bool,
+    #[arg(short = 'd', long = "no-mouse")]
+    no_mouse: bool,
 }
 
 impl Cli {
@@ -59,7 +59,7 @@ impl Cli {
     }
 
     pub fn mouse(&self) -> bool {
-        !self.nomouse
+        !self.no_mouse
     }
 }
 
@@ -128,9 +128,9 @@ mod tests {
     }
 
     #[test]
-    fn nomouse_short_and_long_flag() {
+    fn no_mouse_short_and_long_flag() {
         assert!(!Cli::parse_from(["sc", "-d"]).mouse());
-        assert!(!Cli::parse_from(["sc", "--nomouse"]).mouse());
+        assert!(!Cli::parse_from(["sc", "--no-mouse"]).mouse());
         assert!(Cli::parse_from(["sc"]).mouse());
     }
 
