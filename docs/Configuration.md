@@ -109,7 +109,7 @@ Notes:
 ```
 
 - `restore_paths` — if `true`, panels restore the last-visited paths from
-  `~/.local/share/sc/state.json` on launch instead of starting at the current working
+  `~/.local/state/sc/state.json` on launch instead of starting at the current working
   directory. Defaults to `false`.
 - `subshell` — if `true`, `Ctrl-o` toggles a full interactive subshell instead of a stateless
   output overlay. Defaults to `true`.
@@ -199,14 +199,14 @@ The values above are the built-in defaults; only include the keys you want to ch
 ## Related files
 
 Besides `config.json`, sc keeps a few other files under `~/.config/sc/` and
-`~/.local/share/sc/`:
+`~/.local/state/sc/`:
 
 | File | Contents |
 |---|---|
 | `~/.config/sc/config.json` | This file. |
 | `~/.config/sc/bookmarks.json` | Bookmarked directories (`Ctrl-b` to add, `Ctrl-\` to browse). |
-| `~/.local/share/sc/state.json` | Panel layout, visibility toggles, and last-visited paths. |
-| `~/.local/share/sc/command_history` | Command line history. |
-| `~/.local/share/sc/panel_history.json` | Per-panel directory navigation history. |
+| `~/.local/state/sc/state.json` | Panel layout, visibility toggles, and last-visited paths. |
+| `~/.local/state/sc/command_history` | Command line history. |
+| `~/.local/state/sc/panel_history.json` | Per-panel directory navigation history. |
 
 None of these need to be created or edited by hand under normal use.

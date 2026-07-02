@@ -17,7 +17,7 @@ sc [OPTIONS] [DIR1] [DIR2]
 
 | Option | Description |
 |---|---|
-| `--restore-paths` | Override `startup.restore_paths` in config: restore panel paths from `~/.local/share/sc/state.json`. Conflicts with `--no-restore-paths`. |
+| `--restore-paths` | Override `startup.restore_paths` in config: restore panel paths from `~/.local/state/sc/state.json`. Conflicts with `--no-restore-paths`. |
 | `--no-restore-paths` | Override `startup.restore_paths` in config: start panels at the current working directory. Conflicts with `--restore-paths`. |
 | `--subshell` | Override `startup.subshell` in config: start in subshell mode. Conflicts with `--no-subshell`. |
 | `--no-subshell` | Override `startup.subshell` in config: start in stateless mode. Conflicts with `--subshell`. |

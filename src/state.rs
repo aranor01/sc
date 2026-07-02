@@ -54,14 +54,14 @@ impl Default for AppState {
 }
 
 fn state_path() -> PathBuf {
-    dirs::data_local_dir()
+    dirs::state_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("sc")
         .join("state.json")
 }
 
 pub fn history_path() -> PathBuf {
-    dirs::data_local_dir()
+    dirs::state_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("sc")
         .join("command_history")
