@@ -448,20 +448,22 @@ fn passthrough_loop(master: RawFd, ipc_fd: Option<RawFd>) -> Result<Vec<String>>
 }
 
 /// Non-blocking accept on the IPC listener fd. Returns the raw message payload if a
-/// connection was accepted, or `None` if there was nothing to accept.
+/// connection was accepted and passed authentication, or `None` if there was nothing
+/// to accept, the peer wasn't us, or the read failed/timed out.
+///
+/// All the actual hardening (peer-credential check, read timeout, size cap) lives in
+/// `crate::ipc::read_authenticated_message`, shared with the main TUI loop's IPC path
+/// so it's implemented — and reasoned about — in exactly one place. See that
+/// function's doc comment for the full explanation of what it protects against.
 pub fn ipc_accept_message(listener_fd: RawFd) -> Option<String> {
     use std::os::unix::net::UnixListener;
     use std::os::unix::io::FromRawFd;
-    use std::io::Read;
 
     // Safety: we borrow the fd temporarily; ManuallyDrop prevents double-close.
     let listener = std::mem::ManuallyDrop::new(unsafe { UnixListener::from_raw_fd(listener_fd) });
     let _ = listener.set_nonblocking(true);
-    let (mut stream, _) = listener.accept().ok()?;
-    let _ = stream.set_nonblocking(false);
-    let mut buf = String::new();
-    let _ = stream.read_to_string(&mut buf);
-    Some(buf)
+    let (stream, _) = listener.accept().ok()?;
+    crate::ipc::read_authenticated_message(stream)
 }
 
 /// Non-blocking accept on the IPC listener fd. Returns true if the message is "ShowPanels".

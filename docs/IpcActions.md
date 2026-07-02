@@ -4,6 +4,21 @@ While sc is running, it listens for actions on a local Unix domain socket and ex
 socket's path as `$SC_TOKEN` in its own environment, so any command launched from the
 command line or the user menu inherits it automatically.
 
+## Security
+
+Only processes running as the same Unix user as `sc` can talk to the socket — this is
+checked with `SO_PEERCRED` on every connection, not just inferred from file permissions,
+so it still holds if the socket ends up somewhere more exposed than usual (e.g. under
+`sudo sc`, where `$XDG_RUNTIME_DIR` is typically unset and the socket falls back to a
+shared temp directory). The socket file is also always created mode `0600`, regardless of
+the umask in effect when `sc` started. A connection that doesn't finish sending a message
+within 500ms, or that sends more than 1 MiB, is dropped.
+
+There's no scoping *within* a valid connection: `$SC_TOKEN` is all-or-nothing access to
+every action in the table below, and every child process launched from the command line or
+user menu gets it automatically. Treat it like any other credential your child processes —
+and whatever they in turn run — can see.
+
 ## `sc-action`
 
 A companion binary, installed alongside `sc`, sends one action per invocation:
