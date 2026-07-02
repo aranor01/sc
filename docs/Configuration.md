@@ -115,7 +115,7 @@ Notes:
   output overlay. Defaults to `true`.
 
 Both can be overridden per-launch on the command line; see
-[`CommandLineArgs.md`](../CommandLineArgs.md).
+[`CommandLineArgs.md`](CommandLineArgs.md).
 
 ## User menu
 
@@ -134,7 +134,7 @@ Both can be overridden per-launch on the command line; see
 
 - `label` — text shown in the user menu.
 - `command` — shell command to run; may use the macros described in
-  [`MacroSubstitution.md`](../MacroSubstitution.md) (`%f`, `%F`, `%d`, `%D`, `%t`, `%T`,
+  [`MacroSubstitution.md`](MacroSubstitution.md) (`%f`, `%F`, `%d`, `%D`, `%t`, `%T`,
   `%u`, `%U`, `%s`, `%S`, `%b`, `%%`) to reference the selected/tagged files and panel
   directories.
 - `keys` (optional) — a key spec (same syntax as keybindings) that runs the command

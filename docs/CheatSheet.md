@@ -3,6 +3,14 @@
 Config keys refer to the field names in the `keybindings` section of `~/.config/sc/config.json`.
 Defaults use the notation accepted by the config parser (e.g. `A-Up`, `C-s`, `C-x t`).
 
+## Modifier Keys
+
+- `A-` = Alt
+- `C-` = Ctrl
+- `S-` = Shift
+
+Modifiers are combinable and order-independent, e.g. `C-A-b` for Ctrl-Alt-b.
+
 ---
 
 ## Directory Navigation
@@ -13,7 +21,7 @@ Defaults use the notation accepted by the config parser (e.g. `A-Up`, `C-s`, `C-
 | Go Back | Go back to the previous directory in the active panel's history | `go_back`: `A-Left` |
 | Go Forward | Go forward in the active panel's history | `go_forward`: `A-Right` |
 | Quick Search | Jump to the first entry whose name starts with the typed string (case-insensitive prefix) | `quicksearch`: `/`, `A-s` |
-| Filter | Hide entries not matching a pattern (glob or `/`-prefixed regex); empty pattern removes filter | `filter`: `C-f` |
+| Filter | Open a dialog to hide entries not matching a pattern (shell glob by default; dialog offers RegExp, Files only, and Case sensitive options); empty pattern removes the filter | `filter`: `C-f` |
 | Toggle Hidden Files | Toggle visibility of dotfiles in the active panel | `toggle_hidden`: `A-.` |
 | Directory History | Open path history popup for the active panel (most recent first) | `path_history`: `A-H`, `A-Down` |
 
@@ -52,9 +60,9 @@ Defaults use the notation accepted by the config parser (e.g. `A-Up`, `C-s`, `C-
 | Action | Description | Config key: default |
 |---|---|---|
 | Tag File | Tag or untag the currently selected file and move to the next entry | `tag_file`: `Ins` |
-| Invert Tags | Tag all untagged and untag all tagged entries in the current panel | `invert_tags`: `*` |
-| Select Group | Tag all visible entries matching a pattern (glob or `/`-prefixed regex) | `select_group`: `+` |
-| Unselect Group | Untag all visible entries matching a pattern (glob or `/`-prefixed regex) | `unselect_group`: `-` |
+| Invert Tags | Tag all untagged and untag all tagged entries in the current panel; if the command line has text, appends `*` to it instead | `invert_tags`: `*` |
+| Select Group | Open a dialog to tag all visible entries matching a pattern (shell glob by default; dialog offers RegExp, Files only, and Case sensitive options) | `select_group`: `+` |
+| Unselect Group | Open a dialog to untag all visible entries matching a pattern (same options as Select Group) | `unselect_group`: `-` |
 
 ## File Operations
 
@@ -79,13 +87,13 @@ Defaults use the notation accepted by the config parser (e.g. `A-Up`, `C-s`, `C-
 | Insert Path (Inactive) | Copy the inactive panel's directory path to the command line | `cmdline_insert_path_other`: `C-x C-p` |
 | History Previous | Go to the previous command in the history | `cmdline_history_prev`: `C-Up` |
 | History Next | Go to the next command in the history | `cmdline_history_next`: `C-Down` |
-| Reverse Search | Filter command history by current command line text; Enter/Tab accepts, Esc cancels | `reverse_search`: `C-r`, `A-h` |
+| Reverse Search | Filter command history by the current command line text, showing matches above the command line (most recent highlighted, Backspace re-filters); Enter/Tab accepts the highlighted entry, Esc cancels | `reverse_search`: `C-r`, `A-h` |
 
 ## Shell
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Toggle Shell | Toggle output overlay (stateless mode) or full interactive subshell (subshell mode) | `toggle_shell`: `C-o` |
+| Toggle Shell | Toggle output overlay (stateless mode) or full interactive subshell (subshell mode); C-o and A-o also exit subshell passthrough back to the sc UI | `toggle_shell`: `C-o` |
 | Toggle Shell & Sync | Like Toggle Shell; also copies the SC command line into the subshell's readline buffer | `toggle_shell_and_sync_command_line`: `A-o` |
 
 ## Layout
