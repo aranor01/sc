@@ -1422,12 +1422,16 @@ impl App {
         }
 
         // In subshell mode, add the command to bash's in-memory history so the
-        // user can recall it with Up arrow during Ctrl+O sessions.  The echo of
-        // `history -s` accumulates unread in the PTY master buffer; it is drained
-        // before the next passthrough starts.
+        // user can recall it with Up arrow during Ctrl+O sessions (skipped for
+        // menu commands, same as sc's own history above). Either way, mark that
+        // a fresh prompt is needed: the cwd-sync block above may have written to
+        // the subshell too, and its echo/prompt accumulates unread in the PTY
+        // master buffer until the next passthrough starts and drains it.
         if let ShellMode::Subshell(ref sub) = self.shell_mode {
-            let escaped = shell_escape_path(&cmd);
-            let _ = sub.send_line(&format!("history -s {escaped}"));
+            if push_to_history {
+                let escaped = shell_escape_path(&cmd);
+                let _ = sub.send_line(&format!("history -s {escaped}"));
+            }
             self.subshell_prompt_needed = true;
         }
 
