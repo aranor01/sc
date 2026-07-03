@@ -2,7 +2,7 @@
 name = "sc"
 version = "0.1.0"
 edition = "2021"
-description = "A visual shell for Linux terminals, in the spirit of Midnight Commander"
+description = "Sunset Commander — A visual shell for Linux terminals"
 authors = ["aranor01"]
 license = "MIT"
 repository = "https://github.com/aranor01/sc"
