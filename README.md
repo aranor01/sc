@@ -22,6 +22,12 @@ A two-panel visual shell for Linux terminals, in the spirit of Midnight Commande
 - Fully configurable key bindings, color scheme, and startup behavior via a [`JSON config file`](docs/Configuration.md).
 - Find other convenient features not mentioned here in the [`cheat sheet`](docs/CheatSheet.md).
 
+## Screenshots
+
+| User menu | Command-line autocompletion |
+|---|---|
+| ![User menu](screenshots/user_menu.png) | ![Autocompletion](screenshots/autocompletion.png) |
+
 ## Installation
 
 Requires a recent Rust toolchain ([rustup.rs](https://rustup.rs)).
