@@ -2092,6 +2092,11 @@ impl App {
             return;
         };
 
+        // Clicking anywhere in the panel (including its border) switches focus to it.
+        if clicked_side != self.active {
+            self.active = clicked_side;
+        }
+
         let inner_y = clicked_area.y + 1;  // first row inside border = header row
         let entries_y = inner_y + 1;       // entries start below header
         if row < inner_y || row >= clicked_area.y + clicked_area.height - 1 {
@@ -2099,9 +2104,6 @@ impl App {
         }
         // Header row click: sort by column
         if row == inner_y {
-            if clicked_side != self.active {
-                self.active = clicked_side;
-            }
             let inner_x = clicked_area.x + 1;
             let inner_width = clicked_area.width.saturating_sub(2) as usize;
             let fixed = 22usize; // same formula as panel.rs
@@ -2156,9 +2158,6 @@ impl App {
 
         match btn {
             MouseButton::Left => {
-                if clicked_side != self.active {
-                    self.active = clicked_side;
-                }
                 let nav_err = {
                     let panel = match clicked_side {
                         Side::Left => &mut self.left,
@@ -2176,9 +2175,6 @@ impl App {
                 }
             }
             MouseButton::Right => {
-                if clicked_side != self.active {
-                    self.active = clicked_side;
-                }
                 let panel = match clicked_side {
                     Side::Left => &mut self.left,
                     Side::Right => &mut self.right,
