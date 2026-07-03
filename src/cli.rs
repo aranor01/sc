@@ -4,7 +4,7 @@ use clap::Parser;
 
 /// sc — a visual shell for Linux terminals, in the spirit of Midnight Commander.
 #[derive(Parser, Debug)]
-#[command(name = "sc", version, about, long_about = None)]
+#[command(name = "sc", version = env!("SC_VERSION"), about, long_about = None)]
 pub struct Cli {
     /// Starting path for both panels
     #[arg(value_name = "DIR1")]

@@ -37,4 +37,33 @@ fn main() {
     println!("cargo:rerun-if-changed=scripts/");
     println!("cargo:rerun-if-env-changed=SC_INSTALL_PREFIX");
     println!("cargo:rustc-env=SC_INSTALL_PREFIX={install_prefix}");
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap();
+    let version = match git_describe(&manifest_dir) {
+        Some(git) => format!("{pkg_version} ({git})"),
+        None => pkg_version,
+    };
+    println!("cargo:rustc-env=SC_VERSION={version}");
+    // Not exhaustive (e.g. a new tag on the current commit won't retrigger
+    // this), but covers the common cases: new commits, branch switches, and
+    // dirty-worktree changes.
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/index");
+}
+
+// Falls back to `None` (dropping the git suffix from the version string)
+// when `git` isn't on PATH or the source isn't a git checkout at all, e.g.
+// a source tarball extracted for packaging.
+fn git_describe(manifest_dir: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["describe", "--tags", "--always", "--dirty"])
+        .current_dir(manifest_dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let describe = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    if describe.is_empty() { None } else { Some(describe) }
 }
