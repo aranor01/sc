@@ -11,6 +11,7 @@ mod history;
 mod macros;
 mod provider;
 mod state;
+mod tilde;
 mod ui;
 
 use app::{resolve_startup_paths, App};
