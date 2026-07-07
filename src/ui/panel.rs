@@ -374,9 +374,14 @@ fn format_size(bytes: u64, kind: &NodeKind) -> String {
     }
 }
 
-fn format_date(t: SystemTime) -> String {
+fn format_date(t: SystemTime, fmt: &str, fallback_len: usize) -> String {
     let dt: DateTime<Local> = t.into();
-    dt.format("%Y-%m-%d").to_string()
+    use std::fmt::Write as _;
+    let mut buf = String::new();
+    if write!(buf, "{}", dt.format(fmt)).is_err() {
+        return "!".repeat(fallback_len);
+    }
+    buf
 }
 
 fn truncate_str(s: &str, max: usize) -> String {
@@ -409,6 +414,8 @@ pub struct PanelWidget<'a> {
     pub cs: &'a ColorScheme,
     pub active: bool,
     pub title: String,
+    pub time_format: &'a str,
+    pub time_length: usize,
 }
 
 impl<'a> StatefulWidget for PanelWidget<'a> {
@@ -465,8 +472,9 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
         }
 
         let available_width = inner.width as usize;
-        // columns: tag(1) + space(1) + name + space(1) + size(8) + space(1) + date(10)
-        let fixed = 1 + 1 + 1 + 8 + 1 + 10;
+        let time_length = self.time_length;
+        // columns: tag(1) + space(1) + name + space(1) + size(8) + space(1) + date(time_length)
+        let fixed = 1 + 1 + 1 + 8 + 1 + time_length;
         let name_width = if available_width > fixed + 4 {
             available_width - fixed
         } else {
@@ -493,8 +501,8 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
             let name_hdr = truncate_str(&name_label, name_width);
             let size_label = format!("  Size{} ", icon(size_active));  // 8 chars
             let size_hdr = format!("{:<8}", size_label);
-            let date_label = format!(" Mtime{}   ", icon(date_active));  // 10 chars
-            let date_hdr = format!("{:<10}", date_label);
+            let date_label = format!(" Mtime{}", icon(date_active));
+            let date_hdr = truncate_str(&date_label, time_length);
             let hdr_text = format!("  {} {} {}", name_hdr, size_hdr, date_hdr);
             // Pad / truncate to inner width
             let padded = format!("{:<width$}", hdr_text, width = available_width);
@@ -525,9 +533,9 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
                     format_size(entry.size, &entry.kind)
                 };
                 let date_part = if entry.name == ".." {
-                    "          ".to_string()
+                    " ".repeat(time_length)
                 } else {
-                    format_date(entry.modified)
+                    truncate_str(&format_date(entry.modified, self.time_format, time_length), time_length)
                 };
 
                 let base_style = if is_cursor && self.active {
@@ -600,6 +608,18 @@ mod tests {
     #[test]
     fn truncate_path_front_keeps_tail_when_too_narrow_for_ellipsis() {
         assert_eq!(truncate_path_front("/home/alice/projects", 2), "ts");
+    }
+
+    #[test]
+    fn format_date_invalid_format_string_falls_back_to_exclamation_fill() {
+        let out = format_date(SystemTime::now(), "%Q", 14);
+        assert_eq!(out, "!".repeat(14));
+    }
+
+    #[test]
+    fn format_date_valid_format_string_still_works() {
+        let out = format_date(SystemTime::UNIX_EPOCH, "%Y", 20);
+        assert!(!out.contains('!'));
     }
 
     use crate::provider::filesystem::FilesystemProvider;

@@ -377,6 +377,23 @@ impl Default for ColorScheme {
     }
 }
 
+// ── PanelsConfig ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelsConfig {
+    pub time_format: String,
+    pub time_length: usize,
+}
+
+impl Default for PanelsConfig {
+    fn default() -> Self {
+        PanelsConfig {
+            time_format: "%y-%m-%d %H:%M".to_string(),
+            time_length: 14,
+        }
+    }
+}
+
 // ── StartupConfig ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -400,6 +417,7 @@ pub struct Config {
     pub menu: Vec<MenuItem>,
     pub colorscheme: ColorScheme,
     pub startup: StartupConfig,
+    pub panels: PanelsConfig,
 }
 
 /// Locate the scripts directory at runtime using a two-step search:
@@ -571,6 +589,16 @@ impl Config {
             };
         }
 
+        // panels
+        if let Some(panels) = v.get("panels") {
+            if let Some(v) = panels.get("time_format").and_then(|v| v.as_str()) {
+                cfg.panels.time_format = v.to_string();
+            }
+            if let Some(v) = panels.get("time_lenght").and_then(|v| v.as_u64()) {
+                cfg.panels.time_length = v as usize;
+            }
+        }
+
         // startup
         if let Some(startup) = v.get("startup") {
             if let Some(v) = startup.get("restore_paths").and_then(|v| v.as_bool()) {
@@ -619,6 +647,21 @@ mod tests {
         // other fields still have defaults
         assert_eq!(cfg.colorscheme.panel_bg, rgb(0x1a1a2e));
         assert!(cfg.keybindings.exit.contains(&single(F(10), M::NONE)));
+    }
+
+    #[test]
+    fn panels_defaults_and_override() {
+        let cfg = Config::load_from_str("{}").unwrap();
+        assert_eq!(cfg.panels, PanelsConfig::default());
+        assert_eq!(cfg.panels.time_format, "%y-%m-%d %H:%M");
+        assert_eq!(cfg.panels.time_length, 14);
+
+        let cfg = Config::load_from_str(
+            r#"{"panels":{"time_format":"%Y-%m-%d","time_lenght":10}}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.panels.time_format, "%Y-%m-%d");
+        assert_eq!(cfg.panels.time_length, 10);
     }
 
     #[test]

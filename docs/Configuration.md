@@ -8,14 +8,15 @@ If the file doesn't exist yet and sc can locate its bundled helper scripts (see
 [Bundled scripts](#bundled-scripts) below), it generates a starter `config.json` with a
 `View`/`Edit`/`Edit config` menu wired up to those scripts.
 
-The file has four top-level sections, all optional:
+The file has five top-level sections, all optional:
 
 ```jsonc
 {
   "keybindings": { /* ... */ },
   "startup":     { /* ... */ },
   "menu":        [ /* ... */ ],
-  "colorscheme": { /* ... */ }
+  "colorscheme": { /* ... */ },
+  "panels":      { /* ... */ }
 }
 ```
 
@@ -198,6 +199,23 @@ All colors are `#rrggbb` hex strings:
 ```
 
 The values above are the built-in defaults; only include the keys you want to change.
+
+## Panels
+
+```jsonc
+{
+  "panels": {
+    "time_format": "%y-%m-%d %H:%M",
+    "time_lenght": 14
+  }
+}
+```
+
+- `time_format` — [`chrono`](https://docs.rs/chrono) `strftime` format string used for the
+  Mtime column in the panel listing. Defaults to `%y-%m-%d %H:%M`.
+- `time_lenght` — width in characters of the Mtime column (header and cells). Formatted
+  dates are truncated or padded to this width, so it should match the length produced by
+  `time_format`. Defaults to `14`.
 
 ## Related files
 

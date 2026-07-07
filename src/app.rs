@@ -2106,7 +2106,8 @@ impl App {
         if row == inner_y {
             let inner_x = clicked_area.x + 1;
             let inner_width = clicked_area.width.saturating_sub(2) as usize;
-            let fixed = 22usize; // same formula as panel.rs
+            let time_length = self.config.panels.time_length;
+            let fixed = 1 + 1 + 1 + 8 + 1 + time_length; // same formula as panel.rs
             let name_width = if inner_width > fixed + 4 { inner_width - fixed } else { 4 };
             let rel_x = col.saturating_sub(inner_x) as usize;
             let panel = match clicked_side {
@@ -2131,7 +2132,7 @@ impl App {
                     panel.sort_asc = true;
                 }
                 panel.refresh();
-            } else if rel_x >= 2 + name_width + 10 && rel_x < 2 + name_width + 20 {
+            } else if rel_x >= 2 + name_width + 10 && rel_x < 2 + name_width + 10 + time_length {
                 // Mtime column
                 if panel.sort_key == SortKey::Modified {
                     panel.sort_asc = !panel.sort_asc;
@@ -2545,14 +2546,26 @@ impl App {
         let left_active = self.active == Side::Left;
         let left_title = display_path(&self.left.path.0);
         frame.render_stateful_widget(
-            PanelWidget { cs: &cs, active: left_active, title: left_title },
+            PanelWidget {
+                cs: &cs,
+                active: left_active,
+                title: left_title,
+                time_format: &self.config.panels.time_format,
+                time_length: self.config.panels.time_length,
+            },
             layout.left,
             &mut self.left,
         );
         let right_active = self.active == Side::Right;
         let right_title = display_path(&self.right.path.0);
         frame.render_stateful_widget(
-            PanelWidget { cs: &cs, active: right_active, title: right_title },
+            PanelWidget {
+                cs: &cs,
+                active: right_active,
+                title: right_title,
+                time_format: &self.config.panels.time_format,
+                time_length: self.config.panels.time_length,
+            },
             layout.right,
             &mut self.right,
         );
