@@ -24,7 +24,7 @@ impl Subshell {
                 &mut slave_fd,
                 name.as_mut_ptr() as *mut libc::c_char,
                 std::ptr::null_mut(),
-                if ws.ws_col > 0 { &ws } else { std::ptr::null() },
+                if ws.ws_col > 0 { &mut ws } else { std::ptr::null_mut() },
             );
             if ret != 0 {
                 bail!("openpty failed: {}", io::Error::last_os_error());
@@ -41,7 +41,10 @@ impl Subshell {
                 // Child: set up the PTY as controlling terminal
                 libc::close(master_fd);
                 libc::setsid();
+                #[cfg(target_os = "linux")]
                 libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::Ioctl, 0);
+                #[cfg(target_os = "macos")]
+                libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::c_ulong, 0);
                 libc::dup2(slave_fd, libc::STDIN_FILENO);
                 libc::dup2(slave_fd, libc::STDOUT_FILENO);
                 libc::dup2(slave_fd, libc::STDERR_FILENO);
@@ -181,7 +184,7 @@ pub fn run_with_pty_capture(cmd: &str, cwd: &str) -> Vec<u8> {
             &mut slave_fd,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
-            if ws.ws_col > 0 { &ws } else { std::ptr::null() },
+            if ws.ws_col > 0 { &mut ws } else { std::ptr::null_mut() },
         );
         if ret != 0 {
             return Vec::new();
@@ -198,7 +201,10 @@ pub fn run_with_pty_capture(cmd: &str, cwd: &str) -> Vec<u8> {
             // Child: set the PTY slave as controlling terminal, then exec.
             libc::close(master_fd);
             libc::setsid();
+            #[cfg(target_os = "linux")]
             libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::Ioctl, 0);
+            #[cfg(target_os = "macos")]
+            libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::c_ulong, 0);
             libc::dup2(slave_fd, libc::STDIN_FILENO);
             libc::dup2(slave_fd, libc::STDOUT_FILENO);
             libc::dup2(slave_fd, libc::STDERR_FILENO);

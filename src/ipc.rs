@@ -327,6 +327,7 @@ pub(crate) fn read_authenticated_message(mut stream: UnixStream) -> Option<Strin
 /// Returns `None` if the kernel call itself fails, which in practice should
 /// only happen if `stream` somehow isn't a genuine, still-open Unix domain
 /// socket — a case we'd want to treat as "untrusted" anyway.
+#[cfg(target_os = "linux")]
 fn peer_uid(stream: &UnixStream) -> Option<libc::uid_t> {
     use std::os::unix::io::AsRawFd;
 
@@ -349,6 +350,31 @@ fn peer_uid(stream: &UnixStream) -> Option<libc::uid_t> {
     };
 
     if ret == 0 { Some(cred.uid) } else { None }
+}
+
+/// macOS equivalent of the Linux `peer_uid` above: there's no `SO_PEERCRED`,
+/// the analogous call is `getsockopt(LOCAL_PEERCRED)` at the `SOL_LOCAL`
+/// level, filling in an `xucred` rather than a `ucred`.
+#[cfg(target_os = "macos")]
+fn peer_uid(stream: &UnixStream) -> Option<libc::uid_t> {
+    use std::os::unix::io::AsRawFd;
+
+    let mut cred: libc::xucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::xucred>() as libc::socklen_t;
+
+    // SAFETY: same reasoning as the Linux version above, using the macOS
+    // LOCAL_PEERCRED/xucred pair instead of SO_PEERCRED/ucred.
+    let ret = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERCRED,
+            &mut cred as *mut libc::xucred as *mut libc::c_void,
+            &mut len,
+        )
+    };
+
+    if ret == 0 { Some(cred.cr_uid) } else { None }
 }
 
 pub(crate) fn parse_message(raw: &str) -> Option<IpcMessage> {
