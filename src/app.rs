@@ -2417,9 +2417,15 @@ impl App {
                 .ok()
                 .map(|p| p.to_string_lossy().to_string());
             if shell_cwd.as_deref() != Some(cwd.as_str()) {
-                // \x15 (Ctrl+U) kills any readline-buffered partial input before we
-                // inject the cd, preventing accidental execution of user-typed text.
-                let cd_cmd = format!("\x15 cd {}", shell_escape_path(&cwd));
+                // \x15 (Ctrl+U) is only needed when cmdline text will follow: it clears
+                // any readline-buffered partial input so it can't combine with the
+                // injected text. The subshell's buffer is otherwise reliably empty here,
+                // and Ctrl+U on an already-empty line makes readline ring the bell.
+                let cd_cmd = if cmdline_text.is_empty() {
+                    format!("cd {}", shell_escape_path(&cwd))
+                } else {
+                    format!("\x15 cd {}", shell_escape_path(&cwd))
+                };
                 let _ = sub.send_line(&cd_cmd);
                 // cd echo + post-cd prompt will be visible at session start
                 if !cmdline_text.is_empty() {
@@ -2427,11 +2433,14 @@ impl App {
                 }
             } else if self.subshell_prompt_needed {
                 // A sc cmdline command ran since last passthrough: drain() discarded
-                // bash's PS1, so we need \n to force a fresh one. \x15 clears any
-                // partial readline input first to prevent accidental execution.
+                // bash's PS1, so we need \n to force a fresh one. \x15 is only needed
+                // when cmdline text will follow (see above); otherwise it just rings
+                // the bell for no reason on an already-empty line.
                 self.subshell_prompt_needed = false;
-                let _ = sub.send_line("\x15");
-                if !cmdline_text.is_empty() {
+                if cmdline_text.is_empty() {
+                    let _ = sub.send_line("");
+                } else {
+                    let _ = sub.send_line("\x15");
                     sub.send_raw(cmdline_text.as_bytes());
                 }
             } else if !cmdline_text.is_empty() {
