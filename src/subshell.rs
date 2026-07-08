@@ -41,7 +41,7 @@ impl Subshell {
                 // Child: set up the PTY as controlling terminal
                 libc::close(master_fd);
                 libc::setsid();
-                libc::ioctl(slave_fd, libc::TIOCSCTTY, 0);
+                libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::Ioctl, 0);
                 libc::dup2(slave_fd, libc::STDIN_FILENO);
                 libc::dup2(slave_fd, libc::STDOUT_FILENO);
                 libc::dup2(slave_fd, libc::STDERR_FILENO);
@@ -198,7 +198,7 @@ pub fn run_with_pty_capture(cmd: &str, cwd: &str) -> Vec<u8> {
             // Child: set the PTY slave as controlling terminal, then exec.
             libc::close(master_fd);
             libc::setsid();
-            libc::ioctl(slave_fd, libc::TIOCSCTTY, 0);
+            libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::Ioctl, 0);
             libc::dup2(slave_fd, libc::STDIN_FILENO);
             libc::dup2(slave_fd, libc::STDOUT_FILENO);
             libc::dup2(slave_fd, libc::STDERR_FILENO);
