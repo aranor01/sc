@@ -12,7 +12,9 @@ pub struct Subshell {
 
 impl Subshell {
     /// Spawn a subshell attached to a new PTY. The subshell is configured with
-    /// a sentinel PS1 so we can detect the prompt in output.
+    /// a sentinel PS1 so its prompt is a single plain line that won't fight
+    /// with sc's own screen (a fancy multi-line/escape-heavy user prompt
+    /// otherwise garbles the alternate-screen/passthrough handoff).
     pub fn spawn() -> Result<Self> {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
@@ -85,14 +87,6 @@ impl Subshell {
         }
     }
 
-    /// Send a shell command (with newline) to the subshell and collect output
-    /// until the next sentinel prompt appears.
-    pub fn run_command(&self, cmd: &str) -> Result<Vec<u8>> {
-        let line = format!("{cmd}\n");
-        write_fd(self.master_fd, line.as_bytes())?;
-        read_until_sentinel(self.master_fd)
-    }
-
     /// Enter a raw passthrough loop: forward stdin↔PTY master until
     /// the user presses Ctrl+O or the shell exits.
     ///
@@ -109,8 +103,8 @@ impl Subshell {
         result
     }
 
-    /// Send a line to the PTY without waiting for the sentinel prompt.
-    /// Use this before entering passthrough for interactive commands.
+    /// Send a line to the PTY. Use this before entering passthrough for
+    /// interactive commands.
     pub fn send_line(&self, line: &str) -> Result<()> {
         write_fd(self.master_fd, format!("{line}\n").as_bytes())
     }
@@ -133,17 +127,6 @@ impl Subshell {
             libc::tcsetattr(fd, libc::TCSANOW, &t);
             libc::close(fd);
         }
-    }
-
-    /// Like start_passthrough, but exits automatically when the sentinel
-    /// prompt is detected (command finished), as well as on Ctrl-O or EOF.
-    /// If `ipc_fd` is provided, also exits when a ShowPanels IPC message arrives.
-    pub fn start_passthrough_until_sentinel(&self, ipc_fd: Option<RawFd>) -> Result<()> {
-        use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-        enable_raw_mode()?;
-        let result = passthrough_loop_until_sentinel(self.master_fd, ipc_fd);
-        disable_raw_mode()?;
-        result
     }
 
     /// Non-blocking drain of any buffered output on the PTY master.
@@ -314,90 +297,6 @@ fn drain_fd(fd: RawFd) -> Vec<u8> {
     out
 }
 
-fn read_until_sentinel(fd: RawFd) -> Result<Vec<u8>> {
-    let mut output = Vec::new();
-    let mut buf = [0u8; 256];
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    loop {
-        // Poll with a small timeout
-        let mut fds = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
-        let timeout_ms = deadline.saturating_duration_since(std::time::Instant::now())
-            .as_millis()
-            .min(200) as libc::c_int;
-        let r = unsafe { libc::poll(&mut fds, 1, timeout_ms) };
-        if r < 0 { bail!("poll error: {}", io::Error::last_os_error()); }
-        if r == 0 {
-            if std::time::Instant::now() >= deadline {
-                break; // timed out
-            }
-            continue;
-        }
-        let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut _, buf.len()) };
-        if n < 0 { bail!("read error: {}", io::Error::last_os_error()); }
-        if n == 0 { break; }
-        output.extend_from_slice(&buf[..n as usize]);
-        // Check if we've seen the sentinel
-        if output.windows(SENTINEL.len()).any(|w| w == SENTINEL.as_bytes()) {
-            // Strip everything from the sentinel line onwards
-            if let Some(pos) = output.windows(SENTINEL.len()).position(|w| w == SENTINEL.as_bytes()) {
-                // Find the start of the sentinel line
-                let line_start = output[..pos].iter().rposition(|&b| b == b'\n').map(|p| p + 1).unwrap_or(0);
-                output.truncate(line_start);
-            }
-            break;
-        }
-    }
-    Ok(output)
-}
-
-/// Passthrough loop that exits automatically when the sentinel prompt appears
-/// (command finished), on Ctrl+O / EOF, or when a ShowPanels IPC message arrives.
-fn passthrough_loop_until_sentinel(master: RawFd, ipc_fd: Option<RawFd>) -> Result<()> {
-    let stdin_fd  = libc::STDIN_FILENO;
-    let stdout_fd = libc::STDOUT_FILENO;
-    let mut buf  = [0u8; 4096];
-    let mut tail: Vec<u8> = Vec::new();
-
-    loop {
-        let mut fds = [
-            libc::pollfd { fd: stdin_fd,                    events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: master,                      events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: ipc_fd.unwrap_or(-1),        events: libc::POLLIN, revents: 0 },
-        ];
-        let nfds = if ipc_fd.is_some() { 3 } else { 2 };
-        if unsafe { libc::poll(fds.as_mut_ptr(), nfds, -1) } < 0 { break; }
-
-        if fds[0].revents & libc::POLLIN != 0 {
-            let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
-            if n <= 0 { break; }
-            let data = &buf[..n as usize];
-            if data.contains(&0x0F) { break; } // Ctrl-O: manual exit
-            unsafe { libc::write(master, data.as_ptr() as *const _, data.len()); }
-        }
-
-        if fds[1].revents & libc::POLLIN != 0 {
-            let n = unsafe { libc::read(master, buf.as_mut_ptr() as *mut _, buf.len()) };
-            if n <= 0 { break; }
-            let data = &buf[..n as usize];
-            unsafe { libc::write(stdout_fd, data.as_ptr() as *const _, data.len()); }
-            tail.extend_from_slice(data);
-            if tail.windows(SENTINEL.len()).any(|w| w == SENTINEL.as_bytes()) { break; }
-            let trim = tail.len().saturating_sub(SENTINEL.len() * 2);
-            tail.drain(..trim);
-        }
-
-        // IPC: accept a connection and check for HideShell
-        if fds[2].revents & libc::POLLIN != 0 {
-            if let Some(fd) = ipc_fd {
-                if ipc_accept_shows_panels(fd) {
-                    break;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Passthrough loop: copies stdin→master and master→stdout until Ctrl+O, EOF,
 /// or a ShowPanels IPC message arrives on `ipc_fd`. Any other IPC message received
 /// while looping is queued and returned so the caller can process it once passthrough
@@ -464,12 +363,4 @@ pub fn ipc_accept_message(listener_fd: RawFd) -> Option<String> {
     let _ = listener.set_nonblocking(true);
     let (stream, _) = listener.accept().ok()?;
     crate::ipc::read_authenticated_message(stream)
-}
-
-/// Non-blocking accept on the IPC listener fd. Returns true if the message is "ShowPanels".
-/// Silently ignores accept errors and unrecognized messages.
-pub fn ipc_accept_shows_panels(listener_fd: RawFd) -> bool {
-    ipc_accept_message(listener_fd)
-        .and_then(|buf| buf.lines().next().map(|l| l.trim() == "ShowPanels"))
-        .unwrap_or(false)
 }
