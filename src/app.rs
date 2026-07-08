@@ -2410,13 +2410,19 @@ impl App {
         let mut pending_ipc: Vec<String> = Vec::new();
         if let ShellMode::Subshell(ref sub) = self.shell_mode {
             let cwd = self.active_panel().path.0.clone();
-            // Discard any buffered readline echoes from `history -s` calls that
-            // accumulated since the last passthrough session.
-            sub.drain();
             // Sync PTY window size so fullscreen programs (vim, mc) get the real dimensions.
+            // Do this before draining: resize() sends SIGWINCH, which makes readline
+            // redraw the shell's already-idle prompt, and that redraw must be caught
+            // by the drain below along with any buffered `history -s` echoes — otherwise
+            // it leaks through as a stray extra prompt once passthrough starts forwarding.
+            // SIGWINCH delivery and the resulting redraw are asynchronous, so give the
+            // shell a moment to actually process it before draining (same reasoning as
+            // the cd-sync sleep below).
             if let Ok((cols, rows)) = crossterm::terminal::size() {
                 sub.resize(cols, rows);
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
+            sub.drain();
             // Only sync cwd if the subshell is not already in the panel's directory.
             let shell_cwd = std::fs::read_link(format!("/proc/{}/cwd", sub.child_pid))
                 .ok()
