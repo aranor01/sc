@@ -1356,10 +1356,10 @@ impl App {
         }
         self.cmdline.text = result.text;
         self.cmdline.move_end();
-        self.execute_command(false, prior_cmdline);
+        self.execute_command(false, prior_cmdline, false);
     }
 
-    fn execute_command(&mut self, push_to_history: bool, restore_to: CmdLineState) {
+    fn execute_command(&mut self, push_to_history: bool, restore_to: CmdLineState, echo: bool) {
         let cmd = self.cmdline.text.clone();
         if cmd.is_empty() {
             return;
@@ -1392,19 +1392,24 @@ impl App {
                 .ok()
                 .map(|p| p.to_string_lossy().to_string());
             if shell_cwd.as_deref() != Some(cwd.as_str()) {
-                let _ = std::io::Write::write_all(
-                    &mut std::io::stdout(),
-                    format!("[sc]$ cd {}\r\n", shell_escape_path(&cwd)).as_bytes(),
-                );
+                if echo {
+                    let _ = std::io::Write::write_all(
+                        &mut std::io::stdout(),
+                        format!("[sc]$ cd {}\r\n", shell_escape_path(&cwd)).as_bytes(),
+                    );
+                }
                 let _ = sub.send_line(&format!(" cd {}", shell_escape_path(&cwd)));
             }
         }
 
-        // Echo the command so the user sees what ran and in what order.
-        let _ = std::io::Write::write_all(
-            &mut std::io::stdout(),
-            format!("[sc]$ {}\r\n", cmd).as_bytes(),
-        );
+        // Echo the command so the user sees what ran and in what order
+        // (suppressed for menu-item/custom-command execution).
+        if echo {
+            let _ = std::io::Write::write_all(
+                &mut std::io::stdout(),
+                format!("[sc]$ {}\r\n", cmd).as_bytes(),
+            );
+        }
 
         // Always run cmdline commands in a fresh PTY. This gives clean output
         // with no readline echo artifacts regardless of shell mode. The persistent
@@ -1860,7 +1865,7 @@ impl App {
                 }
                 return;
             }
-            PanelOutcome::ExecuteCommand => { self.execute_command(true, CmdLineState::new()); return; }
+            PanelOutcome::ExecuteCommand => { self.execute_command(true, CmdLineState::new(), true); return; }
             PanelOutcome::NavError(msg) => { self.set_status(&msg, true); return; }
             PanelOutcome::Passthrough => {}
         }
