@@ -2,8 +2,6 @@ use anyhow::{bail, Result};
 use std::io;
 use std::os::unix::io::RawFd;
 
-const SENTINEL: &str = "__SC_PROMPT_SENTINEL__";
-
 pub struct Subshell {
     pub master_fd: RawFd,
     pub child_pid: libc::pid_t,
@@ -11,10 +9,7 @@ pub struct Subshell {
 }
 
 impl Subshell {
-    /// Spawn a subshell attached to a new PTY. The subshell is configured with
-    /// a sentinel PS1 so its prompt is a single plain line that won't fight
-    /// with sc's own screen (a fancy multi-line/escape-heavy user prompt
-    /// otherwise garbles the alternate-screen/passthrough handoff).
+    /// Spawn a subshell attached to a new PTY.
     pub fn spawn() -> Result<Self> {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
 
@@ -52,15 +47,12 @@ impl Subshell {
                 libc::dup2(slave_fd, libc::STDERR_FILENO);
                 if slave_fd > 2 { libc::close(slave_fd); }
 
-                let ps1_env = format!("PS1={SENTINEL} $ \0");
-                // exec shell with customized PS1 and history settings
+                // exec shell with the history settings we need
                 let shell_c = std::ffi::CString::new(shell).unwrap();
-                let ps1_cstr = std::ffi::CString::new(ps1_env.trim_end_matches('\0')).unwrap();
                 let histcontrol_cstr = std::ffi::CString::new("HISTCONTROL=ignorespace").unwrap();
                 let env_c = std::ffi::CString::new("env").unwrap();
                 let argv_env: Vec<*const libc::c_char> = vec![
                     env_c.as_ptr(),
-                    ps1_cstr.as_ptr(),
                     histcontrol_cstr.as_ptr(),
                     shell_c.as_ptr(),
                     std::ptr::null(),
