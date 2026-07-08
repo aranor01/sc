@@ -47,6 +47,32 @@ SC_INSTALL_PREFIX=/usr cargo deb
 sudo dpkg -i target/debian/sc_*.deb
 ```
 
+Or build an RPM package with [`cargo-generate-rpm`](https://github.com/cat-in-136/cargo-generate-rpm)
+(unlike `cargo-deb`, it doesn't build for you, so run `cargo build` first):
+
+```sh
+cargo install cargo-generate-rpm
+SC_INSTALL_PREFIX=/usr cargo build --release
+cargo generate-rpm
+sudo rpm -ivh target/generate-rpm/sc-*.rpm
+```
+
+To produce a statically-linked binary (useful for installing on distros with an
+older or different glibc than your build machine), target musl and pass
+`--target` to whichever packager you use (`cargo-deb` also needs `--no-build`,
+otherwise it triggers its own dynamically-linked build):
+
+```sh
+rustup target add x86_64-unknown-linux-musl
+SC_INSTALL_PREFIX=/usr cargo build --release --target x86_64-unknown-linux-musl
+cargo deb --variant musl --target x86_64-unknown-linux-musl --no-build
+cargo generate-rpm --target x86_64-unknown-linux-musl
+```
+
+`--variant musl` picks up the `[package.metadata.deb.variants.musl]` override in
+`Cargo.toml`, which skips shared-library dependency detection — a static binary
+has none, so the default `$auto` otherwise just prints a harmless warning.
+
 ## Usage
 
 ```sh

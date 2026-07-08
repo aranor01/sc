@@ -34,6 +34,11 @@ nix        = { version = "0.29", features = ["process", "signal", "term", "fs"] 
 libc        = "0.2"
 clap = { version = "4.6.1", features = ["derive"] }
 
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
 # `cargo deb` runs `cargo build` as a child process, so it inherits the shell
 # environment. Debian policy forbids packages from installing under
 # /usr/local (that's reserved for the local admin), so the deb build must
@@ -64,5 +69,35 @@ assets = [
     ["scripts/complete.sh", "usr/share/sc/scripts/", "755"],
     ["README.md", "usr/share/doc/sc/", "644"],
     ["docs/CheatSheet.md", "usr/share/doc/sc/", "644"],
+    ["docs/CommandLineArgs.md", "usr/share/doc/sc/", "644"],
     ["docs/Configuration.md", "usr/share/doc/sc/", "644"],
+    ["docs/IpcActions.md", "usr/share/doc/sc/", "644"],
+    ["docs/MacroSubstitution.md", "usr/share/doc/sc/", "644"],
+]
+
+# A statically-linked musl binary has no shared-library dependencies, so `$auto`
+# above has nothing to detect and just prints a harmless warning for it. This
+# variant sets deps explicitly for that build instead:
+#
+#   cargo deb --variant musl --target x86_64-unknown-linux-musl --no-build
+[package.metadata.deb.variants.musl]
+depends = ""
+
+# `cargo generate-rpm` reads the release binaries directly (no child build
+# step like cargo-deb), so it must run after `SC_INSTALL_PREFIX=/usr cargo
+# build --release`. Same prefix rationale as [package.metadata.deb] above:
+# RPM packages must not install under /usr/local.
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/sc", dest = "/usr/bin/sc", mode = "755" },
+    { source = "target/release/sc-action", dest = "/usr/bin/sc-action", mode = "755" },
+    { source = "scripts/edit.sh", dest = "/usr/share/sc/scripts/edit.sh", mode = "755" },
+    { source = "scripts/view.sh", dest = "/usr/share/sc/scripts/view.sh", mode = "755" },
+    { source = "scripts/complete.sh", dest = "/usr/share/sc/scripts/complete.sh", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/sc/README.md", mode = "644", doc = true },
+    { source = "docs/CheatSheet.md", dest = "/usr/share/doc/sc/CheatSheet.md", mode = "644", doc = true },
+    { source = "docs/CommandLineArgs.md", dest = "/usr/share/doc/sc/CommandLineArgs.md", mode = "644", doc = true },
+    { source = "docs/Configuration.md", dest = "/usr/share/doc/sc/Configuration.md", mode = "644", doc = true },
+    { source = "docs/IpcActions.md", dest = "/usr/share/doc/sc/IpcActions.md", mode = "644", doc = true },
+    { source = "docs/MacroSubstitution.md", dest = "/usr/share/doc/sc/MacroSubstitution.md", mode = "644", doc = true },
 ]
