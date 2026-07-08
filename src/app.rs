@@ -2417,18 +2417,19 @@ impl App {
                 .ok()
                 .map(|p| p.to_string_lossy().to_string());
             if shell_cwd.as_deref() != Some(cwd.as_str()) {
-                // \x15 (Ctrl+U) is only needed when cmdline text will follow: it clears
-                // any readline-buffered partial input so it can't combine with the
-                // injected text. The subshell's buffer is otherwise reliably empty here,
-                // and Ctrl+U on an already-empty line makes readline ring the bell.
-                let cd_cmd = if cmdline_text.is_empty() {
-                    format!("cd {}", shell_escape_path(&cwd))
+                // Sync silently: inject the cd, then discard its echo and the shell's
+                // next prompt redraw below, so the user just sees one correctly-synced
+                // real prompt instead of the cd being typed out at the old one.
+                let _ = sub.send_line(&format!(" cd {}", shell_escape_path(&cwd)));
+                // Give the shell a moment to run the cd and redraw its prompt, then
+                // discard that before anything reaches the live screen.
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                sub.drain();
+                // Force a fresh real prompt now that the previous one was drained away.
+                if cmdline_text.is_empty() {
+                    let _ = sub.send_line("");
                 } else {
-                    format!("\x15 cd {}", shell_escape_path(&cwd))
-                };
-                let _ = sub.send_line(&cd_cmd);
-                // cd echo + post-cd prompt will be visible at session start
-                if !cmdline_text.is_empty() {
+                    let _ = sub.send_line("\x15");
                     sub.send_raw(cmdline_text.as_bytes());
                 }
             } else if self.subshell_prompt_needed {
