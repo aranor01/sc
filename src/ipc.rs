@@ -321,8 +321,8 @@ pub(crate) fn read_authenticated_message(mut stream: UnixStream) -> Option<Strin
 /// mirrors how the rest of the codebase already talks to the kernel directly
 /// via `libc` for things `std` doesn't expose (see subshell.rs's use of
 /// `libc::poll`/`libc::read`/`libc::write` for the PTY passthrough loop) —
-/// `SO_PEERCRED` is Linux-specific, which is fine here since this project
-/// already assumes Linux elsewhere (e.g. reading `/proc/<pid>/cwd`).
+/// `SO_PEERCRED` is Linux-specific; the macOS build uses the
+/// `LOCAL_PEERCRED` variant of this function below instead.
 ///
 /// Returns `None` if the kernel call itself fails, which in practice should
 /// only happen if `stream` somehow isn't a genuine, still-open Unix domain
@@ -355,6 +355,10 @@ fn peer_uid(stream: &UnixStream) -> Option<libc::uid_t> {
 /// macOS equivalent of the Linux `peer_uid` above: there's no `SO_PEERCRED`,
 /// the analogous call is `getsockopt(LOCAL_PEERCRED)` at the `SOL_LOCAL`
 /// level, filling in an `xucred` rather than a `ucred`.
+///
+/// Unlike `ucred`, `xucred` is a versioned struct: before trusting `cr_uid`
+/// we check that the kernel filled the whole struct and stamped the version
+/// we were compiled against, as Apple's own `getpeereid` does.
 #[cfg(target_os = "macos")]
 fn peer_uid(stream: &UnixStream) -> Option<libc::uid_t> {
     use std::os::unix::io::AsRawFd;
@@ -374,7 +378,14 @@ fn peer_uid(stream: &UnixStream) -> Option<libc::uid_t> {
         )
     };
 
-    if ret == 0 { Some(cred.cr_uid) } else { None }
+    if ret == 0
+        && len as usize == std::mem::size_of::<libc::xucred>()
+        && cred.cr_version == libc::XUCRED_VERSION
+    {
+        Some(cred.cr_uid)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn parse_message(raw: &str) -> Option<IpcMessage> {

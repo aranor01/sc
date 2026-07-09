@@ -41,10 +41,9 @@ impl Subshell {
                 // Child: set up the PTY as controlling terminal
                 libc::close(master_fd);
                 libc::setsid();
-                #[cfg(target_os = "linux")]
-                libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::Ioctl, 0);
-                #[cfg(target_os = "macos")]
-                libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::c_ulong, 0);
+                // `as _` picks up ioctl's request type for the target platform
+                // (c_ulong on gnu/macOS, c_int on musl).
+                libc::ioctl(slave_fd, libc::TIOCSCTTY as _, 0);
                 libc::dup2(slave_fd, libc::STDIN_FILENO);
                 libc::dup2(slave_fd, libc::STDOUT_FILENO);
                 libc::dup2(slave_fd, libc::STDERR_FILENO);
@@ -201,10 +200,9 @@ pub fn run_with_pty_capture(cmd: &str, cwd: &str) -> Vec<u8> {
             // Child: set the PTY slave as controlling terminal, then exec.
             libc::close(master_fd);
             libc::setsid();
-            #[cfg(target_os = "linux")]
-            libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::Ioctl, 0);
-            #[cfg(target_os = "macos")]
-            libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::c_ulong, 0);
+            // `as _` picks up ioctl's request type for the target platform
+            // (c_ulong on gnu/macOS, c_int on musl).
+            libc::ioctl(slave_fd, libc::TIOCSCTTY as _, 0);
             libc::dup2(slave_fd, libc::STDIN_FILENO);
             libc::dup2(slave_fd, libc::STDOUT_FILENO);
             libc::dup2(slave_fd, libc::STDERR_FILENO);

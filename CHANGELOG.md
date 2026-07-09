@@ -10,9 +10,10 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Fixed
 
-- sc now compiles for aarch64-apple-darwin: added macOS-specific peer credential retrieval in IPC,
-  and cfg-gated libc call sites (openpty's winsize pointer, TIOCSCTTY's request type) to match
-  each platform's stricter signature requirements without changing behavior on Linux.
+- sc now compiles for aarch64-apple-darwin: added macOS-specific peer credential retrieval in IPC
+  (`getsockopt(LOCAL_PEERCRED)` with `xucred` length/version validation), passed openpty's winsize
+  argument as the `*mut` pointer macOS expects, and let the TIOCSCTTY ioctl request cast infer each
+  platform's type — no behavior change on Linux.
 - Pasting into the command line stopped working after the subshell was shown once via
   Ctrl-O — sc never handled bracketed-paste terminal events, and paste mode could be left
   enabled by the subshell's own readline session after returning to the sc UI.
