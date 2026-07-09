@@ -1,0 +1,132 @@
+name: Linux packages
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl]
+    env:
+      # Debian/RPM policy forbids packages from installing under /usr/local
+      # (reserved for the local admin); see the comment above
+      # [package.metadata.deb] in Cargo.toml for details.
+      SC_INSTALL_PREFIX: /usr
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so build.rs can run `git describe`
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cargo-deb and cargo-generate-rpm
+        run: cargo install --locked cargo-deb cargo-generate-rpm
+
+      - name: Build release binaries
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Passing --target explicitly (even for the native gnu target) makes
+      # both tools write to target/<triple>/... instead of target/..., so
+      # the two matrix legs never write to the same path.
+      #
+      # The musl leg also needs --variant musl: a static binary has no
+      # shared-library deps for `$auto` to detect, so without the variant
+      # (which sets depends = "" — see [package.metadata.deb.variants.musl]
+      # in Cargo.toml) cargo-deb just prints a harmless warning for it.
+      - name: Build .deb package
+        run: cargo deb --target=${{ matrix.target }} --no-build ${{ contains(matrix.target, 'musl') && '--variant musl' || '' }}
+
+      - name: Build .rpm package
+        run: cargo generate-rpm --target ${{ matrix.target }}
+
+      # Debian/RPM naming doesn't distinguish musl from glibc builds, so
+      # both targets would otherwise produce identically-named packages
+      # (e.g. sc_0.1.0-1_amd64.deb) that can't coexist as release assets.
+      - name: Rename packages with target suffix
+        run: |
+          mv target/${{ matrix.target }}/debian/*.deb "target/${{ matrix.target }}/debian/sc-${{ matrix.target }}.deb"
+          mv target/${{ matrix.target }}/generate-rpm/*.rpm "target/${{ matrix.target }}/generate-rpm/sc-${{ matrix.target }}.rpm"
+
+      # Only the static musl build gets a tarball + curl|bash installer: it's
+      # the one binary that works on any x86_64 Linux regardless of glibc
+      # version, so install.sh needs no libc detection. The bundle mirrors
+      # the deb/rpm asset list in Cargo.toml (same files); install.sh does
+      # the actual FHS placement, not the tarball layout itself.
+      - name: Build tarball
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          bundle="sc-${{ matrix.target }}"
+          mkdir -p "$bundle/scripts" "$bundle/docs"
+          cp target/${{ matrix.target }}/release/sc "$bundle/"
+          cp target/${{ matrix.target }}/release/sc-action "$bundle/"
+          cp scripts/*.sh "$bundle/scripts/"
+          cp docs/*.md "$bundle/docs/"
+          cp README.md "$bundle/"
+          tar czf "target/${{ matrix.target }}/$bundle.tar.gz" "$bundle"
+          ( cd "target/${{ matrix.target }}" && sha256sum "$bundle.tar.gz" > "$bundle.tar.gz.sha256" )
+
+      # install.sh is a template (see the file itself): bake in this
+      # release's tag so the uploaded copy is self-contained and doesn't
+      # need to call the GitHub API to find the right tarball.
+      - name: Prepare install.sh
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sed "s/__SC_VERSION__/${{ github.ref_name }}/" install.sh > "target/${{ matrix.target }}/install.sh"
+          chmod +x "target/${{ matrix.target }}/install.sh"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/debian/*.deb
+            target/${{ matrix.target }}/generate-rpm/*.rpm
+
+      - name: Upload tarball artifact
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tarball-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/sc-${{ matrix.target }}.tar.gz
+            target/${{ matrix.target }}/sc-${{ matrix.target }}.tar.gz.sha256
+            target/${{ matrix.target }}/install.sh
+
+      - name: Attach packages to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=$(cat <<EOF
+          ## Install
+
+          Static build (works on any x86_64 Linux):
+
+              curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/install.sh | bash
+
+          Or download the \`.deb\`/\`.rpm\` packages below.
+          EOF
+          )
+          gh release create "${{ github.ref_name }}" --notes "$notes" --title "${{ github.ref_name }}" || true
+          gh release upload "${{ github.ref_name }}" target/${{ matrix.target }}/debian/*.deb target/${{ matrix.target }}/generate-rpm/*.rpm --clobber
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+            gh release upload "${{ github.ref_name }}" \
+              "target/${{ matrix.target }}/sc-${{ matrix.target }}.tar.gz" \
+              "target/${{ matrix.target }}/sc-${{ matrix.target }}.tar.gz.sha256" \
+              "target/${{ matrix.target }}/install.sh" --clobber
+          fi

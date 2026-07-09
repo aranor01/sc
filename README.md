@@ -30,7 +30,21 @@ A two-panel visual shell for Linux terminals, in the spirit of Midnight Commande
 
 ## Installation
 
-Requires a recent Rust toolchain ([rustup.rs](https://rustup.rs)).
+On any x86_64 Linux, install the latest release's statically-linked build with
+one command:
+
+```sh
+curl -fsSL https://github.com/aranor01/sc/releases/latest/download/install.sh | bash
+```
+
+To uninstall, run the same script with `--uninstall` (note the extra `bash -s --`,
+needed to pass the flag through the pipe):
+
+```sh
+curl -fsSL https://github.com/aranor01/sc/releases/latest/download/install.sh | bash -s -- --uninstall
+```
+
+Or build it yourself. Requires a recent Rust toolchain ([rustup.rs](https://rustup.rs)).
 
 Build and run from source:
 

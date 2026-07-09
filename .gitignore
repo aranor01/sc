@@ -1,6 +1,7 @@
 /*
 !/*/
 .*/
+!.github/
 /target
 !.gitignore
 !Cargo.toml
@@ -8,3 +9,4 @@
 !build.rs
 !README.md
 !LICENSE
+!install.sh
