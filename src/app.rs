@@ -9,8 +9,8 @@ use unicode_width::UnicodeWidthChar;
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-        MouseButton, MouseEvent, MouseEventKind,
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     },
     execute,
     cursor::{Hide, Show},
@@ -351,7 +351,7 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(stdout(), DisableBracketedPaste, LeaveAlternateScreen, DisableMouseCapture);
     }
 }
 
@@ -1374,9 +1374,9 @@ impl App {
 
         // Tear down TUI so any spawned process gets a real terminal.
         if self.mouse {
-            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
+            let _ = crossterm::execute!(stdout(), DisableBracketedPaste, LeaveAlternateScreen, DisableMouseCapture, Show);
         } else {
-            let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, Show);
+            let _ = crossterm::execute!(stdout(), DisableBracketedPaste, LeaveAlternateScreen, Show);
         }
         let _ = disable_raw_mode();
 
@@ -1425,9 +1425,9 @@ impl App {
 
         let _ = enable_raw_mode();
         if self.mouse {
-            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableMouseCapture);
+            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste);
         } else {
-            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen);
+            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableBracketedPaste);
         }
 
         // Drain the IPC socket: picks up the ShowPanels message sent by sc-action
@@ -2397,7 +2397,17 @@ impl App {
     }
 
     fn run_subshell_passthrough(&mut self, sync_cmdline: bool) {
-        // Leave alternate screen so the subshell renders in the normal terminal
+        // Leave alternate screen so the subshell renders in the normal terminal.
+        // Deliberately do NOT send DisableBracketedPaste here: the persistent subshell's
+        // own readline owns bracketed-paste state across the whole passthrough session
+        // (it enables it per readline() call and disables it when that call finishes).
+        // If Ctrl+O interrupts bash mid-line and we forced it off here, the terminal
+        // would go out of sync with what readline still believes it already turned on
+        // for the in-progress line — pastes into the resumed subshell would arrive
+        // unbracketed until the user finishes that line. Leaving the mode alone keeps
+        // the terminal state consistent with whatever bash itself last set. We still
+        // force it back on with EnableBracketedPaste below once sc regains the real
+        // terminal, so sc's own TUI never depends on what bash left behind.
         if self.mouse {
             let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
         } else {
@@ -2490,9 +2500,9 @@ impl App {
         // Return to TUI
         let _ = enable_raw_mode();
         if self.mouse {
-            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableMouseCapture);
+            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste);
         } else {
-            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen);
+            let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableBracketedPaste);
         }
         // Refresh panels in case the subshell changed the filesystem
         self.needs_full_redraw = true;
@@ -2893,9 +2903,9 @@ impl App {
     pub fn run(&mut self) -> Result<()> {
         enable_raw_mode()?;
         if self.mouse {
-            execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+            execute!(stdout(), EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
         } else {
-            execute!(stdout(), EnterAlternateScreen)?;
+            execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
         }
         let _guard = TerminalGuard;
 
@@ -2926,6 +2936,22 @@ impl App {
                     Event::Resize(cols, rows) => {
                         if let ShellMode::Subshell(ref sub) = self.shell_mode {
                             sub.resize(cols, rows);
+                        }
+                    }
+                    Event::Paste(text) => {
+                        for c in text.chars() {
+                            let key = match c {
+                                '\n' | '\r' => KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                                '\t' => KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+                                _ => KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+                            };
+                            self.handle_key_event(key);
+                            if self.should_quit {
+                                break;
+                            }
+                        }
+                        if self.should_quit {
+                            break;
                         }
                     }
                     _ => {}
