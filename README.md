@@ -191,6 +191,10 @@ with user-menu commands. The set of actions that can be triggered will grow, but
 already inject strings in the command line, select or filter files in the panel, and more.
 See [`docs/IpcActions.md`](docs/IpcActions.md) for the full list of actions and examples.
 
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md) for release history.
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
