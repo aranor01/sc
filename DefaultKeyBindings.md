@@ -114,12 +114,19 @@
 - A-s
        same as / (alternate quicksearch shortcut)
 
-- C-f
+- A-f
        open the filter dialog for the active panel: hides entries not matching the given
        pattern (shell glob by default; enable **RegExp** in the dialog for regex matching);
        the dialog also offers **Files only** (directories always shown) and **Case sensitive** options;
        an empty pattern removes the filter; the filter persists across directory navigation
        within the session but is not saved to disk
+
+- A-?, C-f
+       open the search dialog: find files by name (shell glob, or regex with **RegExp**)
+       and optionally by content, starting from the active panel's directory. The search
+       runs asynchronously and the hits stream into a results panel shown in place of the
+       active panel; for content searches the inactive panel is replaced by a matches
+       panel showing the matching lines of the selected hit. See @docs/FileSearch.md
 
 - A-H
        open the path history popup for the active panel (most recent directory first)

@@ -19,7 +19,8 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 | Go Back | Go back to the previous directory in the active panel's history | `go_back`: `Alt-Left` |
 | Go Forward | Go forward in the active panel's history | `go_forward`: `Alt-Right` |
 | Quick Search | Jump to the first entry whose name starts with the typed string (case-insensitive prefix) | `quicksearch`: `/`, `Alt-s` |
-| Filter | Open a dialog to hide entries not matching a pattern (shell glob by default; dialog offers RegExp, Files only, and Case sensitive options); empty pattern removes the filter | `filter`: `Ctrl-f` |
+| Filter | Open a dialog to hide entries not matching a pattern (shell glob by default; dialog offers RegExp, Files only, and Case sensitive options); empty pattern removes the filter | `filter`: `Alt-f` |
+| Search | Find files by name and optionally content, asynchronously; hits stream into a results panel (see [`FileSearch.md`](FileSearch.md)) | `search`: `Alt-?`, `Ctrl-f` |
 | Toggle Hidden Files | Toggle visibility of dotfiles in the active panel | `toggle_hidden`: `Alt-.` |
 | Directory History | Open path history popup for the active panel (most recent first) | `path_history`: `Alt-H`, `Alt-Down` |
 

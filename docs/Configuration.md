@@ -57,7 +57,8 @@ triggers the action):
 | `refresh_panel` | `Alt-r` |
 | `sort_panel` | `Ctrl-s` |
 | `quicksearch` | `/`, `Alt-s` |
-| `filter` | `Ctrl-f` |
+| `filter` | `Alt-f` |
+| `search` | `Alt-?`, `Ctrl-f` |
 | `toggle_hidden` | `Alt-.` |
 | `bookmark_open` | `Ctrl-\` |
 | `bookmark_add` | `Ctrl-b` |
@@ -193,7 +194,9 @@ All colors are `#rrggbb` hex strings:
     "status_info_fg":      "#000000",
     "status_info_bg":      "#00aa55",
     "status_warn_fg":      "#000000",
-    "status_warn_bg":      "#ddaa00"
+    "status_warn_bg":      "#ddaa00",
+    "search_match_fg":     "#000000",
+    "search_match_bg":     "#ffcc00"
   }
 }
 ```
