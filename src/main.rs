@@ -9,6 +9,7 @@ mod panel_history;
 mod subshell;
 mod history;
 mod macros;
+mod pattern;
 mod provider;
 mod state;
 mod ui;

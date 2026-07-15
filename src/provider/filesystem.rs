@@ -1,6 +1,13 @@
-use super::{NodeEntry, NodeKind, NodePath, Result, TreeProvider};
+use super::{
+    LineMatch, NodeEntry, NodeKind, NodePath, Result, SearchEvent, SearchHandle, SearchHit,
+    SearchQuery, TreeProvider,
+};
+use crate::pattern::{build_filter_pattern, find_matches, FilterPattern};
 use anyhow::Context;
-use std::path::Path;
+use std::io::BufRead;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 
 pub struct FilesystemProvider;
 
@@ -116,6 +123,180 @@ impl TreeProvider for FilesystemProvider {
         std::fs::rename(src, &dst)
             .with_context(|| format!("renaming {:?} to {:?}", src, dst))
     }
+
+    fn search(&self, root: &NodePath, query: SearchQuery) -> Result<Box<dyn SearchHandle>> {
+        let pattern = build_filter_pattern(
+            &query.pattern,
+            false,
+            query.case_sensitive,
+            query.is_regex,
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
+        let (tx, rx) = mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        let root = PathBuf::from(&root.0);
+        std::thread::spawn(move || search_worker(root, query, pattern, tx, flag));
+        Ok(Box::new(FsSearchHandle { rx, cancel }))
+    }
+}
+
+struct FsSearchHandle {
+    rx: mpsc::Receiver<SearchEvent>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl SearchHandle for FsSearchHandle {
+    fn try_next(&mut self) -> Option<SearchEvent> {
+        self.rx.try_recv().ok()
+    }
+
+    fn cancel(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Drop for FsSearchHandle {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Longest stored matching line; anything longer is cut at a char boundary
+/// so a minified file can't blow up memory.
+const MAX_MATCH_LINE: usize = 1000;
+
+fn search_worker(
+    root: PathBuf,
+    query: SearchQuery,
+    pattern: FilterPattern,
+    tx: mpsc::Sender<SearchEvent>,
+    cancel: Arc<AtomicBool>,
+) {
+    let mut errors: Vec<String> = Vec::new();
+    let mut found = 0usize;
+    let mut stack: Vec<(PathBuf, u32)> = vec![(root, 1)];
+
+    'walk: while let Some((dir, depth)) = stack.pop() {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let progress = SearchEvent::Progress {
+            scanning: NodePath(dir.to_string_lossy().into_owned()),
+            found,
+        };
+        if tx.send(progress).is_err() {
+            return; // receiver gone: handle dropped, stop silently
+        }
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(e) => {
+                errors.push(format!("{}: {}", dir.display(), e));
+                continue;
+            }
+        };
+        for raw in rd {
+            if cancel.load(Ordering::Relaxed) {
+                break 'walk;
+            }
+            let raw = match raw {
+                Ok(raw) => raw,
+                Err(e) => {
+                    errors.push(format!("{}: {}", dir.display(), e));
+                    continue;
+                }
+            };
+            let name = raw.file_name().to_string_lossy().into_owned();
+            if !query.include_hidden && name.starts_with('.') {
+                continue;
+            }
+            let path = raw.path();
+            // DirEntry::metadata does not follow symlinks (lstat).
+            let is_symlink = raw
+                .metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false);
+            let is_dir = if is_symlink {
+                std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false)
+            } else {
+                raw.metadata().map(|m| m.is_dir()).unwrap_or(false)
+            };
+
+            if is_dir
+                && (!is_symlink || query.follow_symlinks)
+                && query.max_depth.map(|d| depth < d).unwrap_or(true)
+            {
+                stack.push((path.clone(), depth + 1));
+            }
+
+            if !pattern.matches(&name) {
+                continue;
+            }
+            let hit = match &query.content {
+                None => Some(Vec::new()),
+                Some(_) if is_dir => None,
+                Some(needle) => match scan_file(&path, needle, query.case_sensitive) {
+                    Ok(Some(matches)) if !matches.is_empty() => Some(matches),
+                    Ok(_) => None, // binary file or no matching lines
+                    Err(e) => {
+                        errors.push(format!("{}: {}", path.display(), e));
+                        None
+                    }
+                },
+            };
+            if let Some(matches) = hit {
+                found += 1;
+                let hit = SearchHit {
+                    path: NodePath(path.to_string_lossy().into_owned()),
+                    matches,
+                };
+                if tx.send(SearchEvent::Hit(hit)).is_err() {
+                    return;
+                }
+            }
+        }
+    }
+    let _ = tx.send(SearchEvent::Done { errors });
+}
+
+/// Scan a file for lines containing `needle`. Returns `Ok(None)` for files
+/// that look binary (NUL byte in the first buffered block).
+fn scan_file(
+    path: &Path,
+    needle: &str,
+    case_sensitive: bool,
+) -> std::io::Result<Option<Vec<LineMatch>>> {
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file);
+    if reader.fill_buf()?.contains(&0) {
+        return Ok(None);
+    }
+    let mut matches = Vec::new();
+    let mut line_no = 0u64;
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        if reader.read_until(b'\n', &mut buf)? == 0 {
+            break;
+        }
+        line_no += 1;
+        while matches!(buf.last(), Some(b'\n') | Some(b'\r')) {
+            buf.pop();
+        }
+        let text = String::from_utf8_lossy(&buf);
+        if !find_matches(&text, needle, case_sensitive).is_empty() {
+            let mut text = text.into_owned();
+            if text.len() > MAX_MATCH_LINE {
+                let mut cut = MAX_MATCH_LINE;
+                while !text.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                text.truncate(cut);
+            }
+            matches.push(LineMatch { line: line_no, text });
+        }
+    }
+    Ok(Some(matches))
 }
 
 fn copy_recursive(src: &Path, dst: &Path) -> Result<()> {
@@ -156,4 +337,256 @@ fn unix_permissions(meta: &std::fs::Metadata) -> String {
         s.push(if mode & bit != 0 { ch } else { '-' });
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn query(pattern: &str) -> SearchQuery {
+        SearchQuery {
+            pattern: pattern.to_string(),
+            is_regex: false,
+            case_sensitive: true,
+            content: None,
+            max_depth: None,
+            include_hidden: false,
+            follow_symlinks: false,
+        }
+    }
+
+    fn make_base(name: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!("sc_search_test_{name}"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    fn start(root: &Path, q: SearchQuery) -> Box<dyn SearchHandle> {
+        FilesystemProvider
+            .search(&NodePath(root.to_string_lossy().into_owned()), q)
+            .unwrap()
+    }
+
+    fn collect(handle: &mut dyn SearchHandle) -> (Vec<SearchHit>, Vec<String>) {
+        let mut hits = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match handle.try_next() {
+                Some(SearchEvent::Hit(h)) => hits.push(h),
+                Some(SearchEvent::Progress { .. }) => {}
+                Some(SearchEvent::Done { errors }) => return (hits, errors),
+                None => {
+                    assert!(Instant::now() < deadline, "search did not finish in time");
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
+        }
+    }
+
+    fn run(root: &Path, q: SearchQuery) -> (Vec<SearchHit>, Vec<String>) {
+        let mut handle = start(root, q);
+        let out = collect(&mut *handle);
+        assert!(handle.try_next().is_none(), "events after Done");
+        out
+    }
+
+    fn rel_names(root: &Path, hits: &[SearchHit]) -> Vec<String> {
+        let mut v: Vec<String> = hits
+            .iter()
+            .map(|h| {
+                Path::new(&h.path.0)
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn name_search_glob_recurses() {
+        let base = make_base("glob");
+        std::fs::write(base.join("a.rs"), "x").unwrap();
+        std::fs::write(base.join("b.txt"), "x").unwrap();
+        std::fs::create_dir(base.join("sub")).unwrap();
+        std::fs::write(base.join("sub").join("c.rs"), "x").unwrap();
+
+        let (hits, errors) = run(&base, query("*.rs"));
+        assert!(errors.is_empty());
+        assert_eq!(rel_names(&base, &hits), vec!["a.rs", "sub/c.rs"]);
+        assert!(hits.iter().all(|h| h.matches.is_empty()));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn name_search_matches_directories_too() {
+        let base = make_base("dirs");
+        std::fs::create_dir(base.join("target")).unwrap();
+        std::fs::write(base.join("target.txt"), "x").unwrap();
+
+        let (hits, _) = run(&base, query("target*"));
+        assert_eq!(rel_names(&base, &hits), vec!["target", "target.txt"]);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn regex_name_search_case_insensitive() {
+        let base = make_base("regex");
+        std::fs::write(base.join("Main.rs"), "x").unwrap();
+        std::fs::write(base.join("other.rs"), "x").unwrap();
+
+        let mut q = query("^ma");
+        q.is_regex = true;
+        q.case_sensitive = false;
+        let (hits, _) = run(&base, q);
+        assert_eq!(rel_names(&base, &hits), vec!["Main.rs"]);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn hidden_entries_skipped_unless_included() {
+        let base = make_base("hidden");
+        std::fs::write(base.join(".hidden.rs"), "x").unwrap();
+        std::fs::create_dir(base.join(".dir")).unwrap();
+        std::fs::write(base.join(".dir").join("inner.rs"), "x").unwrap();
+        std::fs::write(base.join("plain.rs"), "x").unwrap();
+
+        let (hits, _) = run(&base, query("*.rs"));
+        assert_eq!(rel_names(&base, &hits), vec!["plain.rs"]);
+
+        let mut q = query("*.rs");
+        q.include_hidden = true;
+        let (hits, _) = run(&base, q);
+        assert_eq!(
+            rel_names(&base, &hits),
+            vec![".dir/inner.rs", ".hidden.rs", "plain.rs"]
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn max_depth_limits_recursion() {
+        let base = make_base("depth");
+        std::fs::write(base.join("top.rs"), "x").unwrap();
+        std::fs::create_dir(base.join("sub")).unwrap();
+        std::fs::write(base.join("sub").join("deep.rs"), "x").unwrap();
+
+        let mut q = query("*.rs");
+        q.max_depth = Some(1);
+        let (hits, _) = run(&base, q);
+        assert_eq!(rel_names(&base, &hits), vec!["top.rs"]);
+
+        let mut q = query("*.rs");
+        q.max_depth = Some(2);
+        let (hits, _) = run(&base, q);
+        assert_eq!(rel_names(&base, &hits), vec!["sub/deep.rs", "top.rs"]);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn content_search_reports_lines_and_skips_binaries_and_dirs() {
+        let base = make_base("content");
+        std::fs::write(base.join("hit.txt"), "nope\nfound HERE\nagain here\n").unwrap();
+        std::fs::write(base.join("miss.txt"), "nothing\n").unwrap();
+        std::fs::write(base.join("bin.txt"), b"here\0here").unwrap();
+        std::fs::create_dir(base.join("here_dir")).unwrap();
+
+        let mut q = query("*");
+        q.content = Some("here".to_string());
+        q.case_sensitive = false;
+        let (hits, errors) = run(&base, q);
+        assert!(errors.is_empty());
+        assert_eq!(rel_names(&base, &hits), vec!["hit.txt"]);
+        let m = &hits[0].matches;
+        assert_eq!(m.len(), 2);
+        assert_eq!((m[0].line, m[0].text.as_str()), (2, "found HERE"));
+        assert_eq!((m[1].line, m[1].text.as_str()), (3, "again here"));
+
+        // Case-sensitive: only the lowercase line matches.
+        let mut q = query("*");
+        q.content = Some("here".to_string());
+        let (hits, _) = run(&base, q);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].matches.len(), 1);
+        assert_eq!(hits[0].matches[0].line, 3);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn symlinked_dirs_followed_only_on_request() {
+        let base = make_base("symlink");
+        std::fs::create_dir(base.join("real")).unwrap();
+        std::fs::write(base.join("real").join("inside.rs"), "x").unwrap();
+        std::os::unix::fs::symlink(base.join("real"), base.join("link")).unwrap();
+
+        let (hits, _) = run(&base, query("inside.rs"));
+        assert_eq!(rel_names(&base, &hits), vec!["real/inside.rs"]);
+
+        let mut q = query("inside.rs");
+        q.follow_symlinks = true;
+        let (hits, _) = run(&base, q);
+        assert_eq!(
+            rel_names(&base, &hits),
+            vec!["link/inside.rs", "real/inside.rs"]
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn symlinked_file_matched_by_name_either_way() {
+        let base = make_base("symfile");
+        std::fs::write(base.join("real.rs"), "x").unwrap();
+        std::os::unix::fs::symlink(base.join("real.rs"), base.join("alias.rs")).unwrap();
+
+        let (hits, _) = run(&base, query("alias.rs"));
+        assert_eq!(rel_names(&base, &hits), vec!["alias.rs"]);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cancel_still_delivers_done() {
+        let base = make_base("cancel");
+        for i in 0..50 {
+            let d = base.join(format!("d{i}"));
+            std::fs::create_dir(&d).unwrap();
+            std::fs::write(d.join("f.rs"), "x").unwrap();
+        }
+        let mut handle = start(&base, query("*.rs"));
+        handle.cancel();
+        let (_, _) = collect(&mut *handle); // must terminate with Done
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn unreadable_dir_collected_into_errors() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            return; // root ignores permissions; nothing to test
+        }
+        let base = make_base("unreadable");
+        let locked = base.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("secret.rs"), "x").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let (hits, errors) = run(&base, query("*.rs"));
+        assert!(hits.is_empty());
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("locked"));
+
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

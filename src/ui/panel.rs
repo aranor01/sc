@@ -1,17 +1,18 @@
 use crate::config::ColorScheme;
-use crate::provider::{NodeEntry, NodeKind, NodePath, TreeProvider};
+use crate::pattern::find_matches;
+use crate::provider::{LineMatch, NodeEntry, NodeKind, NodePath, SearchQuery, TreeProvider};
 use crate::ui::modal_event::PanelOutcome;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use chrono::{DateTime, Local};
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, StatefulWidget, Widget},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::cmp::Ordering;
 use std::time::SystemTime;
 
@@ -26,70 +27,7 @@ pub enum SortKey {
     Unsorted,
 }
 
-/// A compiled filter/select-group pattern.
-#[derive(Debug, Clone)]
-pub struct FilterPattern {
-    pub raw: String,
-    pub files_only: bool,
-    pub case_sensitive: bool,
-    pub is_regex: bool,
-    regex: Option<regex::Regex>,
-    glob: Option<glob::Pattern>,
-}
-
-impl FilterPattern {
-    /// Returns true if `name` matches the pattern, respecting case sensitivity.
-    /// Does NOT apply the `files_only` flag — callers handle that themselves.
-    pub fn matches(&self, name: &str) -> bool {
-        if self.is_regex {
-            self.regex.as_ref().is_some_and(|r| r.is_match(name))
-        } else {
-            let opts = glob::MatchOptions {
-                case_sensitive: self.case_sensitive,
-                require_literal_separator: false,
-                require_literal_leading_dot: false,
-            };
-            self.glob.as_ref().is_some_and(|g| g.matches_with(name, opts))
-        }
-    }
-}
-
-/// Build and compile a filter/select pattern with explicit options.
-/// Returns `Err(description)` on invalid patterns.
-pub fn build_filter_pattern(
-    text: &str,
-    files_only: bool,
-    case_sensitive: bool,
-    is_regexp: bool,
-) -> Result<FilterPattern, String> {
-    if is_regexp {
-        let mut builder = regex::RegexBuilder::new(text);
-        builder.case_insensitive(!case_sensitive);
-        match builder.build() {
-            Ok(r) => Ok(FilterPattern {
-                raw: text.to_string(),
-                files_only,
-                case_sensitive,
-                is_regex: true,
-                regex: Some(r),
-                glob: None,
-            }),
-            Err(e) => Err(format!("Invalid regex: {e}")),
-        }
-    } else {
-        match glob::Pattern::new(text) {
-            Ok(g) => Ok(FilterPattern {
-                raw: text.to_string(),
-                files_only,
-                case_sensitive,
-                is_regex: false,
-                regex: None,
-                glob: Some(g),
-            }),
-            Err(e) => Err(format!("Invalid glob: {e}")),
-        }
-    }
-}
+pub use crate::pattern::{build_filter_pattern, FilterPattern};
 
 fn sort_entries(entries: &mut [NodeEntry], key: SortKey, asc: bool) {
     entries.sort_by(|a, b| {
@@ -114,6 +52,53 @@ fn sort_entries(entries: &mut [NodeEntry], key: SortKey, asc: bool) {
     });
 }
 
+/// State of a panel showing streaming search results in place of a directory.
+/// The panel's `path` stays the search root; `entries` hold one row per hit,
+/// named by their root-relative path.
+pub struct SearchResultsState {
+    pub query: SearchQuery,
+    pub running: bool,
+    /// Display path of the directory currently being scanned.
+    pub scanning: Option<String>,
+    /// Root-relative hit path → its matching lines (content searches).
+    pub matches: HashMap<String, Vec<LineMatch>>,
+}
+
+impl SearchResultsState {
+    pub fn new(query: SearchQuery) -> Self {
+        SearchResultsState { query, running: true, scanning: None, matches: HashMap::new() }
+    }
+
+    pub fn content_search(&self) -> bool {
+        self.query.content.is_some()
+    }
+}
+
+/// State of a panel showing the matching lines of the file selected in the
+/// results panel (content searches only). Navigation reuses the panel's
+/// cursor/scroll; `entries` stays empty.
+pub struct MatchesState {
+    /// Root-relative path of the file whose matches are shown (sync key).
+    pub file: Option<String>,
+    /// Absolute path of that file (for the text viewer).
+    pub abs_path: Option<String>,
+    pub matches: Vec<LineMatch>,
+    pub needle: String,
+    pub case_sensitive: bool,
+}
+
+impl MatchesState {
+    pub fn new(needle: String, case_sensitive: bool) -> Self {
+        MatchesState { file: None, abs_path: None, matches: Vec::new(), needle, case_sensitive }
+    }
+}
+
+pub enum PanelContent {
+    Dir,
+    SearchResults(SearchResultsState),
+    Matches(MatchesState),
+}
+
 pub struct PanelState {
     pub provider: Box<dyn TreeProvider>,
     pub path: NodePath,
@@ -126,6 +111,7 @@ pub struct PanelState {
     pub sort_asc: bool,
     pub show_hidden: bool,
     pub filter: Option<FilterPattern>,
+    pub content: PanelContent,
 }
 
 impl PanelState {
@@ -142,12 +128,33 @@ impl PanelState {
             sort_asc: true,
             show_hidden: false,
             filter: None,
+            content: PanelContent::Dir,
         };
         s.refresh();
         s
     }
 
+    /// Number of navigable rows: entries, or matching lines for a matches panel.
+    pub fn item_count(&self) -> usize {
+        match &self.content {
+            PanelContent::Matches(m) => m.matches.len(),
+            _ => self.entries.len(),
+        }
+    }
+
     pub fn refresh(&mut self) {
+        match self.content {
+            PanelContent::Dir => self.refresh_dir(),
+            // Search hits don't come from `list`: just re-apply the sort order.
+            PanelContent::SearchResults(_) => {
+                sort_entries(&mut self.entries, self.sort_key, self.sort_asc);
+                self.clamp_cursor();
+            }
+            PanelContent::Matches(_) => {}
+        }
+    }
+
+    fn refresh_dir(&mut self) {
         match self.provider.list(&self.path) {
             Ok(mut entries) => {
                 // Sort invariant is provided by the TreeProvider (dir-first, case-insensitive name).
@@ -213,10 +220,15 @@ impl PanelState {
                 }
             }
         }
-        if self.cursor >= self.entries.len() && !self.entries.is_empty() {
-            self.cursor = self.entries.len() - 1;
+        self.clamp_cursor();
+    }
+
+    fn clamp_cursor(&mut self) {
+        let count = self.item_count();
+        if self.cursor >= count && count > 0 {
+            self.cursor = count - 1;
         }
-        if self.entries.is_empty() {
+        if count == 0 {
             self.cursor = 0;
             self.scroll = 0;
         } else if self.scroll > self.cursor {
@@ -235,6 +247,9 @@ impl PanelState {
     }
 
     pub fn enter_dir(&mut self) -> Option<String> {
+        if !matches!(self.content, PanelContent::Dir) {
+            return None; // hit activation is handled at the App level
+        }
         let entry = self.entries.get(self.cursor)?;
         if entry.name == ".." {
             let parent = self.provider.parent(&self.path)?;
@@ -261,12 +276,13 @@ impl PanelState {
     }
 
     pub fn move_cursor(&mut self, delta: i32, visible_height: usize) {
-        if self.entries.is_empty() {
+        let count = self.item_count();
+        if count == 0 {
             return;
         }
         let new = (self.cursor as i32 + delta)
             .max(0)
-            .min(self.entries.len() as i32 - 1) as usize;
+            .min(count as i32 - 1) as usize;
         self.cursor = new;
         let vh = visible_height.max(1);
         if self.cursor < self.scroll {
@@ -288,7 +304,10 @@ impl PanelState {
             KeyCode::Home if action_mode => { self.move_cursor(i32::MIN, visible_height); PanelOutcome::Consumed }
             KeyCode::End if action_mode => { self.move_cursor(i32::MAX / 2, visible_height); PanelOutcome::Consumed }
             KeyCode::Enter if action_mode => {
-                if self.current_entry().map(|e| e.kind == NodeKind::Dir).unwrap_or(false) {
+                // Non-Dir contents: Enter is intercepted at the App level.
+                if matches!(self.content, PanelContent::Dir)
+                    && self.current_entry().map(|e| e.kind == NodeKind::Dir).unwrap_or(false)
+                {
                     if let Some(err) = self.enter_dir() {
                         return PanelOutcome::NavError(err);
                     }
@@ -302,7 +321,7 @@ impl PanelState {
 
     pub fn move_cursor_to_row(&mut self, row: usize, visible_height: usize) {
         let idx = self.scroll + row;
-        if idx < self.entries.len() {
+        if idx < self.item_count() {
             self.cursor = idx;
             let vh = visible_height.max(1);
             if self.cursor < self.scroll {
@@ -418,10 +437,25 @@ pub struct PanelWidget<'a> {
     pub time_length: usize,
 }
 
+/// ASCII spinner frame for the results-panel footer, driven by the event
+/// loop's 50ms redraw tick.
+fn spinner_frame() -> char {
+    const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    FRAMES[((ms / 120) % FRAMES.len() as u128) as usize]
+}
+
 impl<'a> StatefulWidget for PanelWidget<'a> {
     type State = PanelState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        if matches!(state.content, PanelContent::Matches(_)) {
+            self.render_matches(area, buf, state);
+            return;
+        }
         let border_color = if self.active {
             to_color(self.cs.active_border_fg)
         } else {
@@ -434,11 +468,29 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
         } else {
             let has_dotdot = state.entries.first().map(|e| e.name == "..").unwrap_or(false);
             let total = state.entries.len().saturating_sub(has_dotdot as usize);
-            let text = if tagged_count > 0 {
+            let mut text = if tagged_count > 0 {
                 format!(" {}/{} tagged ", tagged_count, total)
             } else {
                 format!(" {} entries ", total)
             };
+            if let PanelContent::SearchResults(sr) = &state.content {
+                if sr.running {
+                    if let Some(scan) = &sr.scanning {
+                        // The spinner is a right-aligned bottom title, and ratatui
+                        // draws right titles before left ones — keep the footer
+                        // short enough not to paint over it.
+                        let footer_max = (area.width as usize).saturating_sub(2 + 3);
+                        let path_max = footer_max
+                            .saturating_sub(text.chars().count() + "Searching  ".len());
+                        if path_max >= 4 {
+                            text.push_str(&format!(
+                                "Searching {} ",
+                                truncate_path_front(scan, path_max)
+                            ));
+                        }
+                    }
+                }
+            }
             (text, Style::default().fg(border_color))
         };
 
@@ -446,7 +498,7 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
         let title_max = (area.width as usize).saturating_sub(4);
         let title_text = truncate_path_front(&self.title, title_max);
 
-        let block = Block::default()
+        let mut block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
             .title(Span::styled(
@@ -454,6 +506,15 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
                 Style::default().fg(border_color),
             ))
             .title_bottom(Span::styled(footer_text, footer_style));
+        if matches!(&state.content, PanelContent::SearchResults(sr) if sr.running) {
+            block = block.title_bottom(
+                Line::from(Span::styled(
+                    format!(" {} ", spinner_frame()),
+                    Style::default().fg(border_color),
+                ))
+                .alignment(Alignment::Right),
+            );
+        }
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -473,8 +534,14 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
 
         let available_width = inner.width as usize;
         let time_length = self.time_length;
-        // columns: tag(1) + space(1) + name + space(1) + size(8) + space(1) + date(time_length)
-        let fixed = 1 + 1 + 1 + 8 + 1 + time_length;
+        // Per-file match counts, shown as an extra column for content searches.
+        let match_counts = match &state.content {
+            PanelContent::SearchResults(sr) if sr.content_search() => Some(&sr.matches),
+            _ => None,
+        };
+        let count_w = if match_counts.is_some() { 6 } else { 0 };
+        // columns: tag(1) + space(1) + name + space(1) + [count(5) + space(1)] + size(8) + space(1) + date(time_length)
+        let fixed = 1 + 1 + 1 + 8 + 1 + time_length + count_w;
         let name_width = if available_width > fixed + 4 {
             available_width - fixed
         } else {
@@ -493,17 +560,20 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
             let icon = |active: bool| -> &'static str {
                 if !active { " " } else if state.sort_asc { "▲" } else { "▼" }
             };
-            let name_label = if let Some(ref pat) = state.filter {
+            let name_label = if let PanelContent::SearchResults(sr) = &state.content {
+                format!("Name{} [{}]", icon(name_active), sr.query.pattern)
+            } else if let Some(ref pat) = state.filter {
                 format!("Name{} [{}]", icon(name_active), pat.raw)
             } else {
                 format!("Name{}", icon(name_active))
             };
             let name_hdr = truncate_str(&name_label, name_width);
+            let count_hdr = if match_counts.is_some() { "Match " } else { "" };
             let size_label = format!("  Size{} ", icon(size_active));  // 8 chars
             let size_hdr = format!("{:<8}", size_label);
             let date_label = format!(" Mtime{}", icon(date_active));
             let date_hdr = truncate_str(&date_label, time_length);
-            let hdr_text = format!("  {} {} {}", name_hdr, size_hdr, date_hdr);
+            let hdr_text = format!("  {} {}{} {}", name_hdr, count_hdr, size_hdr, date_hdr);
             // Pad / truncate to inner width
             let padded = format!("{:<width$}", hdr_text, width = available_width);
             let display: String = padded.chars().take(available_width).collect();
@@ -527,6 +597,13 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
 
                 let tag_ch = if is_tagged { '*' } else { ' ' };
                 let name_part = truncate_str(&entry.name, name_width);
+                let count_part = match match_counts {
+                    Some(counts) => format!(
+                        "{:>5} ",
+                        counts.get(&entry.name).map(|m| m.len()).unwrap_or(0)
+                    ),
+                    None => String::new(),
+                };
                 let size_part = if entry.name == ".." {
                     "        ".to_string()
                 } else {
@@ -557,8 +634,8 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
                 };
 
                 let text = format!(
-                    "{} {} {} {}",
-                    tag_ch, name_part, size_part, date_part
+                    "{} {} {}{} {}",
+                    tag_ch, name_part, count_part, size_part, date_part
                 );
                 ListItem::new(Line::from(Span::styled(text, base_style)))
             })
@@ -583,6 +660,111 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
 
         let entries_area = Rect { x: inner.x, y: entries_y, width: inner.width, height: entries_height };
         StatefulWidget::render(list, entries_area, buf, &mut list_state);
+    }
+}
+
+impl<'a> PanelWidget<'a> {
+    /// Two-column (line number, text) view of the matching lines of the file
+    /// selected in the results panel, with the matched substring highlighted.
+    fn render_matches(self, area: Rect, buf: &mut Buffer, state: &mut PanelState) {
+        let border_color = if self.active {
+            to_color(self.cs.active_border_fg)
+        } else {
+            to_color(self.cs.inactive_border_fg)
+        };
+
+        let visible_height = area.height.saturating_sub(3).max(1) as usize;
+        if state.cursor < state.scroll {
+            state.scroll = state.cursor;
+        } else if state.cursor >= state.scroll + visible_height {
+            state.scroll = state.cursor + 1 - visible_height;
+        }
+        let (cursor, scroll) = (state.cursor, state.scroll);
+
+        let PanelContent::Matches(ref ms) = state.content else { return };
+
+        let title_max = (area.width as usize).saturating_sub(4);
+        let title_text = truncate_path_front(&self.title, title_max);
+        let footer = format!(" {} matches ", ms.matches.len());
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .title(Span::styled(format!(" {} ", title_text), Style::default().fg(border_color)))
+            .title_bottom(Span::styled(footer, Style::default().fg(border_color)));
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        let num_w = ms
+            .matches
+            .last()
+            .map(|m| m.line.to_string().len())
+            .unwrap_or(1)
+            .max(4);
+        let text_w = (inner.width as usize).saturating_sub(num_w + 2);
+
+        // Header row
+        let hdr_style = Style::default()
+            .fg(border_color)
+            .bg(to_color(self.cs.panel_bg))
+            .add_modifier(Modifier::BOLD);
+        let hdr = format!(" {:>num_w$} Text", "Line");
+        let padded = format!("{:<width$}", hdr, width = inner.width as usize);
+        let display: String = padded.chars().take(inner.width as usize).collect();
+        buf.set_string(inner.x, inner.y, &display, hdr_style);
+
+        let base_style = Style::default()
+            .fg(to_color(self.cs.panel_fg))
+            .bg(to_color(self.cs.panel_bg));
+        let num_style = Style::default()
+            .fg(border_color)
+            .bg(to_color(self.cs.panel_bg));
+        let match_style = Style::default()
+            .fg(to_color(self.cs.search_match_fg))
+            .bg(to_color(self.cs.search_match_bg));
+        let selected_style = Style::default()
+            .fg(to_color(self.cs.selected_fg))
+            .bg(to_color(self.cs.selected_bg));
+
+        let items: Vec<ListItem> = ms
+            .matches
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(visible_height)
+            .map(|(idx, m)| {
+                let is_cursor = idx == cursor && self.active;
+                let text = truncate_str(&m.text, text_w);
+                let num = format!(" {:>num_w$} ", m.line);
+                let line = if is_cursor {
+                    Line::from(Span::styled(format!("{}{}", num, text), selected_style))
+                } else {
+                    let mut spans = vec![Span::styled(num, num_style)];
+                    let mut pos = 0;
+                    for (start, end) in find_matches(&text, &ms.needle, ms.case_sensitive) {
+                        if start > pos {
+                            spans.push(Span::styled(text[pos..start].to_string(), base_style));
+                        }
+                        spans.push(Span::styled(text[start..end].to_string(), match_style));
+                        pos = end;
+                    }
+                    if pos < text.len() {
+                        spans.push(Span::styled(text[pos..].to_string(), base_style));
+                    }
+                    Line::from(spans)
+                };
+                ListItem::new(line)
+            })
+            .collect();
+
+        let list = List::new(items).style(Style::default().bg(to_color(self.cs.panel_bg)));
+        let rows_area = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        Widget::render(list, rows_area, buf);
     }
 }
 
@@ -687,6 +869,88 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    fn entry(name: &str, kind: NodeKind, size: u64) -> NodeEntry {
+        NodeEntry {
+            name: name.to_string(),
+            kind,
+            size,
+            modified: SystemTime::UNIX_EPOCH,
+            permissions: String::new(),
+        }
+    }
+
+    fn test_query() -> SearchQuery {
+        SearchQuery {
+            pattern: "*".to_string(),
+            is_regex: false,
+            case_sensitive: true,
+            content: None,
+            max_depth: None,
+            include_hidden: false,
+            follow_symlinks: false,
+        }
+    }
+
+    #[test]
+    fn refresh_on_results_panel_keeps_hits_and_applies_sort() {
+        let base = make_dirs("results_refresh", 0);
+        let root = NodePath(base.to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), root);
+        panel.content = PanelContent::SearchResults(SearchResultsState::new(test_query()));
+        panel.entries = vec![
+            entry("z/b.rs", NodeKind::File, 10),
+            entry("a/a.rs", NodeKind::File, 20),
+        ];
+        panel.refresh();
+        assert_eq!(panel.entries.len(), 2, "hits must survive refresh");
+        assert_eq!(panel.entries[0].name, "a/a.rs"); // Name asc applied
+
+        panel.sort_key = SortKey::Size;
+        panel.sort_asc = false;
+        panel.refresh();
+        assert_eq!(panel.entries[0].name, "a/a.rs"); // 20 bytes first, desc
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn matches_panel_cursor_moves_over_match_lines() {
+        let base = make_dirs("matches_cursor", 0);
+        let root = NodePath(base.to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), root);
+        let mut ms = MatchesState::new("x".to_string(), true);
+        ms.matches = vec![
+            LineMatch { line: 1, text: "x1".into() },
+            LineMatch { line: 5, text: "x2".into() },
+            LineMatch { line: 9, text: "x3".into() },
+        ];
+        panel.content = PanelContent::Matches(ms);
+        panel.entries.clear();
+        panel.cursor = 0;
+
+        panel.move_cursor(1, 10);
+        assert_eq!(panel.cursor, 1);
+        panel.move_cursor(10, 10);
+        assert_eq!(panel.cursor, 2, "clamped to the last match line");
+        assert_eq!(panel.item_count(), 3);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn enter_dir_is_a_noop_on_search_panels() {
+        let base = make_dirs("results_enter", 1); // base/d0
+        let root = NodePath(base.to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), root.clone());
+        panel.content = PanelContent::SearchResults(SearchResultsState::new(test_query()));
+        panel.entries = vec![entry("d0", NodeKind::Dir, 0)];
+        panel.cursor = 0;
+        assert_eq!(panel.enter_dir(), None);
+        assert_eq!(panel.path, root, "path must not change; App handles hits");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn enter_dir_into_missing_subdirectory_blocks_navigation() {
         let base = make_dirs("subdir_missing", 1); // base/d0
@@ -700,6 +964,50 @@ mod tests {
         let result = panel.enter_dir();
         assert!(result.unwrap().starts_with("Error:"));
         assert_eq!(panel.path.0, base.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn results_footer_never_paints_over_the_spinner() {
+        let base = make_dirs("spinner_footer", 1);
+        let root = NodePath(base.to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), root);
+        let mut sr = SearchResultsState::new(SearchQuery {
+            pattern: "*".into(),
+            is_regex: false,
+            case_sensitive: false,
+            content: None,
+            max_depth: None,
+            include_hidden: false,
+            follow_symlinks: false,
+        });
+        // Long enough to fill the whole footer if not truncated.
+        sr.scanning = Some("/very/long/path/segment/after/segment/that/never/ends".into());
+        panel.content = PanelContent::SearchResults(sr);
+
+        let cs = ColorScheme::default();
+        let widget = PanelWidget {
+            cs: &cs,
+            active: true,
+            title: "results".into(),
+            time_format: "%y-%m-%d %H:%M",
+            time_length: 14,
+        };
+        let area = Rect::new(0, 0, 40, 10);
+        let mut buf = Buffer::empty(area);
+        StatefulWidget::render(widget, area, &mut buf, &mut panel);
+
+        let bottom: String = (0..area.width)
+            .map(|x| buf.cell((x, area.height - 1)).unwrap().symbol().chars().next().unwrap())
+            .collect();
+        // Expect the row to end with ` <frame> ┘`.
+        let tail: Vec<char> = bottom.chars().rev().take(4).collect();
+        assert!(
+            ['|', '/', '-', '\\'].contains(&tail[2]) && tail[1] == ' ' && tail[3] == ' ',
+            "no spinner at footer tail of {bottom:?}"
+        );
+        assert!(bottom.contains("Searching"), "searching text missing: {bottom:?}");
 
         let _ = std::fs::remove_dir_all(&base);
     }

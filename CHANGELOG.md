@@ -8,6 +8,22 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ## [Unreleased]
 
+### Added
+
+- Asynchronous file search (`Alt-?` / `Ctrl-f`, action `search`): find files by name
+  (glob or regex) and optionally by content from the active panel's directory, with
+  max-depth / hidden / follow-symlinks options. Hits stream live into a results panel
+  shown in place of the active panel (mc-style Enter, tagging, F5/F6/F8 to a normal
+  inactive panel, `Alt-r` re-run); content searches replace the inactive panel with a
+  matches panel that follows the selection and opens the new full-screen text viewer
+  jumped to the matching line. New color-scheme keys `search_match_fg`/`search_match_bg`.
+  See docs/FileSearch.md.
+
+### Changed
+
+- The filter dialog's default binding moved from `Ctrl-f` to `Alt-f` (`Ctrl-f` now
+  opens the search dialog).
+
 ### Fixed
 
 - sc now compiles for aarch64-apple-darwin: added macOS-specific peer credential retrieval in IPC

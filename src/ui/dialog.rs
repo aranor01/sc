@@ -318,6 +318,223 @@ pub fn render_input_dialog(
     }
 }
 
+// ── SearchDialog ──────────────────────────────────────────────────────────────
+
+// Focus ring indices:
+//   0 = pattern input, 1 = content input, 2 = depth input,
+//   3 = RegExp, 4 = Case sensitive, 5 = Include hidden, 6 = Follow symlinks,
+//   7 = OK, 8 = Cancel
+const SEARCH_FOCUS_OK: usize = 7;
+const SEARCH_FOCUS_CANCEL: usize = 8;
+const SEARCH_FOCUS_COUNT: usize = 9;
+
+#[derive(Debug, Clone)]
+pub struct SearchDialogState {
+    pub pattern: CmdLineState,
+    pub content: CmdLineState,
+    pub depth: CmdLineState,
+    pub is_regexp: bool,
+    pub case_sensitive: bool,
+    pub include_hidden: bool,
+    pub follow_symlinks: bool,
+    pub error: Option<String>,
+    pub focus: FocusRing,
+}
+
+impl SearchDialogState {
+    pub fn new(include_hidden: bool) -> Self {
+        SearchDialogState {
+            pattern: CmdLineState::new(),
+            content: CmdLineState::new(),
+            depth: CmdLineState::new(),
+            is_regexp: false,
+            case_sensitive: true,
+            include_hidden,
+            follow_symlinks: false,
+            error: None,
+            focus: FocusRing::new(SEARCH_FOCUS_COUNT),
+        }
+    }
+
+    fn focused_input(&mut self) -> Option<&mut CmdLineState> {
+        match self.focus.current() {
+            0 => Some(&mut self.pattern),
+            1 => Some(&mut self.content),
+            2 => Some(&mut self.depth),
+            _ => None,
+        }
+    }
+
+    pub fn toggle_checkbox(&mut self, idx: usize) {
+        match idx {
+            3 => self.is_regexp = !self.is_regexp,
+            4 => self.case_sensitive = !self.case_sensitive,
+            5 => self.include_hidden = !self.include_hidden,
+            6 => self.follow_symlinks = !self.follow_symlinks,
+            _ => {}
+        }
+    }
+
+    pub fn handle_key(&mut self, event: &KeyEvent) -> ModalOutcome {
+        if event.code == KeyCode::Tab && event.modifiers == KeyModifiers::NONE {
+            self.focus.next();
+            return ModalOutcome::Consumed;
+        }
+        if event.code == KeyCode::BackTab {
+            self.focus.prev();
+            return ModalOutcome::Consumed;
+        }
+        if event.code == KeyCode::Esc && event.modifiers == KeyModifiers::NONE {
+            return ModalOutcome::Dismissed;
+        }
+        if event.code == KeyCode::Enter && event.modifiers == KeyModifiers::NONE {
+            if self.focus.current() == SEARCH_FOCUS_CANCEL {
+                return ModalOutcome::Dismissed;
+            }
+            return ModalOutcome::Confirmed;
+        }
+        if event.code == KeyCode::Char(' ') && event.modifiers == KeyModifiers::NONE {
+            match self.focus.current() {
+                idx @ 3..=6 => {
+                    self.toggle_checkbox(idx);
+                    return ModalOutcome::Consumed;
+                }
+                SEARCH_FOCUS_OK => return ModalOutcome::Confirmed,
+                SEARCH_FOCUS_CANCEL => return ModalOutcome::Dismissed,
+                _ => {} // space falls through into the focused text input
+            }
+        }
+        // The depth field accepts digits only.
+        if self.focus.current() == 2 {
+            if let KeyCode::Char(c) = event.code {
+                if !c.is_ascii_digit() {
+                    return ModalOutcome::Consumed;
+                }
+            }
+        }
+        if let Some(input) = self.focused_input() {
+            input.handle_key(event);
+            self.error = None;
+        }
+        ModalOutcome::Consumed
+    }
+}
+
+pub struct SearchDialogAreas {
+    pub ok: Button,
+    pub cancel: Button,
+    /// RegExp, Case sensitive, Include hidden, Follow symlinks.
+    pub checkboxes: [Option<Rect>; 4],
+    /// Pattern, content, depth input rows (click to focus).
+    pub inputs: [Option<Rect>; 3],
+}
+
+pub fn render_search_dialog(
+    area: Rect,
+    buf: &mut Buffer,
+    cs: &ColorScheme,
+    state: &SearchDialogState,
+    press: Option<Position>,
+) -> (SearchDialogAreas, Option<Position>) {
+    // height: 2 border + 3 inputs + 1 error + 2 checkbox rows + 1 gap + 1 buttons
+    let height = 10u16;
+    let width = 52u16.min(area.width.saturating_sub(2));
+    let dialog_area = centered_rect(width, height, area);
+
+    Widget::render(Clear, dialog_area, buf);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(to_color(cs.dialog_border_fg)))
+        .title(Span::styled(
+            " Search ",
+            Style::default().fg(to_color(cs.dialog_fg)).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(to_color(cs.dialog_bg)));
+
+    let inner = block.inner(dialog_area);
+    block.render(dialog_area, buf);
+
+    let label_style = Style::default().fg(to_color(cs.dialog_fg)).bg(to_color(cs.dialog_bg));
+    const LABEL_W: u16 = 17;
+
+    let mut cursor_out: Option<Position> = None;
+    let mut inputs: [Option<Rect>; 3] = [None; 3];
+    let rows: [(&str, &CmdLineState, usize); 3] = [
+        ("File pattern:", &state.pattern, 0),
+        ("Containing text:", &state.content, 1),
+        ("Max depth:", &state.depth, 2),
+    ];
+    for (i, (label, input, focus_idx)) in rows.into_iter().enumerate() {
+        let y = inner.y + i as u16;
+        buf.set_string(inner.x + 1, y, label, label_style);
+        let focused = state.focus.is_focused(focus_idx);
+        let (fg, bg) = if focused {
+            (to_color(cs.cmdline_fg), to_color(cs.cmdline_bg))
+        } else {
+            (to_color(cs.cmdline_inactive_fg), to_color(cs.cmdline_inactive_bg))
+        };
+        let input_area = Rect {
+            x: inner.x + 1 + LABEL_W,
+            y,
+            width: inner.width.saturating_sub(2 + LABEL_W),
+            height: 1,
+        };
+        let pos = render_text_input(input_area, buf, input, fg, bg);
+        if focused {
+            cursor_out = pos;
+        }
+        inputs[i] = Some(input_area);
+    }
+
+    // Error line
+    if let Some(ref err) = state.error {
+        let err_style = Style::default().fg(to_color(cs.dialog_error_fg)).bg(to_color(cs.dialog_bg));
+        let truncated: String = err.chars().take(inner.width as usize).collect();
+        buf.set_string(inner.x, inner.y + 3, &truncated, err_style);
+    }
+
+    // Checkboxes, two per row
+    let cb_x = inner.x + 1;
+    let cb_x2 = inner.x + inner.width / 2;
+    let cb_re = render_checkbox(cb_x, inner.y + 4, buf, "RegExp",
+        state.is_regexp, state.focus.is_focused(3), cs);
+    let cb_cs = render_checkbox(cb_x2, inner.y + 4, buf, "Case sensitive",
+        state.case_sensitive, state.focus.is_focused(4), cs);
+    let cb_hid = render_checkbox(cb_x, inner.y + 5, buf, "Include hidden",
+        state.include_hidden, state.focus.is_focused(5), cs);
+    let cb_sym = render_checkbox(cb_x2, inner.y + 5, buf, "Follow symlinks",
+        state.follow_symlinks, state.focus.is_focused(6), cs);
+
+    // Buttons
+    const OK_LABEL: &str = "[ OK ]";
+    const CANCEL_LABEL: &str = "[Cancel]";
+    let button_row = inner.y + 7;
+    if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
+        const BUTTONS_TOTAL: u16 = (OK_LABEL.len() + 2 + CANCEL_LABEL.len()) as u16;
+        let ok_x = inner.x + inner.width.saturating_sub(BUTTONS_TOTAL) / 2;
+        let ok_btn = Button::build(OK_LABEL, ok_x, button_row, cs);
+        let cancel_btn = Button::build(CANCEL_LABEL, ok_x + OK_LABEL.len() as u16 + 2, button_row, cs);
+        ok_btn.render_state(OK_LABEL, buf,
+            state.focus.is_focused(SEARCH_FOCUS_OK) || ok_btn.is_pressed(press));
+        cancel_btn.render_state(CANCEL_LABEL, buf,
+            state.focus.is_focused(SEARCH_FOCUS_CANCEL) || cancel_btn.is_pressed(press));
+        (SearchDialogAreas {
+            ok: ok_btn,
+            cancel: cancel_btn,
+            checkboxes: [Some(cb_re), Some(cb_cs), Some(cb_hid), Some(cb_sym)],
+            inputs,
+        }, cursor_out)
+    } else {
+        (SearchDialogAreas {
+            ok: Button::default(),
+            cancel: Button::default(),
+            checkboxes: [None; 4],
+            inputs: [None; 3],
+        }, cursor_out)
+    }
+}
+
 // ── ConfirmState ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -548,5 +765,62 @@ pub fn render_error(
         ErrorButtonArea { ok: ok_btn }
     } else {
         ErrorButtonArea { ok: Button::default() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn search_dialog_focus_ring_cycles_through_all_stops() {
+        let mut s = SearchDialogState::new(false);
+        assert_eq!(s.focus.current(), 0);
+        for _ in 0..SEARCH_FOCUS_COUNT {
+            s.handle_key(&key(KeyCode::Tab));
+        }
+        assert_eq!(s.focus.current(), 0);
+    }
+
+    #[test]
+    fn search_dialog_space_toggles_checkboxes_but_types_in_inputs() {
+        let mut s = SearchDialogState::new(false);
+        s.handle_key(&key(KeyCode::Char(' ')));
+        assert_eq!(s.pattern.text, " ");
+        s.focus.set(3);
+        s.handle_key(&key(KeyCode::Char(' ')));
+        assert!(s.is_regexp);
+        s.focus.set(5);
+        s.handle_key(&key(KeyCode::Char(' ')));
+        assert!(s.include_hidden);
+    }
+
+    #[test]
+    fn search_dialog_depth_accepts_digits_only() {
+        let mut s = SearchDialogState::new(false);
+        s.focus.set(2);
+        s.handle_key(&key(KeyCode::Char('a')));
+        s.handle_key(&key(KeyCode::Char('3')));
+        s.handle_key(&key(KeyCode::Char('-')));
+        assert_eq!(s.depth.text, "3");
+    }
+
+    #[test]
+    fn search_dialog_enter_confirms_except_on_cancel() {
+        let mut s = SearchDialogState::new(false);
+        assert!(matches!(s.handle_key(&key(KeyCode::Enter)), ModalOutcome::Confirmed));
+        s.focus.set(SEARCH_FOCUS_CANCEL);
+        assert!(matches!(s.handle_key(&key(KeyCode::Enter)), ModalOutcome::Dismissed));
+        assert!(matches!(s.handle_key(&key(KeyCode::Esc)), ModalOutcome::Dismissed));
+    }
+
+    #[test]
+    fn search_dialog_include_hidden_preseeded() {
+        assert!(SearchDialogState::new(true).include_hidden);
+        assert!(!SearchDialogState::new(false).include_hidden);
     }
 }

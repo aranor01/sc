@@ -1,11 +1,12 @@
 use crate::config::{ActionBindings, ColorScheme, bindings_match_event};
+use crate::pattern::find_matches;
 use crate::ui::modal_event::OverlayOutcome;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::Style,
-    text::Span,
+    text::{Line, Span},
     widgets::{
         Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
         StatefulWidget, Widget, Wrap,
@@ -21,6 +22,12 @@ pub struct OutputOverlayState {
 impl OutputOverlayState {
     pub fn new() -> Self {
         Self { scroll: 0 }
+    }
+
+    /// Open the view scrolled so the given 1-based line is at the top,
+    /// with a couple of lines of context above it when possible.
+    pub fn jump_to_line(&mut self, line: u64) {
+        self.scroll = line.saturating_sub(3).min(u16::MAX as u64) as u16;
     }
 
     pub fn handle_key(&mut self, event: &KeyEvent, dismiss_bindings: &ActionBindings) -> OverlayOutcome {
@@ -51,10 +58,15 @@ impl OutputOverlayState {
     }
 }
 
+/// Full-screen text viewer: shows either the last command's output or a file
+/// from disk, optionally highlighting search matches.
 pub struct OutputOverlayWidget<'a> {
     pub cs: &'a ColorScheme,
     pub text: &'a str,
     pub scroll: u16,
+    pub title: &'a str,
+    /// `(needle, case_sensitive)` — occurrences get the search-match colors.
+    pub highlight: Option<(&'a str, bool)>,
 }
 
 impl<'a> Widget for OutputOverlayWidget<'a> {
@@ -64,7 +76,7 @@ impl<'a> Widget for OutputOverlayWidget<'a> {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(to_color(self.cs.dialog_border_fg)))
-            .title(Span::from(" Command Output (Esc/C-o to close) "))
+            .title(Span::from(self.title))
             .style(Style::default().bg(to_color(self.cs.panel_bg)));
 
         let inner = block.inner(area);
@@ -78,7 +90,35 @@ impl<'a> Widget for OutputOverlayWidget<'a> {
 
         let text_area = Rect { width: inner.width.saturating_sub(1), ..inner };
 
-        let para = Paragraph::new(self.text)
+        let para = match self.highlight {
+            Some((needle, case_sensitive)) if !needle.is_empty() => {
+                let match_style = Style::default()
+                    .fg(to_color(self.cs.search_match_fg))
+                    .bg(to_color(self.cs.search_match_bg));
+                let lines: Vec<Line> = self
+                    .text
+                    .lines()
+                    .map(|line| {
+                        let mut spans = Vec::new();
+                        let mut pos = 0;
+                        for (start, end) in find_matches(line, needle, case_sensitive) {
+                            if start > pos {
+                                spans.push(Span::styled(&line[pos..start], style));
+                            }
+                            spans.push(Span::styled(&line[start..end], match_style));
+                            pos = end;
+                        }
+                        if pos < line.len() {
+                            spans.push(Span::styled(&line[pos..], style));
+                        }
+                        Line::from(spans)
+                    })
+                    .collect();
+                Paragraph::new(lines)
+            }
+            _ => Paragraph::new(self.text),
+        };
+        let para = para
             .style(style)
             .wrap(Wrap { trim: false })
             .scroll((self.scroll, 0));

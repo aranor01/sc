@@ -219,6 +219,7 @@ pub struct KeyBindings {
     pub mkdir: ActionBindings,
     pub path_history: ActionBindings,
     pub filter: ActionBindings,
+    pub search: ActionBindings,
     pub select_group: ActionBindings,
     pub unselect_group: ActionBindings,
     pub refresh_panel: ActionBindings,
@@ -285,7 +286,8 @@ impl Default for KeyBindings {
             bookmark_add: vec![KeyBinding::Single(ke(Char('b'), c))],
             mkdir: vec![KeyBinding::Single(ke(F(7), n))],
             path_history: vec![KeyBinding::Single(ke(Char('H'), a)), KeyBinding::Single(ke(Down, a))],
-            filter: vec![KeyBinding::Single(ke(Char('f'), c))],
+            filter: vec![KeyBinding::Single(ke(Char('f'), a))],
+            search: vec![KeyBinding::Single(ke(Char('?'), a)), KeyBinding::Single(ke(Char('f'), c))],
             select_group: vec![KeyBinding::Single(ke(Char('+'), n))],
             unselect_group: vec![KeyBinding::Single(ke(Char('-'), n))],
             refresh_panel: vec![KeyBinding::Single(ke(Char('r'), a))],
@@ -340,6 +342,8 @@ pub struct ColorScheme {
     pub status_info_bg: Color,
     pub status_warn_fg: Color,
     pub status_warn_bg: Color,
+    pub search_match_fg: Color,
+    pub search_match_bg: Color,
 }
 
 impl Default for ColorScheme {
@@ -373,6 +377,8 @@ impl Default for ColorScheme {
             status_info_bg: rgb(0x00aa55),
             status_warn_fg: rgb(0x000000),
             status_warn_bg: rgb(0xddaa00),
+            search_match_fg: rgb(0x000000),
+            search_match_bg: rgb(0xffcc00),
         }
     }
 }
@@ -531,6 +537,7 @@ impl Config {
                     "mkdir" => cfg.keybindings.mkdir = bindings,
                     "path_history" => cfg.keybindings.path_history = bindings,
                     "filter" => cfg.keybindings.filter = bindings,
+                    "search" => cfg.keybindings.search = bindings,
                     "select_group" => cfg.keybindings.select_group = bindings,
                     "unselect_group" => cfg.keybindings.unselect_group = bindings,
                     "refresh_panel" => cfg.keybindings.refresh_panel = bindings,
@@ -586,6 +593,8 @@ impl Config {
                 status_info_bg: pick("status_info_bg", d.status_info_bg)?,
                 status_warn_fg: pick("status_warn_fg", d.status_warn_fg)?,
                 status_warn_bg: pick("status_warn_bg", d.status_warn_bg)?,
+                search_match_fg: pick("search_match_fg", d.search_match_fg)?,
+                search_match_bg: pick("search_match_bg", d.search_match_bg)?,
             };
         }
 
@@ -756,6 +765,28 @@ mod tests {
         assert_eq!(cfg.menu[0].label, "View");
         assert_eq!(cfg.menu[0].command, "less %f");
         assert_eq!(cfg.menu[0].keys.as_deref(), Some("F3"));
+    }
+
+    #[test]
+    fn search_and_filter_default_bindings() {
+        let cfg = Config::load_from_str("{}").unwrap();
+        assert_eq!(cfg.keybindings.filter, vec![single(Char('f'), M::ALT)]);
+        assert_eq!(
+            cfg.keybindings.search,
+            vec![single(Char('?'), M::ALT), single(Char('f'), M::CONTROL)]
+        );
+    }
+
+    #[test]
+    fn search_binding_and_match_colors_configurable() {
+        let cfg = Config::load_from_str(
+            r##"{"keybindings":{"search":"F19"},
+                "colorscheme":{"search_match_fg":"#111111","search_match_bg":"#222222"}}"##,
+        )
+        .unwrap();
+        assert_eq!(cfg.keybindings.search, vec![single(F(19), M::NONE)]);
+        assert_eq!(cfg.colorscheme.search_match_fg, rgb(0x111111));
+        assert_eq!(cfg.colorscheme.search_match_bg, rgb(0x222222));
     }
 
     #[test]

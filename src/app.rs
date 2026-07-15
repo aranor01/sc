@@ -28,7 +28,7 @@ use crate::config::{ActionBindings, Config, KeyBinding};
 use crate::ipc::{parse_message, CmdlineInjectMode, IpcMessage, IpcServer};
 use crate::history::CommandHistory;
 use crate::macros::{MacroContext, PanelContext};
-use crate::provider::{NodeKind, NodePath, TreeProvider};
+use crate::provider::{NodeEntry, NodeKind, NodePath, SearchEvent, SearchHandle, SearchQuery, TreeProvider};
 use crate::provider::filesystem::FilesystemProvider;
 use crate::state::{AppState, Orientation};
 use crate::ui::button::Button;
@@ -36,11 +36,11 @@ use crate::ui::button_bar::{BarAction, ButtonBarWidget};
 use crate::ui::status_bar::{StatusBarState, StatusBarWidget};
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupDirection, PopupListState, PopupListWidget};
-use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, CheckboxOptions, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState};
+use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, render_search_dialog, CheckboxOptions, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState, SearchDialogAreas, SearchDialogState};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
 use crate::ui::modal_event::{CmdlineOutcome, ModalOutcome, OverlayOutcome, PanelOutcome, PopupOutcome};
-use crate::ui::panel::{build_filter_pattern, PanelState, PanelWidget, SortKey};
+use crate::ui::panel::{build_filter_pattern, MatchesState, PanelContent, PanelState, PanelWidget, SearchResultsState, SortKey};
 
 // ── Mode enums ────────────────────────────────────────────────────────────────
 
@@ -198,6 +198,7 @@ enum Action {
     Mkdir,
     PathHistory,
     Filter,
+    Search,
     SelectGroup,
     UnselectGroup,
     RefreshPanel,
@@ -265,6 +266,7 @@ enum Modal {
     Confirm(ConfirmState),
     Error(String),
     InputDialog(InputDialogState),
+    SearchDialog(SearchDialogState),
     SortPopup(PopupListState, Side),
     BookmarkList(PopupListState),
     PathHistoryList(PopupListState),
@@ -278,9 +280,18 @@ enum ModalAreas {
     UserMenu(UserMenuAreas),
     Error(ErrorButtonArea),
     InputDialog(InputDialogAreas, Option<Position>),
+    SearchDialog(SearchDialogAreas, Option<Position>),
     SortPopup(Rect, usize),
     BookmarkList(Rect, usize),
     PathHistoryList(Rect, usize),
+}
+
+/// Content shown by the full-screen text viewer when it is displaying a file
+/// (as opposed to the last command's output).
+struct ViewerContent {
+    title: String,
+    text: String,
+    highlight: Option<(String, bool)>, // needle, case_sensitive
 }
 
 // ── AppLayout ─────────────────────────────────────────────────────────────────
@@ -419,6 +430,13 @@ pub struct App {
     needs_full_redraw: bool,
     ipc: Option<IpcServer>,
     status: StatusBarState,
+    // Running async search (None when idle or finished); drained each tick.
+    search: Option<Box<dyn SearchHandle>>,
+    // Full-screen text viewer content (file mode); None = viewer closed.
+    viewer: Option<ViewerContent>,
+    // Search dialog hit-test areas (updated each render)
+    search_cb_areas: Cell<[Option<Rect>; 4]>,
+    search_input_areas: Cell<[Option<Rect>; 3]>,
 }
 
 fn shell_escape_path(s: &str) -> String {
@@ -550,6 +568,10 @@ impl App {
             needs_full_redraw: false,
             ipc: IpcServer::new(),
             status: StatusBarState::default(),
+            search: None,
+            viewer: None,
+            search_cb_areas: Cell::new([None; 4]),
+            search_input_areas: Cell::new([None; 3]),
             config,
         };
         // Try to spawn subshell if configured
@@ -598,6 +620,20 @@ impl App {
         match self.active {
             Side::Left => &self.right,
             Side::Right => &self.left,
+        }
+    }
+
+    fn panel(&self, side: Side) -> &PanelState {
+        match side {
+            Side::Left => &self.left,
+            Side::Right => &self.right,
+        }
+    }
+
+    fn panel_mut(&mut self, side: Side) -> &mut PanelState {
+        match side {
+            Side::Left => &mut self.left,
+            Side::Right => &mut self.right,
         }
     }
 
@@ -664,6 +700,7 @@ impl App {
             (&kb.mkdir, Action::Mkdir),
             (&kb.path_history, Action::PathHistory),
             (&kb.filter, Action::Filter),
+            (&kb.search, Action::Search),
             (&kb.select_group, Action::SelectGroup),
             (&kb.unselect_group, Action::UnselectGroup),
             (&kb.refresh_panel, Action::RefreshPanel),
@@ -770,6 +807,7 @@ impl App {
                 self.active_panel_mut().invert_tags();
             }
             Action::Copy => {
+                if !self.file_ops_allowed() { return; }
                 let files = self.active_panel().op_files();
                 if files.is_empty() {
                     self.set_status("Nothing to copy", true);
@@ -784,6 +822,7 @@ impl App {
                 self.modal = Modal::Confirm(ConfirmState::new(ConfirmOp::Copy, files, Some(dst)));
             }
             Action::Move => {
+                if !self.file_ops_allowed() { return; }
                 let files = self.active_panel().op_files();
                 if files.is_empty() {
                     self.set_status("Nothing to move", true);
@@ -798,6 +837,7 @@ impl App {
                 self.modal = Modal::Confirm(ConfirmState::new(ConfirmOp::Move, files, Some(dst)));
             }
             Action::Delete => {
+                if !self.file_ops_allowed() { return; }
                 let files = self.active_panel().op_files();
                 if !files.is_empty() {
                     self.modal = Modal::Confirm(ConfirmState::new(ConfirmOp::Delete, files, None));
@@ -836,6 +876,10 @@ impl App {
                 }
             }
             Action::CmdlineInsertTaggedOther => {
+                if !matches!(self.inactive_panel().content, PanelContent::Dir) {
+                    self.set_status("The inactive panel is not a normal panel", true);
+                    return;
+                }
                 let panel = self.inactive_panel();
                 let mut names: Vec<String> = panel.tagged.iter().cloned().collect();
                 if names.is_empty() {
@@ -854,6 +898,10 @@ impl App {
                 self.cmdline.insert_str(&crate::macros::shell_escape(&path));
             }
             Action::CmdlineInsertPathOther => {
+                if !matches!(self.inactive_panel().content, PanelContent::Dir) {
+                    self.set_status("The inactive panel is not a normal panel", true);
+                    return;
+                }
                 let path = self.inactive_panel().path.0.clone();
                 self.cmdline.insert_str(&crate::macros::shell_escape(&path));
             }
@@ -909,6 +957,10 @@ impl App {
                 });
             }
             Action::SyncPanels => {
+                if !matches!(self.inactive_panel().content, PanelContent::Dir) {
+                    self.set_status("Sync is not available while the matches panel is shown", true);
+                    return;
+                }
                 let path = self.active_panel().path.clone();
                 let inactive = self.inactive_panel_mut();
                 inactive.path = path;
@@ -918,6 +970,10 @@ impl App {
                 inactive.refresh();
             }
             Action::Rename => {
+                if !matches!(self.active_panel().content, PanelContent::Dir) {
+                    self.set_status("Rename is not available in search panels", true);
+                    return;
+                }
                 let name = self.active_panel().current_name();
                 if !name.is_empty() && name != ".." {
                     let state = InputDialogState::new(InputDialogAction::Rename, " Rename ", &name);
@@ -949,6 +1005,10 @@ impl App {
                 self.modal = Modal::BookmarkList(popup);
             }
             Action::Mkdir => {
+                if !matches!(self.active_panel().content, PanelContent::Dir) {
+                    self.set_status("Mkdir is not available in search panels", true);
+                    return;
+                }
                 let state = InputDialogState::new(InputDialogAction::Mkdir, " Create directory ", "");
                 self.modal = Modal::InputDialog(state);
             }
@@ -967,6 +1027,10 @@ impl App {
                 self.modal = Modal::PathHistoryList(popup);
             }
             Action::Filter => {
+                if !matches!(self.active_panel().content, PanelContent::Dir) {
+                    self.set_status("Filter is not available in search panels", true);
+                    return;
+                }
                 let (prefill, opts) = match self.active_panel().filter.as_ref() {
                     Some(f) => (f.raw.clone(), CheckboxOptions {
                         files_only: f.files_only,
@@ -993,9 +1057,41 @@ impl App {
                 self.modal = Modal::InputDialog(state);
             }
             Action::RefreshPanel => {
+                if matches!(self.active_panel().content, PanelContent::SearchResults(_)) {
+                    self.restart_search();
+                    return;
+                }
                 self.active_panel_mut().refresh();
             }
+            Action::Search => {
+                if matches!(self.active_panel().content, PanelContent::Matches(_)) {
+                    self.set_status("Search is not available from the matches panel", true);
+                    return;
+                }
+                let mut state = SearchDialogState::new(self.active_panel().show_hidden);
+                if let PanelContent::SearchResults(sr) = &self.active_panel().content {
+                    let q = &sr.query;
+                    state.pattern.text = q.pattern.clone();
+                    state.pattern.cursor = state.pattern.text.len();
+                    if let Some(c) = &q.content {
+                        state.content.text = c.clone();
+                        state.content.cursor = c.len();
+                    }
+                    if let Some(d) = q.max_depth {
+                        state.depth.text = d.to_string();
+                        state.depth.cursor = state.depth.text.len();
+                    }
+                    state.is_regexp = q.is_regex;
+                    state.case_sensitive = q.case_sensitive;
+                    state.include_hidden = q.include_hidden;
+                    state.follow_symlinks = q.follow_symlinks;
+                }
+                self.modal = Modal::SearchDialog(state);
+            }
             Action::GoToParent => {
+                if !matches!(self.active_panel().content, PanelContent::Dir) {
+                    self.close_search();
+                }
                 let current = self.active_panel().path.clone();
                 let parent_opt = self.active_panel().provider.parent(&current);
                 let Some(parent_path) = parent_opt else { return; };
@@ -1009,6 +1105,9 @@ impl App {
                 self.push_path_history(&dest);
             }
             Action::GoBack => {
+                if !matches!(self.active_panel().content, PanelContent::Dir) {
+                    self.close_search();
+                }
                 let path_opt = match self.active {
                     Side::Left => self.panel_history_left.go_back(),
                     Side::Right => self.panel_history_right.go_back(),
@@ -1031,6 +1130,9 @@ impl App {
                 panel.refresh();
             }
             Action::GoForward => {
+                if !matches!(self.active_panel().content, PanelContent::Dir) {
+                    self.close_search();
+                }
                 let path_opt = match self.active {
                     Side::Left => self.panel_history_left.go_forward(),
                     Side::Right => self.panel_history_right.go_forward(),
@@ -1251,6 +1353,345 @@ impl App {
         }
     }
 
+    // ── File search ───────────────────────────────────────────────────────────
+
+    /// F5/F6/F8 need the active panel to hold real entries and the inactive
+    /// panel to be a normal directory (the destination).
+    fn file_ops_allowed(&mut self) -> bool {
+        if matches!(self.active_panel().content, PanelContent::Matches(_)) {
+            self.set_status("No file operations in the matches panel", true);
+            return false;
+        }
+        if !matches!(self.inactive_panel().content, PanelContent::Dir) {
+            self.set_status("File operations need a normal panel as destination", true);
+            return false;
+        }
+        true
+    }
+
+    fn results_side(&self) -> Option<Side> {
+        if matches!(self.left.content, PanelContent::SearchResults(_)) {
+            Some(Side::Left)
+        } else if matches!(self.right.content, PanelContent::SearchResults(_)) {
+            Some(Side::Right)
+        } else {
+            None
+        }
+    }
+
+    fn execute_search_dialog(&mut self, mut state: SearchDialogState) {
+        let pattern_text = state.pattern.text.trim().to_string();
+        let pattern = if pattern_text.is_empty() { "*".to_string() } else { pattern_text };
+        if let Err(e) = build_filter_pattern(&pattern, false, state.case_sensitive, state.is_regexp) {
+            state.error = Some(e);
+            self.modal = Modal::SearchDialog(state);
+            return;
+        }
+        let depth_text = state.depth.text.trim().to_string();
+        let max_depth = if depth_text.is_empty() {
+            None
+        } else {
+            match depth_text.parse::<u32>() {
+                Ok(n) if n >= 1 => Some(n),
+                _ => {
+                    state.error = Some("Invalid max depth".to_string());
+                    self.modal = Modal::SearchDialog(state);
+                    return;
+                }
+            }
+        };
+        let content = if state.content.text.is_empty() {
+            None
+        } else {
+            Some(state.content.text.clone())
+        };
+        let query = SearchQuery {
+            pattern,
+            is_regex: state.is_regexp,
+            case_sensitive: state.case_sensitive,
+            content,
+            max_depth,
+            include_hidden: state.include_hidden,
+            follow_symlinks: state.follow_symlinks,
+        };
+        self.start_search(query);
+    }
+
+    fn start_search(&mut self, query: SearchQuery) {
+        // A new search replaces any existing search view.
+        self.close_search();
+        let root = self.active_panel().path.clone();
+        let handle = match self.active_panel().provider.search(&root, query.clone()) {
+            Ok(h) => h,
+            Err(e) => {
+                self.modal = Modal::Error(e.to_string());
+                return;
+            }
+        };
+        let content_search = query.content.is_some();
+        let needle = query.content.clone().unwrap_or_default();
+        let case_sensitive = query.case_sensitive;
+        let panel = self.active_panel_mut();
+        panel.content = PanelContent::SearchResults(SearchResultsState::new(query));
+        panel.entries.clear();
+        panel.tagged.clear();
+        panel.cursor = 0;
+        panel.scroll = 0;
+        panel.error = None;
+        if content_search {
+            let inactive = self.inactive_panel_mut();
+            inactive.content = PanelContent::Matches(MatchesState::new(needle, case_sensitive));
+            inactive.tagged.clear();
+            inactive.cursor = 0;
+            inactive.scroll = 0;
+        }
+        self.search = Some(handle);
+    }
+
+    /// A-r in a results panel: run the same query again.
+    fn restart_search(&mut self) {
+        let query = match &self.active_panel().content {
+            PanelContent::SearchResults(sr) => sr.query.clone(),
+            _ => return,
+        };
+        self.search = None; // cancel the current worker
+        let root = self.active_panel().path.clone();
+        match self.active_panel().provider.search(&root, query.clone()) {
+            Ok(handle) => {
+                let panel = self.active_panel_mut();
+                panel.content = PanelContent::SearchResults(SearchResultsState::new(query));
+                panel.entries.clear();
+                panel.tagged.clear();
+                panel.cursor = 0;
+                panel.scroll = 0;
+                let inactive = self.inactive_panel_mut();
+                if let PanelContent::Matches(ms) = &mut inactive.content {
+                    ms.file = None;
+                    ms.abs_path = None;
+                    ms.matches.clear();
+                    inactive.cursor = 0;
+                    inactive.scroll = 0;
+                }
+                self.search = Some(handle);
+            }
+            Err(e) => self.modal = Modal::Error(e.to_string()),
+        }
+    }
+
+    /// Restore any matches panel to a normal directory panel and stop the
+    /// running worker. The results panel itself is left to the caller.
+    fn end_search_companions(&mut self) {
+        self.search = None; // dropping the handle cancels the worker
+        for side in [Side::Left, Side::Right] {
+            let panel = self.panel_mut(side);
+            if matches!(panel.content, PanelContent::Matches(_)) {
+                panel.content = PanelContent::Dir;
+                panel.cursor = 0;
+                panel.scroll = 0;
+                panel.tagged.clear();
+                panel.refresh();
+            }
+        }
+    }
+
+    /// Esc in a search view: cancel the search and restore both panels to the
+    /// directories they showed before (their paths never changed).
+    fn close_search(&mut self) {
+        self.end_search_companions();
+        for side in [Side::Left, Side::Right] {
+            let panel = self.panel_mut(side);
+            if matches!(panel.content, PanelContent::SearchResults(_)) {
+                panel.content = PanelContent::Dir;
+                panel.cursor = 0;
+                panel.scroll = 0;
+                panel.tagged.clear();
+                panel.refresh();
+            }
+        }
+    }
+
+    /// Enter on a search hit, mc-style: a directory hit becomes the panel's
+    /// directory; a file hit shows its parent directory with the file selected.
+    fn activate_search_hit(&mut self) {
+        let (rel, is_dir) = {
+            let panel = self.active_panel();
+            let Some(entry) = panel.current_entry() else { return };
+            (entry.name.clone(), entry.kind == NodeKind::Dir)
+        };
+        let abs = {
+            let panel = self.active_panel();
+            panel.provider.join(&panel.path, &rel).0
+        };
+        self.end_search_companions();
+        let panel = self.active_panel_mut();
+        panel.content = PanelContent::Dir;
+        panel.tagged.clear();
+        panel.cursor = 0;
+        panel.scroll = 0;
+        if is_dir {
+            panel.path = NodePath(abs.clone());
+            panel.refresh();
+            self.push_path_history(&abs);
+        } else {
+            let p = Path::new(&abs);
+            let parent = p
+                .parent()
+                .map(|d| d.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "/".to_string());
+            let file = p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            panel.path = NodePath(parent.clone());
+            panel.refresh();
+            if let Some(idx) = panel.entries.iter().position(|e| e.name == file) {
+                panel.cursor = idx;
+            }
+            let vh = self.active_vh().max(1);
+            let panel = self.active_panel_mut();
+            if panel.cursor >= panel.scroll + vh {
+                panel.scroll = panel.cursor + 1 - vh;
+            }
+            self.push_path_history(&parent);
+        }
+    }
+
+    /// Enter on a matching line: open the text viewer on that file, jumped to
+    /// that line with the matches highlighted.
+    fn open_match_in_viewer(&mut self) {
+        let (abs, needle, case_sensitive, line) = {
+            let panel = self.active_panel();
+            let PanelContent::Matches(ms) = &panel.content else { return };
+            let Some(abs) = ms.abs_path.clone() else { return };
+            let line = ms.matches.get(panel.cursor).map(|m| m.line).unwrap_or(1);
+            (abs, ms.needle.clone(), ms.case_sensitive, line)
+        };
+        match std::fs::read(&abs) {
+            Ok(bytes) => {
+                self.show_output = false;
+                self.viewer = Some(ViewerContent {
+                    title: format!(" {} (Esc to close) ", display_path(&abs)),
+                    text: String::from_utf8_lossy(&bytes).into_owned(),
+                    highlight: Some((needle, case_sensitive)),
+                });
+                self.overlay.jump_to_line(line);
+            }
+            Err(e) => self.set_status(&format!("Cannot open {}: {}", abs, e), true),
+        }
+    }
+
+    /// Drain pending search events once per event-loop tick.
+    fn poll_search(&mut self) {
+        if self.search.is_none() {
+            return;
+        }
+        let Some(side) = self.results_side() else {
+            self.search = None;
+            return;
+        };
+        let mut hits = Vec::new();
+        let mut scanning = None;
+        let mut done = None;
+        if let Some(handle) = self.search.as_mut() {
+            while let Some(event) = handle.try_next() {
+                match event {
+                    SearchEvent::Hit(hit) => hits.push(hit),
+                    SearchEvent::Progress { scanning: dir, .. } => scanning = Some(dir),
+                    SearchEvent::Done { errors } => {
+                        done = Some(errors);
+                        break;
+                    }
+                }
+            }
+        }
+        let panel = self.panel_mut(side);
+        let root = PathBuf::from(&panel.path.0);
+        for hit in hits {
+            let rel = Path::new(&hit.path.0)
+                .strip_prefix(&root)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| hit.path.0.clone());
+            let (kind, size, modified) = match std::fs::metadata(&hit.path.0) {
+                Ok(m) => (
+                    if m.is_dir() { NodeKind::Dir } else { NodeKind::File },
+                    m.len(),
+                    m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                ),
+                Err(_) => (NodeKind::File, 0, std::time::SystemTime::UNIX_EPOCH),
+            };
+            if let PanelContent::SearchResults(sr) = &mut panel.content {
+                sr.matches.insert(rel.clone(), hit.matches);
+            }
+            panel.entries.push(NodeEntry {
+                name: rel,
+                kind,
+                size,
+                modified,
+                permissions: String::new(),
+            });
+        }
+        if let PanelContent::SearchResults(sr) = &mut panel.content {
+            if let Some(dir) = scanning {
+                sr.scanning = Some(display_path(&dir.0));
+            }
+            if done.is_some() {
+                sr.running = false;
+                sr.scanning = None;
+            }
+        }
+        if let Some(errors) = done {
+            self.search = None;
+            self.panel_mut(side).refresh(); // apply the panel's sort order
+            if !errors.is_empty() {
+                self.set_status(
+                    &format!("Search: {} location(s) could not be read", errors.len()),
+                    true,
+                );
+            }
+        }
+    }
+
+    /// Keep the matches panel showing the matches of the file selected in the
+    /// results panel.
+    fn sync_matches_panel(&mut self) {
+        let Some(side) = self.results_side() else { return };
+        let other = side.other();
+        if !matches!(self.panel(other).content, PanelContent::Matches(_)) {
+            return;
+        }
+        let (sel_name, sel_matches, sel_abs) = {
+            let rp = self.panel(side);
+            match rp.current_entry() {
+                Some(entry) => {
+                    let name = entry.name.clone();
+                    let matches = match &rp.content {
+                        PanelContent::SearchResults(sr) => {
+                            sr.matches.get(&name).cloned().unwrap_or_default()
+                        }
+                        _ => Vec::new(),
+                    };
+                    let abs = rp.provider.join(&rp.path, &name).0;
+                    (Some(name), matches, Some(abs))
+                }
+                None => (None, Vec::new(), None),
+            }
+        };
+        let panel = self.panel_mut(other);
+        let mut changed = false;
+        if let PanelContent::Matches(ms) = &mut panel.content {
+            if ms.file != sel_name {
+                ms.file = sel_name;
+                ms.abs_path = sel_abs;
+                ms.matches = sel_matches;
+                changed = true;
+            }
+        }
+        if changed {
+            panel.cursor = 0;
+            panel.scroll = 0;
+        }
+    }
+
     /// Call the completion script with the current cmdline text.
     /// Returns `(candidates, warning)` where `warning` is set when the script is
     /// missing or exits non-zero with no output.
@@ -1346,6 +1787,12 @@ impl App {
     }
 
     fn execute_menu_item(&mut self, cmd_template: String) {
+        if !matches!(self.inactive_panel().content, PanelContent::Dir)
+            && template_references_inactive(&cmd_template)
+        {
+            self.set_status("Command references the inactive panel, which is not a normal panel now", true);
+            return;
+        }
         let prior_cmdline = self.cmdline.clone();
         let result = self.expand_menu_command(&cmd_template);
         if result.untag_active {
@@ -1501,6 +1948,15 @@ impl App {
                 }
                 if errors.is_empty() {
                     self.active_panel_mut().tagged.clear();
+                    // A results panel doesn't re-list from disk: drop the
+                    // deleted hits from the shown entries ourselves.
+                    let panel = self.active_panel_mut();
+                    if let PanelContent::SearchResults(sr) = &mut panel.content {
+                        for name in &files {
+                            sr.matches.remove(name);
+                        }
+                        panel.entries.retain(|e| !files.contains(&e.name));
+                    }
                 }
             }
         }
@@ -1535,10 +1991,14 @@ impl App {
     }
 
     fn handle_key_event_inner(&mut self, event: KeyEvent) {
-        // Output overlay active — block all input except scroll/dismiss keys
-        if self.show_output {
+        // Output overlay / text viewer active — block all input except scroll/dismiss keys
+        if self.show_output || self.viewer.is_some() {
             match self.overlay.handle_key(&event, &self.config.keybindings.toggle_shell) {
-                OverlayOutcome::Dismissed => { self.show_output = false; return; }
+                OverlayOutcome::Dismissed => {
+                    self.show_output = false;
+                    self.viewer = None;
+                    return;
+                }
                 OverlayOutcome::Consumed | OverlayOutcome::Passthrough => return,
             }
         }
@@ -1595,6 +2055,23 @@ impl App {
                             std::mem::replace(&mut self.modal, Modal::None)
                         {
                             self.execute_input_dialog(state);
+                        }
+                    }
+                    ModalOutcome::Dismissed => self.modal = Modal::None,
+                    _ => {}
+                }
+                return;
+            }
+            Modal::SearchDialog(_) => {
+                let outcome = if let Modal::SearchDialog(ref mut s) = self.modal {
+                    s.handle_key(&event)
+                } else { ModalOutcome::Consumed };
+                match outcome {
+                    ModalOutcome::Confirmed => {
+                        if let Modal::SearchDialog(state) =
+                            std::mem::replace(&mut self.modal, Modal::None)
+                        {
+                            self.execute_search_dialog(state);
                         }
                     }
                     ModalOutcome::Dismissed => self.modal = Modal::None,
@@ -1779,6 +2256,27 @@ impl App {
                 _ => { self.quicksearch = None; }
             }
             return;
+        }
+
+        // Search views: Enter activates a hit / opens the viewer; Esc closes the
+        // whole search view (with a non-empty cmdline the first Esc only enters
+        // action mode below, so this is effectively Esc Esc).
+        if event.modifiers == KeyModifiers::NONE && self.action_mode() {
+            match (event.code, &self.active_panel().content) {
+                (KeyCode::Enter, PanelContent::SearchResults(_)) => {
+                    self.activate_search_hit();
+                    return;
+                }
+                (KeyCode::Enter, PanelContent::Matches(_)) => {
+                    self.open_match_in_viewer();
+                    return;
+                }
+                (KeyCode::Esc, PanelContent::SearchResults(_) | PanelContent::Matches(_)) => {
+                    self.close_search();
+                    return;
+                }
+                _ => {}
+            }
         }
 
         // ESC: toggle explicit action mode when cmdline has text (one-shot panel focus).
@@ -1989,6 +2487,38 @@ impl App {
                     self.modal = Modal::None;
                 }
             }
+            Modal::SearchDialog(_) => {
+                let cbs = self.search_cb_areas.get();
+                let inputs = self.search_input_areas.get();
+                let clicked_cb = if down == Some(up) {
+                    cbs.iter().position(|r| r.is_some_and(|r| r.contains(up)))
+                } else {
+                    None
+                };
+                let clicked_input = if down == Some(up) {
+                    inputs.iter().position(|r| r.is_some_and(|r| r.contains(up)))
+                } else {
+                    None
+                };
+                if let Some(i) = clicked_cb {
+                    if let Modal::SearchDialog(ref mut s) = self.modal {
+                        s.toggle_checkbox(3 + i);
+                        s.focus.set(3 + i);
+                    }
+                } else if let Some(i) = clicked_input {
+                    if let Modal::SearchDialog(ref mut s) = self.modal {
+                        s.focus.set(i);
+                    }
+                } else if input_ok.clicked(down, up) {
+                    if let Modal::SearchDialog(state) =
+                        std::mem::replace(&mut self.modal, Modal::None)
+                    {
+                        self.execute_search_dialog(state);
+                    }
+                } else if input_cancel.clicked(down, up) {
+                    self.modal = Modal::None;
+                }
+            }
             Modal::PathHistoryList(_) => {
                 let area = self.path_history_popup_area.get();
                 let offset = self.path_history_popup_offset.get();
@@ -2109,10 +2639,17 @@ impl App {
         }
         // Header row click: sort by column
         if row == inner_y {
+            if matches!(self.panel(clicked_side).content, PanelContent::Matches(_)) {
+                return; // the matches panel has no sortable columns
+            }
             let inner_x = clicked_area.x + 1;
             let inner_width = clicked_area.width.saturating_sub(2) as usize;
             let time_length = self.config.panels.time_length;
-            let fixed = 1 + 1 + 1 + 8 + 1 + time_length; // same formula as panel.rs
+            let count_w = match &self.panel(clicked_side).content {
+                PanelContent::SearchResults(sr) if sr.content_search() => 6,
+                _ => 0,
+            };
+            let fixed = 1 + 1 + 1 + 8 + 1 + time_length + count_w; // same formula as panel.rs
             let name_width = if inner_width > fixed + 4 { inner_width - fixed } else { 4 };
             let rel_x = col.saturating_sub(inner_x) as usize;
             let panel = match clicked_side {
@@ -2128,7 +2665,7 @@ impl App {
                     panel.sort_asc = true;
                 }
                 panel.refresh();
-            } else if rel_x > 2 + name_width && rel_x < 2 + name_width + 9 {
+            } else if rel_x > 2 + name_width + count_w && rel_x < 2 + name_width + count_w + 9 {
                 // Size column
                 if panel.sort_key == SortKey::Size {
                     panel.sort_asc = !panel.sort_asc;
@@ -2137,7 +2674,7 @@ impl App {
                     panel.sort_asc = true;
                 }
                 panel.refresh();
-            } else if rel_x >= 2 + name_width + 10 && rel_x < 2 + name_width + 10 + time_length {
+            } else if rel_x >= 2 + name_width + count_w + 10 && rel_x < 2 + name_width + count_w + 10 + time_length {
                 // Mtime column
                 if panel.sort_key == SortKey::Modified {
                     panel.sort_asc = !panel.sort_asc;
@@ -2164,20 +2701,38 @@ impl App {
 
         match btn {
             MouseButton::Left => {
+                enum DoubleAct { None, Hit, Match }
+                let mut act = DoubleAct::None;
                 let nav_err = {
                     let panel = match clicked_side {
                         Side::Left => &mut self.left,
                         Side::Right => &mut self.right,
                     };
                     panel.move_cursor_to_row(entry_row, vh);
-                    if is_double && panel.current_entry().map(|e| e.kind == NodeKind::Dir).unwrap_or(false) {
-                        panel.enter_dir()
+                    if is_double {
+                        match &panel.content {
+                            PanelContent::Dir => {
+                                if panel.current_entry().map(|e| e.kind == NodeKind::Dir).unwrap_or(false) {
+                                    panel.enter_dir()
+                                } else {
+                                    None
+                                }
+                            }
+                            PanelContent::SearchResults(_) => { act = DoubleAct::Hit; None }
+                            PanelContent::Matches(_) => { act = DoubleAct::Match; None }
+                        }
                     } else {
                         None
                     }
                 };
                 if let Some(err) = nav_err {
                     self.set_status(&err, true);
+                }
+                match act {
+                    // clicked_side became the active panel above
+                    DoubleAct::Hit => self.activate_search_hit(),
+                    DoubleAct::Match => self.open_match_in_viewer(),
+                    DoubleAct::None => {}
                 }
             }
             MouseButton::Right => {
@@ -2198,8 +2753,8 @@ impl App {
 
         let pos = Position { x: col, y: row };
 
-        // Output overlay — capture all mouse input; only scroll/scrollbar clicks are meaningful.
-        if self.show_output {
+        // Output overlay / text viewer — capture all mouse input; only scroll/scrollbar clicks are meaningful.
+        if self.show_output || self.viewer.is_some() {
             let area = self.overlay_area.get();
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
@@ -2214,8 +2769,9 @@ impl App {
                     let inner_h = area.height.saturating_sub(2) as usize;
                     let scrollbar_col = area.x + 1 + inner_w;
                     if col == scrollbar_col.saturating_sub(1) {
-                        let total_lines = self.last_output.as_deref()
-                            .map(|t| t.lines().count())
+                        let total_lines = self.viewer.as_ref()
+                            .map(|v| v.text.lines().count())
+                            .or_else(|| self.last_output.as_deref().map(|t| t.lines().count()))
                             .unwrap_or(0);
                         let track_row = row.saturating_sub(inner_y) as usize;
                         self.overlay.scrollbar_click(track_row, inner_h, total_lines);
@@ -2575,7 +3131,7 @@ impl App {
 
         // Panels
         let left_active = self.active == Side::Left;
-        let left_title = display_path(&self.left.path.0);
+        let left_title = panel_title(&self.left);
         frame.render_stateful_widget(
             PanelWidget {
                 cs: &cs,
@@ -2588,7 +3144,7 @@ impl App {
             &mut self.left,
         );
         let right_active = self.active == Side::Right;
-        let right_title = display_path(&self.right.path.0);
+        let right_title = panel_title(&self.right);
         frame.render_stateful_widget(
             PanelWidget {
                 cs: &cs,
@@ -2619,7 +3175,11 @@ impl App {
             };
             let cursor_pos = cmdline_widget.render_with_cursor(cmdline_area, buf, render_state);
             if let Some(pos) = cursor_pos {
-                if matches!(self.modal, Modal::None) && !self.show_output && command_line_is_active {
+                if matches!(self.modal, Modal::None)
+                    && !self.show_output
+                    && self.viewer.is_none()
+                    && command_line_is_active
+                {
                     frame.set_cursor_position(pos);
                 }
             }
@@ -2678,14 +3238,27 @@ impl App {
             }
         }
 
-        // Output overlay — drawn after cmdline/button bar so it covers the full terminal area
-        if self.show_output {
+        // Output overlay / text viewer — drawn after cmdline/button bar so it
+        // covers the full terminal area
+        if let Some(viewer) = &self.viewer {
+            self.overlay_area.set(area);
+            let overlay = OutputOverlayWidget {
+                cs: &cs,
+                text: &viewer.text,
+                scroll: self.overlay.scroll,
+                title: &viewer.title,
+                highlight: viewer.highlight.as_ref().map(|(n, c)| (n.as_str(), *c)),
+            };
+            frame.render_widget(overlay, area);
+        } else if self.show_output {
             if let Some(text) = &self.last_output {
                 self.overlay_area.set(area);
                 let overlay = OutputOverlayWidget {
                     cs: &cs,
                     text,
                     scroll: self.overlay.scroll,
+                    title: " Command Output (Esc/C-o to close) ",
+                    highlight: None,
                 };
                 frame.render_widget(overlay, area);
             }
@@ -2710,6 +3283,10 @@ impl App {
             Modal::InputDialog(state) => {
                 let (a, cursor) = render_input_dialog(area, frame.buffer_mut(), &cs, state, press);
                 ModalAreas::InputDialog(a, cursor)
+            }
+            Modal::SearchDialog(state) => {
+                let (a, cursor) = render_search_dialog(area, frame.buffer_mut(), &cs, state, press);
+                ModalAreas::SearchDialog(a, cursor)
             }
             Modal::SortPopup(state, side) => {
                 let panel_area = match side {
@@ -2769,6 +3346,13 @@ impl App {
                 self.input_cb_files_only.set(a.cb_files_only);
                 self.input_cb_case_sensitive.set(a.cb_case_sensitive);
                 self.input_cb_regexp.set(a.cb_regexp);
+                input_dialog_cursor = cursor;
+            }
+            ModalAreas::SearchDialog(a, cursor) => {
+                self.input_ok_btn.set(a.ok);
+                self.input_cancel_btn.set(a.cancel);
+                self.search_cb_areas.set(a.checkboxes);
+                self.search_input_areas.set(a.inputs);
                 input_dialog_cursor = cursor;
             }
             ModalAreas::SortPopup(r, offset) => {
@@ -2961,11 +3545,41 @@ impl App {
             if let Some(msg) = self.ipc.as_ref().and_then(|ipc| ipc.try_recv()) {
                 self.handle_ipc(msg);
             }
+
+            self.poll_search();
+            self.sync_matches_panel();
         }
 
         self.save_state();
         Ok(())
     }
+}
+
+/// Panel border title, depending on what the panel is showing.
+fn panel_title(panel: &PanelState) -> String {
+    match &panel.content {
+        PanelContent::Dir => display_path(&panel.path.0),
+        PanelContent::SearchResults(_) => format!("Search {}", display_path(&panel.path.0)),
+        PanelContent::Matches(ms) => match &ms.file {
+            Some(file) => format!("Matches: {}", file),
+            None => "Matches".to_string(),
+        },
+    }
+}
+
+/// True when a user-menu command template uses a macro that reads the
+/// inactive panel (%F, %D, %T, %U, %S); %% escapes are skipped.
+fn template_references_inactive(template: &str) -> bool {
+    let mut chars = template.chars();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            match chars.next() {
+                Some('F') | Some('D') | Some('T') | Some('U') | Some('S') => return true,
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 fn find_complete_script() -> Option<PathBuf> {
