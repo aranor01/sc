@@ -427,6 +427,79 @@ fn truncate_str(s: &str, max: usize) -> String {
     }
 }
 
+/// Byte offset of the `n`th char in `s` (or `s.len()` if `s` has fewer than `n` chars).
+fn byte_of_char(s: &str, n: usize) -> usize {
+    s.char_indices().nth(n).map(|(b, _)| b).unwrap_or(s.len())
+}
+
+/// Truncates a matches-panel line to `max` chars for display. If the full line
+/// already fits, it's returned unchanged (padded) and `hits` unchanged. Otherwise,
+/// if `hits` has a first entry, the visible window is centered on it (truncating
+/// the start and/or end as needed, each marked with a single `~`) so a match far
+/// into the line stays visible instead of being silently cut off. With no hits,
+/// falls back to front-only truncation (matches `truncate_str`'s behavior).
+/// `hits` are byte ranges into `text`; returns them translated into byte ranges
+/// valid for the returned text, dropping any hit that falls entirely outside the
+/// visible window.
+fn truncate_matches_line(text: &str, hits: &[(usize, usize)], max: usize) -> (String, Vec<(usize, usize)>) {
+    let total_chars = text.chars().count();
+    if total_chars <= max {
+        return (format!("{:<width$}", text, width = max), hits.to_vec());
+    }
+    let Some(&(first_start, first_end)) = hits.first().filter(|_| max >= 4) else {
+        let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+        out.push('~');
+        return (out, Vec::new());
+    };
+
+    let match_start_char = text[..first_start].chars().count();
+    let match_end_char = text[..first_end].chars().count();
+    let center_char = (match_start_char + match_end_char) / 2;
+
+    // Pass 1: assume both markers are needed, to get a safe (upper-bound) read on
+    // which side(s) actually get truncated.
+    let window = |content_w: usize| -> (usize, usize) {
+        let content_w = content_w.max(1);
+        let mut start = center_char.saturating_sub(content_w / 2);
+        if start + content_w > total_chars {
+            start = total_chars.saturating_sub(content_w);
+        }
+        (start, (start + content_w).min(total_chars))
+    };
+    let (start1, end1) = window(max.saturating_sub(2));
+    let need_lead = start1 > 0;
+    let need_trail = end1 < total_chars;
+
+    // Pass 2: reserve only the marker(s) actually needed, freeing up any column
+    // pass 1 conservatively set aside for a marker that turns out unnecessary.
+    let reserve = need_lead as usize + need_trail as usize;
+    let (start, end) = window(max - reserve);
+    let need_lead = start > 0;
+    let need_trail = end < total_chars;
+
+    let start_byte = byte_of_char(text, start);
+    let end_byte = byte_of_char(text, end);
+    let lead: &str = if need_lead { "~" } else { "" };
+    let trail: &str = if need_trail { "~" } else { "" };
+    let windowed = format!("{lead}{}{trail}", &text[start_byte..end_byte]);
+    let padded = format!("{:<width$}", windowed, width = max);
+
+    let translated = hits
+        .iter()
+        .filter_map(|&(h_start, h_end)| {
+            let clip_start = h_start.max(start_byte);
+            let clip_end = h_end.min(end_byte);
+            if clip_start >= clip_end {
+                return None;
+            }
+            let offset = lead.len() + clip_start - start_byte;
+            Some((offset, offset + (clip_end - clip_start)))
+        })
+        .collect();
+
+    (padded, translated)
+}
+
 /// Truncates from the front with a leading `...`, keeping the tail (the most specific,
 /// currently-relevant part of a path) visible instead of the start.
 fn truncate_path_front(s: &str, max: usize) -> String {
@@ -768,14 +841,14 @@ impl<'a> PanelWidget<'a> {
             .take(visible_height)
             .map(|(idx, m)| {
                 let is_cursor = idx == cursor && self.active;
-                let text = truncate_str(&m.text, text_w);
+                let full_hits = matcher.as_ref().map(|mm| mm.find_matches(&m.text)).unwrap_or_default();
+                let (text, hits) = truncate_matches_line(&m.text, &full_hits, text_w);
                 let num = format!(" {:>num_w$} ", m.line);
                 let line = if is_cursor {
                     Line::from(Span::styled(format!("{}{}", num, text), selected_style))
                 } else {
                     let mut spans = vec![Span::styled(num, num_style)];
                     let mut pos = 0;
-                    let hits = matcher.as_ref().map(|m| m.find_matches(&text)).unwrap_or_default();
                     for (start, end) in hits {
                         if start > pos {
                             spans.push(Span::styled(text[pos..start].to_string(), base_style));
@@ -825,6 +898,56 @@ mod tests {
     #[test]
     fn truncate_path_front_keeps_tail_when_too_narrow_for_ellipsis() {
         assert_eq!(truncate_path_front("/home/alice/projects", 2), "ts");
+    }
+
+    #[test]
+    fn truncate_matches_line_fits_unchanged() {
+        let (out, hits) = truncate_matches_line("hello cat world", &[(6, 9)], 20);
+        assert_eq!(out, format!("{:<20}", "hello cat world"));
+        assert_eq!(hits, vec![(6, 9)]);
+    }
+
+    #[test]
+    fn truncate_matches_line_match_near_start_needs_no_leading_marker() {
+        let text = "cat0123456789ABCDEFGHIJ";
+        let (out, hits) = truncate_matches_line(text, &[(0, 3)], 10);
+        assert_eq!(out, "cat012345~");
+        assert_eq!(hits, vec![(0, 3)]);
+        assert_eq!(&out[hits[0].0..hits[0].1], "cat");
+    }
+
+    #[test]
+    fn truncate_matches_line_centers_match_with_both_markers() {
+        let text = format!("{}cat{}", "A".repeat(20), "B".repeat(20));
+        let (out, hits) = truncate_matches_line(&text, &[(20, 23)], 10);
+        assert_eq!(out, "~AAAcatBB~");
+        assert_eq!(hits, vec![(4, 7)]);
+        assert_eq!(&out[hits[0].0..hits[0].1], "cat");
+    }
+
+    #[test]
+    fn truncate_matches_line_match_near_end_needs_no_trailing_marker() {
+        let text = format!("{}cat", "A".repeat(30));
+        let (out, hits) = truncate_matches_line(&text, &[(30, 33)], 10);
+        assert_eq!(out, "~AAAAAAcat");
+        assert_eq!(hits, vec![(7, 10)]);
+        assert_eq!(&out[hits[0].0..hits[0].1], "cat");
+    }
+
+    #[test]
+    fn truncate_matches_line_no_hits_falls_back_to_trailing_marker_only() {
+        let text = "A".repeat(20);
+        let (out, hits) = truncate_matches_line(&text, &[], 10);
+        assert_eq!(out, "AAAAAAAAA~");
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn truncate_matches_line_too_narrow_falls_back_regardless_of_hits() {
+        let text = format!("{}cat{}", "A".repeat(20), "B".repeat(20));
+        let (out, hits) = truncate_matches_line(&text, &[(20, 23)], 3);
+        assert_eq!(out, "AA~");
+        assert!(hits.is_empty());
     }
 
     #[test]
@@ -971,6 +1094,39 @@ mod tests {
         panel.move_cursor(10, 10);
         assert_eq!(panel.cursor, 2, "clamped to the last match line");
         assert_eq!(panel.item_count(), 3);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn matches_panel_keeps_a_far_right_match_visible() {
+        let base = make_dirs("matches_far_right", 0);
+        let root = NodePath(base.to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), root);
+        let mut ms = MatchesState::new("cat".to_string(), true, false, false);
+        let line = format!("{}cat{}", "A".repeat(30), "B".repeat(30));
+        ms.matches = vec![LineMatch { line: 1, text: line }];
+        panel.content = PanelContent::Matches(ms);
+        panel.entries.clear();
+        panel.cursor = 0;
+
+        let cs = ColorScheme::default();
+        let widget = PanelWidget {
+            cs: &cs,
+            active: false, // avoid cursor-row styling so the match highlight is exercised
+            title: "matches".into(),
+            time_format: "%y-%m-%d %H:%M",
+            time_length: 14,
+        };
+        let area = Rect::new(0, 0, 30, 10);
+        let mut buf = Buffer::empty(area);
+        StatefulWidget::render(widget, area, &mut buf, &mut panel);
+
+        let row: String = (0..area.width)
+            .map(|x| buf.cell((x, 2)).unwrap().symbol().chars().next().unwrap())
+            .collect();
+        assert!(row.contains("cat"), "match must stay visible in the truncated row: {row:?}");
+        assert!(row.contains('~'), "long line must show a truncation marker: {row:?}");
 
         let _ = std::fs::remove_dir_all(&base);
     }

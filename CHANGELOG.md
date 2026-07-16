@@ -20,8 +20,10 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   tagging, F5/F6/F8 to a normal inactive panel, `Alt-r` re-run); content searches
   replace the inactive panel with a matches panel that follows the selection and opens
   the new full-screen text viewer jumped to the matching line — both consistently honor
-  the content search's regex/whole-word mode when highlighting. New color-scheme keys
-  `search_match_fg`/`search_match_bg`. See docs/FileSearch.md.
+  the content search's regex/whole-word mode when highlighting. Lines too long to fit
+  are truncated around the first match (marked with `~`) so it stays visible instead of
+  being cut off. New color-scheme keys `search_match_fg`/`search_match_bg`. See
+  docs/FileSearch.md.
 - The most recent search a panel jumped away from (via Enter on a hit) stays reachable
   through that panel's ordinary back/forward history for the session: `Alt-Left`/
   `Alt-Right` move into and out of it in both directions, `Alt-Up` closes it like

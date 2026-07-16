@@ -74,7 +74,11 @@ lifetime of the results panel:
   re-syncing as the selection moves. Two columns: **line number** and **text**, with the
   matched substring highlighted (`search_match_fg`/`search_match_bg` color-scheme keys).
   Highlighting honors the content search's **RegExp**/**Case sensitive**/**Whole words**
-  mode, so it always matches what the search itself matched.
+  mode, so it always matches what the search itself matched. A line too long to fit is
+  truncated around the *first* occurrence in that line instead of always keeping the
+  start: the visible window is centered on it, truncating the start and/or end as
+  needed (each marked with a single `~`), so a match far into a long line stays visible
+  rather than being silently cut off.
 - `Tab` switches focus to it as with any panel; Up/Down/PgUp/PgDn scroll the matches.
 - **Enter** on a match opens the internal text viewer on that file, jumped to that line.
 - While the matches panel is shown, file operations and the command-line/menu actions
