@@ -174,9 +174,34 @@ impl Drop for FsSearchHandle {
     }
 }
 
-/// Longest stored matching line; anything longer is cut at a char boundary
-/// so a minified file can't blow up memory.
+/// Longest stored matching line; anything longer is cut down to a window
+/// centered on the first match (at a char boundary) so a minified file can't
+/// blow up memory, without losing the match itself off the truncated end.
 const MAX_MATCH_LINE: usize = 1000;
+
+/// Keeps `text` within `MAX_MATCH_LINE` bytes, centering the kept window on
+/// `first_hit` (a byte range within `text`) instead of always keeping the
+/// start, so a match far into a long line survives the cap.
+fn cap_match_line(text: &str, first_hit: (usize, usize)) -> String {
+    if text.len() <= MAX_MATCH_LINE {
+        return text.to_string();
+    }
+    let (h_start, h_end) = first_hit;
+    let center = (h_start + h_end) / 2;
+    let half = MAX_MATCH_LINE / 2;
+    let mut start = center.saturating_sub(half);
+    if start + MAX_MATCH_LINE > text.len() {
+        start = text.len().saturating_sub(MAX_MATCH_LINE);
+    }
+    let mut end = (start + MAX_MATCH_LINE).min(text.len());
+    while start > 0 && !text.is_char_boundary(start) {
+        start -= 1;
+    }
+    while end < text.len() && !text.is_char_boundary(end) {
+        end += 1;
+    }
+    text[start..end].to_string()
+}
 
 fn search_worker(
     root: PathBuf,
@@ -318,15 +343,10 @@ fn scan_file(
             buf.pop();
         }
         let text = String::from_utf8_lossy(&buf);
-        if !matcher.find_matches(&text).is_empty() {
-            let mut text = text.into_owned();
-            if text.len() > MAX_MATCH_LINE {
-                let mut cut = MAX_MATCH_LINE;
-                while !text.is_char_boundary(cut) {
-                    cut -= 1;
-                }
-                text.truncate(cut);
-            }
+        let hits = matcher.find_matches(&text);
+        if let Some(&first_hit) = hits.first() {
+            let text = text.into_owned();
+            let text = cap_match_line(&text, first_hit);
             matches.push(LineMatch { line: line_no, text });
         }
     }
@@ -616,6 +636,26 @@ mod tests {
         let (hits, errors) = run(&base, q);
         assert!(errors.is_empty());
         assert_eq!(rel_names(&base, &hits), vec!["real.rs"]);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn content_search_keeps_far_match_visible_on_long_line() {
+        let base = make_base("long_line_match");
+        let line = format!("{}needle{}", "A".repeat(2000), "B".repeat(2000));
+        std::fs::write(base.join("hit.txt"), format!("{line}\n")).unwrap();
+
+        let mut q = query("*");
+        q.content = Some("needle".to_string());
+        let (hits, errors) = run(&base, q);
+        assert!(errors.is_empty());
+        assert_eq!(rel_names(&base, &hits), vec!["hit.txt"]);
+        assert_eq!(hits[0].matches.len(), 1);
+        let m = &hits[0].matches[0];
+        assert_eq!(m.line, 1);
+        assert!(m.text.len() <= MAX_MATCH_LINE);
+        assert!(m.text.contains("needle"), "match must survive the length cap: {:?}", m.text);
 
         let _ = std::fs::remove_dir_all(&base);
     }
