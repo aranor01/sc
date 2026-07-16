@@ -64,16 +64,19 @@ impl OutputOverlayState {
         let mut rows_before = 0u64;
         let mut found = false;
         for (idx, raw_line) in text.lines().enumerate() {
+            // Match render()'s tab expansion so the predicted row lines up
+            // with what's actually displayed.
+            let line_text = super::expand_tabs(raw_line);
             if idx as u64 + 1 == line {
                 found = true;
                 if let Some((m_start, _)) =
-                    matcher.as_ref().and_then(|m| m.find_matches(raw_line).into_iter().next())
+                    matcher.as_ref().and_then(|m| m.find_matches(&line_text).into_iter().next())
                 {
-                    rows_before += (wrapped_row_count(&raw_line[..m_start], width) - 1) as u64;
+                    rows_before += (wrapped_row_count(&line_text[..m_start], width) - 1) as u64;
                 }
                 break;
             }
-            rows_before += wrapped_row_count(raw_line, width) as u64;
+            rows_before += wrapped_row_count(&line_text, width) as u64;
         }
         if found {
             self.scroll = rows_before.saturating_sub(2).min(u16::MAX as u64) as u16;
@@ -224,34 +227,36 @@ impl<'a> Widget for OutputOverlayWidget<'a> {
         let text_area = Rect { width: content_width(area), ..inner };
 
         let matcher = build_matcher(self.highlight);
-        let para = match matcher {
-            Some(m) => {
-                let match_style = Style::default()
-                    .fg(to_color(self.cs.search_match_fg))
-                    .bg(to_color(self.cs.search_match_bg));
-                let lines: Vec<Line> = self
-                    .text
-                    .lines()
-                    .map(|line| {
-                        let mut spans = Vec::new();
-                        let mut pos = 0;
-                        for (start, end) in m.find_matches(line) {
-                            if start > pos {
-                                spans.push(Span::styled(&line[pos..start], style));
-                            }
-                            spans.push(Span::styled(&line[start..end], match_style));
-                            pos = end;
-                        }
-                        if pos < line.len() {
-                            spans.push(Span::styled(&line[pos..], style));
-                        }
-                        Line::from(spans)
-                    })
-                    .collect();
-                Paragraph::new(lines)
-            }
-            None => Paragraph::new(self.text),
-        };
+        let match_style = Style::default()
+            .fg(to_color(self.cs.search_match_fg))
+            .bg(to_color(self.cs.search_match_bg));
+        // Tabs must be expanded before matching/rendering: a raw tab written
+        // to the terminal jumps the physical cursor past what ratatui's
+        // buffer model expects, breaking the overlay's own border on that row.
+        let lines: Vec<Line> = self
+            .text
+            .lines()
+            .map(|raw_line| {
+                let line = super::expand_tabs(raw_line);
+                let Some(m) = matcher.as_ref() else {
+                    return Line::from(Span::styled(line, style));
+                };
+                let mut spans = Vec::new();
+                let mut pos = 0;
+                for (start, end) in m.find_matches(&line) {
+                    if start > pos {
+                        spans.push(Span::styled(line[pos..start].to_string(), style));
+                    }
+                    spans.push(Span::styled(line[start..end].to_string(), match_style));
+                    pos = end;
+                }
+                if pos < line.len() {
+                    spans.push(Span::styled(line[pos..].to_string(), style));
+                }
+                Line::from(spans)
+            })
+            .collect();
+        let para = Paragraph::new(lines);
         let para = para
             .style(style)
             .wrap(Wrap { trim: false })
@@ -450,5 +455,29 @@ mod tests {
     #[test]
     fn build_matcher_is_some_for_a_valid_needle() {
         assert!(build_matcher(Some(("needle", true, false, false))).is_some());
+    }
+
+    /// A raw tab written straight to the terminal jumps the physical cursor
+    /// past what ratatui expects, breaking the overlay's own border on that
+    /// row — tabs must be expanded to spaces before rendering.
+    #[test]
+    fn viewer_expands_tabs_before_rendering() {
+        let text = "before\ttab\tneedle\n";
+        let area = Rect::new(0, 0, 40, 10);
+        let buf = render_to_buffer(text, 0, area);
+
+        let row = find_row_containing(&buf, area, "needle").expect("line must be rendered");
+        let content = row_text(&buf, row, area);
+        assert!(!content.contains('\t'), "raw tabs must be expanded before rendering: {content:?}");
+
+        // The right border column must still be the border, not overrun content.
+        let border_col = area.x + area.width - 1;
+        let border_row = area.y + 2; // a plain vertical-bar border row, below the corner
+        let border_symbol = buf.cell((border_col, border_row)).unwrap().symbol().to_string();
+        let content_border = buf.cell((border_col, row)).unwrap().symbol().to_string();
+        assert_eq!(
+            content_border, border_symbol,
+            "tab-containing row must not overwrite the border: {content_border:?} vs {border_symbol:?}"
+        );
     }
 }

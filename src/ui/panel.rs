@@ -841,8 +841,13 @@ impl<'a> PanelWidget<'a> {
             .take(visible_height)
             .map(|(idx, m)| {
                 let is_cursor = idx == cursor && self.active;
-                let full_hits = matcher.as_ref().map(|mm| mm.find_matches(&m.text)).unwrap_or_default();
-                let (text, hits) = truncate_matches_line(&m.text, &full_hits, text_w);
+                // Tabs must be expanded before truncation/highlighting: a raw
+                // tab written to the terminal jumps the physical cursor past
+                // what ratatui's buffer model expects, overwriting the
+                // panel's own border on that row.
+                let expanded = super::expand_tabs(&m.text);
+                let full_hits = matcher.as_ref().map(|mm| mm.find_matches(&expanded)).unwrap_or_default();
+                let (text, hits) = truncate_matches_line(&expanded, &full_hits, text_w);
                 let num = format!(" {:>num_w$} ", m.line);
                 let line = if is_cursor {
                     Line::from(Span::styled(format!("{}{}", num, text), selected_style))
@@ -1127,6 +1132,41 @@ mod tests {
             .collect();
         assert!(row.contains("cat"), "match must stay visible in the truncated row: {row:?}");
         assert!(row.contains('~'), "long line must show a truncation marker: {row:?}");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A raw tab written straight to the terminal jumps the physical cursor
+    /// past what ratatui expects, overwriting the panel's own border on that
+    /// row — tabs must be expanded to spaces before rendering.
+    #[test]
+    fn matches_panel_expands_tabs_before_rendering() {
+        let base = make_dirs("matches_tabs", 0);
+        let root = NodePath(base.to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), root);
+        let mut ms = MatchesState::new("needle".to_string(), true, false, false);
+        ms.matches = vec![LineMatch { line: 1, text: "before\ttab\tneedle".to_string() }];
+        panel.content = PanelContent::Matches(ms);
+        panel.entries.clear();
+        panel.cursor = 0;
+
+        let cs = ColorScheme::default();
+        let widget = PanelWidget {
+            cs: &cs,
+            active: false,
+            title: "matches".into(),
+            time_format: "%y-%m-%d %H:%M",
+            time_length: 14,
+        };
+        let area = Rect::new(0, 0, 40, 10);
+        let mut buf = Buffer::empty(area);
+        StatefulWidget::render(widget, area, &mut buf, &mut panel);
+
+        let row: String = (0..area.width)
+            .map(|x| buf.cell((x, 2)).unwrap().symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(!row.contains('\t'), "raw tabs must be expanded before rendering: {row:?}");
+        assert!(row.contains("needle"), "match text must still be present: {row:?}");
 
         let _ = std::fs::remove_dir_all(&base);
     }
