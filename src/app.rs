@@ -38,7 +38,7 @@ use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupDirection, PopupListState, PopupListWidget};
 use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, render_search_dialog, CheckboxOptions, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState, SearchDialogAreas, SearchDialogState, SEARCH_CB_FOCUS, SEARCH_INPUT_FOCUS};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
-use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
+use crate::ui::output_overlay::{self, OutputOverlayState, OutputOverlayWidget};
 use crate::ui::modal_event::{CmdlineOutcome, ModalOutcome, OverlayOutcome, PanelOutcome, PopupOutcome};
 use crate::pattern::ContentMatcher;
 use crate::ui::panel::{build_filter_pattern, MatchesState, PanelContent, PanelState, PanelWidget, SearchResultsState, SortKey};
@@ -3483,12 +3483,14 @@ impl App {
         // covers the full terminal area
         if let Some(viewer) = &self.viewer {
             self.overlay_area.set(area);
+            let highlight = viewer.highlight.as_ref().map(|(n, c, r, w)| (n.as_str(), *c, *r, *w));
+            self.overlay.resolve_pending_jump(&viewer.text, output_overlay::content_width(area), highlight);
             let overlay = OutputOverlayWidget {
                 cs: &cs,
                 text: &viewer.text,
                 scroll: self.overlay.scroll,
                 title: &viewer.title,
-                highlight: viewer.highlight.as_ref().map(|(n, c, r, w)| (n.as_str(), *c, *r, *w)),
+                highlight,
             };
             frame.render_widget(overlay, area);
         } else if self.show_output {
