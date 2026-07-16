@@ -3496,6 +3496,7 @@ impl App {
         } else if self.show_output {
             if let Some(text) = &self.last_output {
                 self.overlay_area.set(area);
+                self.overlay.resolve_pending_jump(text, output_overlay::content_width(area), None);
                 let overlay = OutputOverlayWidget {
                     cs: &cs,
                     text,
