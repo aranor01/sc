@@ -181,10 +181,12 @@ const MAX_MATCH_LINE: usize = 1000;
 
 /// Keeps `text` within `MAX_MATCH_LINE` bytes, centering the kept window on
 /// `first_hit` (a byte range within `text`) instead of always keeping the
-/// start, so a match far into a long line survives the cap.
-fn cap_match_line(text: &str, first_hit: (usize, usize)) -> String {
+/// start, so a match far into a long line survives the cap. Takes `text` by
+/// value so the common case (already within the cap) can return it straight
+/// back with no extra allocation.
+fn cap_match_line(text: String, first_hit: (usize, usize)) -> String {
     if text.len() <= MAX_MATCH_LINE {
-        return text.to_string();
+        return text;
     }
     let (h_start, h_end) = first_hit;
     // Cap the span considered for centering at MAX_MATCH_LINE: for a match
@@ -352,8 +354,7 @@ fn scan_file(
         let text = String::from_utf8_lossy(&buf);
         let hits = matcher.find_matches(&text);
         if let Some(&first_hit) = hits.first() {
-            let text = text.into_owned();
-            let text = cap_match_line(&text, first_hit);
+            let text = cap_match_line(text.into_owned(), first_hit);
             matches.push(LineMatch { line: line_no, text });
         }
     }
@@ -674,7 +675,7 @@ mod tests {
         // start and end land mid-character, which used to grow the window
         // (by 2 bytes) past MAX_MATCH_LINE instead of shrinking it.
         let text = "\u{20ac}".repeat(2000);
-        let result = cap_match_line(&text, (3000, 3000));
+        let result = cap_match_line(text, (3000, 3000));
         assert!(
             result.len() <= MAX_MATCH_LINE,
             "window must never exceed the cap: got {} bytes",
@@ -689,7 +690,8 @@ mod tests {
         // would land the kept window entirely past byte 0, dropping the "A"
         // that made it match in the first place.
         let text = format!("A{}Z", "x".repeat(2998));
-        let result = cap_match_line(&text, (0, text.len()));
+        let text_len = text.len();
+        let result = cap_match_line(text, (0, text_len));
         assert!(result.len() <= MAX_MATCH_LINE);
         assert!(result.starts_with('A'), "window must include the match's own start: {:?}", result);
     }
