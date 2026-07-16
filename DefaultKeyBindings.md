@@ -8,13 +8,19 @@
 # Default Key Bindings
 
 - A-Up (Alt-Up)
-       go to the parent directory of the active panel
+       go to the parent directory of the active panel.
+       On a search results view (live or restored from history), just closes it,
+       like double-Esc, without navigating further.
 
 - A-Left (Alt-Left)
-       go back to the previous directory in the active panel's history
+       go back to the previous directory in the active panel's history.
+       If the active panel is a directory reached by jumping out of a search
+       (Enter on a hit), this restores that search view instead — see @docs/FileSearch.md
 
 - A-Right (Alt-Right)
-       go forward in the active panel's history
+       go forward in the active panel's history.
+       Moves forward out of a restored search view back to the directory,
+       symmetric with Alt-Left.
 
 - Tab
        switch focus to the other panel

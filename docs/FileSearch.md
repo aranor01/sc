@@ -49,9 +49,17 @@ When the search starts, the active panel is replaced by a *results panel*:
 - `Alt-r` re-runs the same query. Invoking `search` again from a results panel reopens
   the dialog pre-filled with the current query.
 
-The results panel adds no directory-history entry in v1 (going back after Enter-on-hit
-returns to the directory shown before the search). Re-openable search history is planned
-as an immediate follow-up.
+The most recent search a panel jumped away from (via Enter on a hit) stays reachable
+through that panel's ordinary back/forward history for the rest of the session:
+`Alt-Left`/`Alt-Right` move into and out of it exactly like any other history entry, in
+both directions. `Alt-Up` on a search view, live or restored, closes it like Esc-Esc — it
+does not additionally navigate to the parent of the search root. History navigation is a
+no-op while the matches panel is focused (`Tab` back to the results panel first). Starting
+a new search, or `Alt-r`, drops whatever was cached. This isn't persisted to
+`panel_history.json` — it's process-memory only, and starting a fresh `sc` session never
+resurrects it. If the jump happened before the search reached `Done`, the restored view is
+marked `(partial, Alt-r to refresh)` in its footer, since it only ever shows what had been
+found up to that point.
 
 ## Matches panel (content searches only)
 
@@ -145,5 +153,6 @@ The IPC messages themselves are out of scope for v1.
 ## Future work
 
 - IPC messages feeding externally produced results (`find -print0`, `grep -nZ`).
-- Search history: re-open past searches (results panel as a directory-history entry).
 - Regex content matching; size/date filters.
+- Backgrounded (resumable) search — see @BackgroundedSearch.md for why this was
+  considered and deferred rather than built alongside the history caching above.
