@@ -187,7 +187,13 @@ fn cap_match_line(text: &str, first_hit: (usize, usize)) -> String {
         return text.to_string();
     }
     let (h_start, h_end) = first_hit;
-    let center = (h_start + h_end) / 2;
+    // Cap the span considered for centering at MAX_MATCH_LINE: for a match
+    // longer than that (e.g. a greedy regex spanning most of the line), the
+    // uncapped midpoint could land the window entirely past `h_start`,
+    // excluding the match's own beginning. This is a no-op when the match
+    // already fits.
+    let span = h_end.saturating_sub(h_start).min(MAX_MATCH_LINE);
+    let center = h_start + span / 2;
     let half = MAX_MATCH_LINE / 2;
     let mut start = center.saturating_sub(half);
     if start + MAX_MATCH_LINE > text.len() {
@@ -674,6 +680,18 @@ mod tests {
             "window must never exceed the cap: got {} bytes",
             result.len()
         );
+    }
+
+    #[test]
+    fn cap_match_line_keeps_the_matchs_start_when_the_match_spans_more_than_the_cap() {
+        // A match spanning the whole 3000-byte line (e.g. a greedy `A.*Z`
+        // regex) is wider than MAX_MATCH_LINE; centering on its raw midpoint
+        // would land the kept window entirely past byte 0, dropping the "A"
+        // that made it match in the first place.
+        let text = format!("A{}Z", "x".repeat(2998));
+        let result = cap_match_line(&text, (0, text.len()));
+        assert!(result.len() <= MAX_MATCH_LINE);
+        assert!(result.starts_with('A'), "window must include the match's own start: {:?}", result);
     }
 
     #[test]
