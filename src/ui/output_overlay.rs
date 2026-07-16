@@ -2,6 +2,7 @@ use crate::config::{ActionBindings, ColorScheme, bindings_match_event};
 use crate::pattern::ContentMatcher;
 use crate::ui::modal_event::OverlayOutcome;
 use crossterm::event::{KeyCode, KeyEvent};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -103,31 +104,74 @@ pub fn content_width(area: Rect) -> u16 {
     area.width.saturating_sub(3)
 }
 
-/// Number of display rows `line` occupies when word-wrapped to `width` columns:
-/// words (split on whitespace) are packed greedily onto a row, and a single word
-/// longer than `width` is hard-broken across multiple rows — mirroring ratatui's
-/// own `Wrap` word-wrapping closely enough to convert a source line number into a
-/// scroll offset. Char-count based (like the rest of this codebase), not full
-/// Unicode display-width aware.
+/// Splits `line` into maximal runs of whitespace / non-whitespace characters,
+/// in order, keeping every character (unlike `split_whitespace`, which drops
+/// whitespace runs entirely) — needed because ratatui's `Wrap{trim:false}`
+/// lays out whitespace verbatim rather than collapsing or trimming it. Each
+/// segment is paired with whether it's a whitespace run.
+fn whitespace_runs(line: &str) -> Vec<(bool, &str)> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut current_is_ws: Option<bool> = None;
+    for (i, c) in line.char_indices() {
+        let is_ws = c.is_whitespace();
+        match current_is_ws {
+            None => current_is_ws = Some(is_ws),
+            Some(prev) if prev != is_ws => {
+                segments.push((prev, &line[start..i]));
+                start = i;
+                current_is_ws = Some(is_ws);
+            }
+            _ => {}
+        }
+    }
+    if let Some(is_ws) = current_is_ws {
+        segments.push((is_ws, &line[start..]));
+    }
+    segments
+}
+
+/// Number of display rows `line` occupies when wrapped to `width` columns:
+/// whitespace and non-whitespace runs are packed greedily onto a row (using
+/// Unicode display width, matching what a terminal actually renders), and a
+/// single run longer than `width` is hard-broken across multiple rows —
+/// mirroring ratatui's own `Wrap{trim:false}` word-wrapping closely enough to
+/// convert a source line number into a scroll offset. A whitespace run that's
+/// hard-broken drops the one character that triggers each wrap point (ratatui
+/// elides exactly that character even with `trim:false`); a non-whitespace
+/// run doesn't.
 fn wrapped_row_count(line: &str, width: usize) -> usize {
     let width = width.max(1);
+    if line.is_empty() {
+        return 1;
+    }
     let mut rows = 1usize;
     let mut col = 0usize;
-    for word in line.split_whitespace() {
-        let word_len = word.chars().count();
-        let sep = if col == 0 { 0 } else { 1 };
-        if col + sep + word_len <= width {
-            col += sep + word_len;
+    for (is_ws, seg) in whitespace_runs(line) {
+        let seg_w = seg.width();
+        if col > 0 && col + seg_w <= width {
+            col += seg_w;
+            continue;
+        }
+        if col > 0 {
+            rows += 1;
+            col = 0;
+        }
+        if seg_w <= width {
+            col = seg_w;
         } else {
-            if col > 0 {
-                rows += 1;
-            }
-            if word_len <= width {
-                col = word_len;
-            } else {
-                let extra_rows = word_len.saturating_sub(1) / width;
-                rows += extra_rows;
-                col = word_len - extra_rows * width;
+            // Hard-break this run across rows, one column at a time, since
+            // its graphemes may have mixed display widths.
+            for ch in seg.chars() {
+                let ch_w = ch.width().unwrap_or(0);
+                if col + ch_w > width && col > 0 {
+                    rows += 1;
+                    col = 0;
+                    if is_ws {
+                        continue; // this whitespace char is the elided wrap point
+                    }
+                }
+                col += ch_w;
             }
         }
     }
@@ -267,6 +311,47 @@ mod tests {
     #[test]
     fn wrapped_row_count_matches_actual_ratatui_wrapping() {
         let lines = ["short1", &"A".repeat(60), "short2", "needle-here"];
+        let text = format!("{}\n", lines.join("\n"));
+        let area = Rect::new(0, 0, 16, 30);
+        let buf = render_to_buffer(&text, 0, area);
+        let content_w = content_width(area) as usize;
+
+        let predicted_rows_before: usize =
+            lines[..3].iter().map(|l| wrapped_row_count(l, content_w)).sum();
+
+        let target_row = find_row_containing(&buf, area, "needle-here")
+            .expect("target line must be rendered somewhere");
+        let content_row = (target_row - (area.y + 1)) as usize;
+        assert_eq!(content_row, predicted_rows_before);
+    }
+
+    /// Same cross-check as above, but for a line with heavy leading
+    /// whitespace before a short word — `split_whitespace`-based counting
+    /// would drop the whitespace entirely and undercount rows.
+    #[test]
+    fn wrapped_row_count_matches_actual_ratatui_wrapping_with_leading_whitespace() {
+        let indented = format!("{}X", " ".repeat(80));
+        let lines = ["short1", indented.as_str(), "short2", "needle-here"];
+        let text = format!("{}\n", lines.join("\n"));
+        let area = Rect::new(0, 0, 16, 30);
+        let buf = render_to_buffer(&text, 0, area);
+        let content_w = content_width(area) as usize;
+
+        let predicted_rows_before: usize =
+            lines[..3].iter().map(|l| wrapped_row_count(l, content_w)).sum();
+
+        let target_row = find_row_containing(&buf, area, "needle-here")
+            .expect("target line must be rendered somewhere");
+        let content_row = (target_row - (area.y + 1)) as usize;
+        assert_eq!(content_row, predicted_rows_before);
+    }
+
+    /// Same cross-check, but with wide (CJK) characters — char-count-based
+    /// width would undercount rows since ratatui uses display width.
+    #[test]
+    fn wrapped_row_count_matches_actual_ratatui_wrapping_with_wide_chars() {
+        let wide_line = "\u{6f22}\u{5b57}".repeat(20); // 40 wide chars, 80 display columns
+        let lines = ["short1", wide_line.as_str(), "short2", "needle-here"];
         let text = format!("{}\n", lines.join("\n"));
         let area = Rect::new(0, 0, 16, 30);
         let buf = render_to_buffer(&text, 0, area);
