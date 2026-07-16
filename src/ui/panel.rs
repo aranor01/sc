@@ -1,5 +1,5 @@
 use crate::config::ColorScheme;
-use crate::pattern::find_matches;
+use crate::pattern::ContentMatcher;
 use crate::provider::{LineMatch, NodeEntry, NodeKind, NodePath, SearchQuery, TreeProvider};
 use crate::ui::modal_event::PanelOutcome;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -89,11 +89,21 @@ pub struct MatchesState {
     pub matches: Vec<LineMatch>,
     pub needle: String,
     pub case_sensitive: bool,
+    pub content_is_regex: bool,
+    pub content_whole_words: bool,
 }
 
 impl MatchesState {
-    pub fn new(needle: String, case_sensitive: bool) -> Self {
-        MatchesState { file: None, abs_path: None, matches: Vec::new(), needle, case_sensitive }
+    pub fn new(needle: String, case_sensitive: bool, content_is_regex: bool, content_whole_words: bool) -> Self {
+        MatchesState {
+            file: None,
+            abs_path: None,
+            matches: Vec::new(),
+            needle,
+            case_sensitive,
+            content_is_regex,
+            content_whole_words,
+        }
     }
 }
 
@@ -742,6 +752,14 @@ impl<'a> PanelWidget<'a> {
             .fg(to_color(self.cs.selected_fg))
             .bg(to_color(self.cs.selected_bg));
 
+        let matcher = ContentMatcher::build(
+            &ms.needle,
+            ms.content_is_regex,
+            ms.case_sensitive,
+            ms.content_whole_words,
+        )
+        .ok();
+
         let items: Vec<ListItem> = ms
             .matches
             .iter()
@@ -757,7 +775,8 @@ impl<'a> PanelWidget<'a> {
                 } else {
                     let mut spans = vec![Span::styled(num, num_style)];
                     let mut pos = 0;
-                    for (start, end) in find_matches(&text, &ms.needle, ms.case_sensitive) {
+                    let hits = matcher.as_ref().map(|m| m.find_matches(&text)).unwrap_or_default();
+                    for (start, end) in hits {
                         if start > pos {
                             spans.push(Span::styled(text[pos..start].to_string(), base_style));
                         }
@@ -901,6 +920,9 @@ mod tests {
             is_regex: false,
             case_sensitive: true,
             content: None,
+            content_is_regex: false,
+            content_case_sensitive: true,
+            content_whole_words: false,
             max_depth: None,
             include_hidden: false,
             follow_symlinks: false,
@@ -934,7 +956,7 @@ mod tests {
         let base = make_dirs("matches_cursor", 0);
         let root = NodePath(base.to_string_lossy().into_owned());
         let mut panel = PanelState::new(Box::new(FilesystemProvider), root);
-        let mut ms = MatchesState::new("x".to_string(), true);
+        let mut ms = MatchesState::new("x".to_string(), true, false, false);
         ms.matches = vec![
             LineMatch { line: 1, text: "x1".into() },
             LineMatch { line: 5, text: "x2".into() },
@@ -994,6 +1016,9 @@ mod tests {
             is_regex: false,
             case_sensitive: false,
             content: None,
+            content_is_regex: false,
+            content_case_sensitive: false,
+            content_whole_words: false,
             max_depth: None,
             include_hidden: false,
             follow_symlinks: false,

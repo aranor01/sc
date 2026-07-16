@@ -8,16 +8,20 @@ results stream in as they are found. Default keys: `Alt-?` or `Ctrl-f` (action `
 
 Opened by the `search` action. Fields:
 
-- **File pattern** — shell glob by default, regular expression if **RegExp** is checked.
-  Empty means all entries (`*`).
-- **Containing text** — literal text to look for inside files. Empty means name-only
-  search. Matching is a plain substring match honoring **Case sensitive**; regex content
-  matching is future work. Files that look binary (NUL byte in the first block) are
-  skipped.
+- **File pattern** — shell glob by default, regular expression if the **RegExp**
+  checkbox directly beneath this field is checked. Empty means all entries (`*`). Its
+  own **Case sensitive** checkbox sits next to **RegExp**, governing this field only.
+- **Containing text** — literal text to look for inside files, or a regular expression
+  if the **RegExp** checkbox directly beneath this field is checked. Empty means
+  name-only search. This field has its own independent **Case sensitive** checkbox, and
+  a **Whole words** checkbox that restricts matches to occurrences bounded by
+  non-word characters (or line start/end) on both sides — e.g. `cat` matches "a cat
+  sat" but not "category". When both **RegExp** and **Whole words** are checked, the
+  pattern is wrapped in `\b(?:...)\b` before compiling, rather than filtering matches
+  after the fact. Files that look binary (NUL byte in the first block) are skipped.
 - **Max depth** — numeric; empty means unlimited. Depth 1 searches only the root
   directory itself.
-- Checkboxes: **RegExp**, **Case sensitive** (applies to both the file pattern and the
-  content text), **Include hidden** (pre-seeded from the active panel's current
+- Checkboxes: **Include hidden** (pre-seeded from the active panel's current
   hidden-files visibility), **Follow symlinks** (directory symlinks are never followed
   when unchecked; symlinked files are matched by name either way).
 
@@ -69,6 +73,8 @@ lifetime of the results panel:
 - It always shows the matching lines of the file currently selected in the results panel,
   re-syncing as the selection moves. Two columns: **line number** and **text**, with the
   matched substring highlighted (`search_match_fg`/`search_match_bg` color-scheme keys).
+  Highlighting honors the content search's **RegExp**/**Case sensitive**/**Whole words**
+  mode, so it always matches what the search itself matched.
 - `Tab` switches focus to it as with any panel; Up/Down/PgUp/PgDn scroll the matches.
 - **Enter** on a match opens the internal text viewer on that file, jumped to that line.
 - While the matches panel is shown, file operations and the command-line/menu actions
@@ -111,7 +117,10 @@ pub struct SearchQuery {
     pub pattern: String,          // filename pattern (glob or regex)
     pub is_regex: bool,
     pub case_sensitive: bool,
-    pub content: Option<String>,  // literal text; None = name-only search
+    pub content: Option<String>,  // literal text or regex; None = name-only search
+    pub content_is_regex: bool,
+    pub content_case_sensitive: bool,
+    pub content_whole_words: bool,
     pub max_depth: Option<u32>,   // None = unlimited
     pub include_hidden: bool,
     pub follow_symlinks: bool,
@@ -163,6 +172,6 @@ The IPC messages themselves are out of scope for v1.
 ## Future work
 
 - IPC messages feeding externally produced results (`find -print0`, `grep -nZ`).
-- Regex content matching; size/date filters.
+- Size/date filters.
 - Backgrounded (resumable) search — see @BackgroundedSearch.md for why this was
   considered and deferred rather than built alongside the history caching above.

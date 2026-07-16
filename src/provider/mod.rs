@@ -40,7 +40,10 @@ pub struct SearchQuery {
     pub pattern: String,         // filename pattern (glob or regex)
     pub is_regex: bool,
     pub case_sensitive: bool,
-    pub content: Option<String>, // literal text; None = name-only search
+    pub content: Option<String>, // literal text or regex; None = name-only search
+    pub content_is_regex: bool,
+    pub content_case_sensitive: bool,
+    pub content_whole_words: bool,
     pub max_depth: Option<u32>,  // None = unlimited
     pub include_hidden: bool,
     pub follow_symlinks: bool,

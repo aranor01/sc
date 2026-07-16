@@ -36,10 +36,11 @@ use crate::ui::button_bar::{BarAction, ButtonBarWidget};
 use crate::ui::status_bar::{StatusBarState, StatusBarWidget};
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupDirection, PopupListState, PopupListWidget};
-use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, render_search_dialog, CheckboxOptions, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState, SearchDialogAreas, SearchDialogState};
+use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, render_search_dialog, CheckboxOptions, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState, SearchDialogAreas, SearchDialogState, SEARCH_CB_FOCUS, SEARCH_INPUT_FOCUS};
 use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
 use crate::ui::modal_event::{CmdlineOutcome, ModalOutcome, OverlayOutcome, PanelOutcome, PopupOutcome};
+use crate::pattern::ContentMatcher;
 use crate::ui::panel::{build_filter_pattern, MatchesState, PanelContent, PanelState, PanelWidget, SearchResultsState, SortKey};
 
 // ── Mode enums ────────────────────────────────────────────────────────────────
@@ -292,7 +293,7 @@ enum ModalAreas {
 struct ViewerContent {
     title: String,
     text: String,
-    highlight: Option<(String, bool)>, // needle, case_sensitive
+    highlight: Option<(String, bool, bool, bool)>, // needle, case_sensitive, is_regex, whole_words
 }
 
 // ── AppLayout ─────────────────────────────────────────────────────────────────
@@ -440,7 +441,7 @@ pub struct App {
     // Full-screen text viewer content (file mode); None = viewer closed.
     viewer: Option<ViewerContent>,
     // Search dialog hit-test areas (updated each render)
-    search_cb_areas: Cell<[Option<Rect>; 4]>,
+    search_cb_areas: Cell<[Option<Rect>; 7]>,
     search_input_areas: Cell<[Option<Rect>; 3]>,
 }
 
@@ -576,7 +577,7 @@ impl App {
             search: None,
             matches_panel_hidden: false,
             viewer: None,
-            search_cb_areas: Cell::new([None; 4]),
+            search_cb_areas: Cell::new([None; 7]),
             search_input_areas: Cell::new([None; 3]),
             config,
         };
@@ -1113,6 +1114,9 @@ impl App {
                     }
                     state.is_regexp = q.is_regex;
                     state.case_sensitive = q.case_sensitive;
+                    state.content_is_regex = q.content_is_regex;
+                    state.content_case_sensitive = q.content_case_sensitive;
+                    state.content_whole_words = q.content_whole_words;
                     state.include_hidden = q.include_hidden;
                     state.follow_symlinks = q.follow_symlinks;
                 }
@@ -1193,14 +1197,20 @@ impl App {
                     panel.refresh();
                 } else {
                     self.matches_panel_hidden = false;
-                    let (needle, case_sensitive) = match &self.panel(side).content {
-                        PanelContent::SearchResults(sr) => {
-                            (sr.query.content.clone().unwrap_or_default(), sr.query.case_sensitive)
-                        }
-                        _ => unreachable!(),
-                    };
+                    let (needle, case_sensitive, content_is_regex, content_whole_words) =
+                        match &self.panel(side).content {
+                            PanelContent::SearchResults(sr) => (
+                                sr.query.content.clone().unwrap_or_default(),
+                                sr.query.content_case_sensitive,
+                                sr.query.content_is_regex,
+                                sr.query.content_whole_words,
+                            ),
+                            _ => unreachable!(),
+                        };
                     let panel = self.panel_mut(other);
-                    panel.content = PanelContent::Matches(MatchesState::new(needle, case_sensitive));
+                    panel.content = PanelContent::Matches(MatchesState::new(
+                        needle, case_sensitive, content_is_regex, content_whole_words,
+                    ));
                     panel.tagged.clear();
                     panel.cursor = 0;
                     panel.scroll = 0;
@@ -1473,11 +1483,28 @@ impl App {
         } else {
             Some(state.content.text.clone())
         };
+        if let Some(needle) = &content {
+            if state.content_is_regex {
+                if let Err(e) = ContentMatcher::build(
+                    needle,
+                    true,
+                    state.content_case_sensitive,
+                    state.content_whole_words,
+                ) {
+                    state.error = Some(e);
+                    self.modal = Modal::SearchDialog(state);
+                    return;
+                }
+            }
+        }
         let query = SearchQuery {
             pattern,
             is_regex: state.is_regexp,
             case_sensitive: state.case_sensitive,
             content,
+            content_is_regex: state.content_is_regex,
+            content_case_sensitive: state.content_case_sensitive,
+            content_whole_words: state.content_whole_words,
             max_depth,
             include_hidden: state.include_hidden,
             follow_symlinks: state.follow_symlinks,
@@ -1500,7 +1527,9 @@ impl App {
         };
         let content_search = query.content.is_some();
         let needle = query.content.clone().unwrap_or_default();
-        let case_sensitive = query.case_sensitive;
+        let case_sensitive = query.content_case_sensitive;
+        let content_is_regex = query.content_is_regex;
+        let content_whole_words = query.content_whole_words;
         let panel = self.active_panel_mut();
         panel.content = PanelContent::SearchResults(SearchResultsState::new(query));
         panel.entries.clear();
@@ -1510,7 +1539,9 @@ impl App {
         panel.error = None;
         if content_search {
             let inactive = self.inactive_panel_mut();
-            inactive.content = PanelContent::Matches(MatchesState::new(needle, case_sensitive));
+            inactive.content = PanelContent::Matches(MatchesState::new(
+                needle, case_sensitive, content_is_regex, content_whole_words,
+            ));
             inactive.tagged.clear();
             inactive.cursor = 0;
             inactive.scroll = 0;
@@ -1594,7 +1625,9 @@ impl App {
     fn restore_cached_search(&mut self, side: Side, cache: crate::panel_history::CachedSearch) {
         self.matches_panel_hidden = false;
         let content_needle = cache.query.content.clone();
-        let case_sensitive = cache.query.case_sensitive;
+        let case_sensitive = cache.query.content_case_sensitive;
+        let content_is_regex = cache.query.content_is_regex;
+        let content_whole_words = cache.query.content_whole_words;
         let complete = cache.complete;
         let selected = cache.selected.clone();
         let root = cache.root.clone();
@@ -1624,7 +1657,9 @@ impl App {
         if let Some(needle) = content_needle {
             let other = side.other();
             let panel_other = self.panel_mut(other);
-            panel_other.content = PanelContent::Matches(MatchesState::new(needle, case_sensitive));
+            panel_other.content = PanelContent::Matches(MatchesState::new(
+                needle, case_sensitive, content_is_regex, content_whole_words,
+            ));
             panel_other.tagged.clear();
             panel_other.cursor = 0;
             panel_other.scroll = 0;
@@ -1734,12 +1769,12 @@ impl App {
     /// Enter on a matching line: open the text viewer on that file, jumped to
     /// that line with the matches highlighted.
     fn open_match_in_viewer(&mut self) {
-        let (abs, needle, case_sensitive, line) = {
+        let (abs, needle, case_sensitive, content_is_regex, content_whole_words, line) = {
             let panel = self.active_panel();
             let PanelContent::Matches(ms) = &panel.content else { return };
             let Some(abs) = ms.abs_path.clone() else { return };
             let line = ms.matches.get(panel.cursor).map(|m| m.line).unwrap_or(1);
-            (abs, ms.needle.clone(), ms.case_sensitive, line)
+            (abs, ms.needle.clone(), ms.case_sensitive, ms.content_is_regex, ms.content_whole_words, line)
         };
         match std::fs::read(&abs) {
             Ok(bytes) => {
@@ -1747,7 +1782,7 @@ impl App {
                 self.viewer = Some(ViewerContent {
                     title: format!(" {} (Esc to close) ", display_path(&abs)),
                     text: String::from_utf8_lossy(&bytes).into_owned(),
-                    highlight: Some((needle, case_sensitive)),
+                    highlight: Some((needle, case_sensitive, content_is_regex, content_whole_words)),
                 });
                 self.overlay.jump_to_line(line);
             }
@@ -2692,12 +2727,12 @@ impl App {
                 };
                 if let Some(i) = clicked_cb {
                     if let Modal::SearchDialog(ref mut s) = self.modal {
-                        s.toggle_checkbox(3 + i);
-                        s.focus.set(3 + i);
+                        s.toggle_checkbox(SEARCH_CB_FOCUS[i]);
+                        s.focus.set(SEARCH_CB_FOCUS[i]);
                     }
                 } else if let Some(i) = clicked_input {
                     if let Modal::SearchDialog(ref mut s) = self.modal {
-                        s.focus.set(i);
+                        s.focus.set(SEARCH_INPUT_FOCUS[i]);
                     }
                 } else if input_ok.clicked(down, up) {
                     if let Modal::SearchDialog(state) =
@@ -3437,7 +3472,7 @@ impl App {
                 text: &viewer.text,
                 scroll: self.overlay.scroll,
                 title: &viewer.title,
-                highlight: viewer.highlight.as_ref().map(|(n, c)| (n.as_str(), *c)),
+                highlight: viewer.highlight.as_ref().map(|(n, c, r, w)| (n.as_str(), *c, *r, *w)),
             };
             frame.render_widget(overlay, area);
         } else if self.show_output {
@@ -4027,6 +4062,9 @@ mod tests {
             is_regex: false,
             case_sensitive: true,
             content: None,
+            content_is_regex: false,
+            content_case_sensitive: true,
+            content_whole_words: false,
             max_depth: None,
             include_hidden: false,
             follow_symlinks: false,
@@ -4067,6 +4105,48 @@ mod tests {
             assert!(Instant::now() < deadline, "search did not finish in time");
             std::thread::sleep(Duration::from_millis(2));
         }
+    }
+
+    #[test]
+    fn execute_search_dialog_rejects_invalid_content_regex() {
+        let base = make_search_base("invalid_content_regex");
+        let mut app = test_app(&base);
+        let mut state = SearchDialogState::new(false);
+        state.content.text = "(".to_string();
+        state.content.cursor = 1;
+        state.content_is_regex = true;
+        app.execute_search_dialog(state);
+        match &app.modal {
+            Modal::SearchDialog(s) => {
+                assert!(s.error.as_deref().is_some_and(|e| e.starts_with("Invalid regex:")));
+            }
+            _ => panic!("expected the dialog to stay open with an error"),
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn search_dialog_reopen_reseeds_content_options() {
+        let base = make_search_base("reopen_reseed");
+        let mut app = test_app(&base);
+        let mut query = search_query("*");
+        query.content = Some("needle".to_string());
+        query.content_is_regex = true;
+        query.content_case_sensitive = false;
+        query.content_whole_words = true;
+        app.start_search(query);
+        wait_for_search_done(&mut app);
+
+        app.handle_action(Action::Search);
+        match &app.modal {
+            Modal::SearchDialog(s) => {
+                assert!(s.content_is_regex);
+                assert!(!s.content_case_sensitive);
+                assert!(s.content_whole_words);
+            }
+            _ => panic!("expected the search dialog to reopen"),
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -4208,7 +4288,7 @@ mod tests {
     fn matches_panel_active_ignores_history_navigation() {
         let base = make_search_base("matches_noop");
         let mut app = test_app(&base);
-        app.right.content = PanelContent::Matches(MatchesState::new("x".into(), false));
+        app.right.content = PanelContent::Matches(MatchesState::new("x".into(), false, false, false));
         app.active = Side::Right;
         let path_before = app.right.path.0.clone();
 

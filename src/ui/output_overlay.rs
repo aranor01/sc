@@ -1,5 +1,5 @@
 use crate::config::{ActionBindings, ColorScheme, bindings_match_event};
-use crate::pattern::find_matches;
+use crate::pattern::ContentMatcher;
 use crate::ui::modal_event::OverlayOutcome;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -65,8 +65,9 @@ pub struct OutputOverlayWidget<'a> {
     pub text: &'a str,
     pub scroll: u16,
     pub title: &'a str,
-    /// `(needle, case_sensitive)` — occurrences get the search-match colors.
-    pub highlight: Option<(&'a str, bool)>,
+    /// `(needle, case_sensitive, is_regex, whole_words)` — occurrences get the
+    /// search-match colors.
+    pub highlight: Option<(&'a str, bool, bool, bool)>,
 }
 
 impl<'a> Widget for OutputOverlayWidget<'a> {
@@ -91,17 +92,19 @@ impl<'a> Widget for OutputOverlayWidget<'a> {
         let text_area = Rect { width: inner.width.saturating_sub(1), ..inner };
 
         let para = match self.highlight {
-            Some((needle, case_sensitive)) if !needle.is_empty() => {
+            Some((needle, case_sensitive, is_regex, whole_words)) if !needle.is_empty() => {
                 let match_style = Style::default()
                     .fg(to_color(self.cs.search_match_fg))
                     .bg(to_color(self.cs.search_match_bg));
+                let matcher = ContentMatcher::build(needle, is_regex, case_sensitive, whole_words).ok();
                 let lines: Vec<Line> = self
                     .text
                     .lines()
                     .map(|line| {
                         let mut spans = Vec::new();
                         let mut pos = 0;
-                        for (start, end) in find_matches(line, needle, case_sensitive) {
+                        let hits = matcher.as_ref().map(|m| m.find_matches(line)).unwrap_or_default();
+                        for (start, end) in hits {
                             if start > pos {
                                 spans.push(Span::styled(&line[pos..start], style));
                             }

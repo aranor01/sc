@@ -2,7 +2,7 @@ use super::{
     LineMatch, NodeEntry, NodeKind, NodePath, Result, SearchEvent, SearchHandle, SearchHit,
     SearchQuery, TreeProvider,
 };
-use crate::pattern::{build_filter_pattern, find_matches, FilterPattern};
+use crate::pattern::{build_filter_pattern, ContentMatcher, FilterPattern};
 use anyhow::Context;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -132,11 +132,23 @@ impl TreeProvider for FilesystemProvider {
             query.is_regex,
         )
         .map_err(|e| anyhow::anyhow!(e))?;
+        let content_matcher = match &query.content {
+            Some(needle) => Some(
+                ContentMatcher::build(
+                    needle,
+                    query.content_is_regex,
+                    query.content_case_sensitive,
+                    query.content_whole_words,
+                )
+                .map_err(|e| anyhow::anyhow!(e))?,
+            ),
+            None => None,
+        };
         let (tx, rx) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
         let root = PathBuf::from(&root.0);
-        std::thread::spawn(move || search_worker(root, query, pattern, tx, flag));
+        std::thread::spawn(move || search_worker(root, query, pattern, content_matcher, tx, flag));
         Ok(Box::new(FsSearchHandle { rx, cancel }))
     }
 }
@@ -170,6 +182,7 @@ fn search_worker(
     root: PathBuf,
     query: SearchQuery,
     pattern: FilterPattern,
+    content_matcher: Option<ContentMatcher>,
     tx: mpsc::Sender<SearchEvent>,
     cancel: Arc<AtomicBool>,
 ) {
@@ -250,14 +263,14 @@ fn search_worker(
             if !pattern.matches(&name) {
                 continue;
             }
-            let hit = match &query.content {
+            let hit = match &content_matcher {
                 None => Some(Vec::new()),
                 Some(_) if is_dir => None,
                 // FIFOs, sockets and devices can block or misbehave on open;
                 // only regular files are content-scanned. Name-only hits are
                 // unaffected — this only skips the content-match attempt.
                 Some(_) if !is_regular_file => None,
-                Some(needle) => match scan_file(&path, needle, query.case_sensitive) {
+                Some(matcher) => match scan_file(&path, matcher) {
                     Ok(Some(matches)) if !matches.is_empty() => Some(matches),
                     Ok(_) => None, // binary file or no matching lines
                     Err(e) => {
@@ -285,8 +298,7 @@ fn search_worker(
 /// that look binary (NUL byte in the first buffered block).
 fn scan_file(
     path: &Path,
-    needle: &str,
-    case_sensitive: bool,
+    matcher: &ContentMatcher,
 ) -> std::io::Result<Option<Vec<LineMatch>>> {
     let file = std::fs::File::open(path)?;
     let mut reader = std::io::BufReader::new(file);
@@ -306,7 +318,7 @@ fn scan_file(
             buf.pop();
         }
         let text = String::from_utf8_lossy(&buf);
-        if !find_matches(&text, needle, case_sensitive).is_empty() {
+        if !matcher.find_matches(&text).is_empty() {
             let mut text = text.into_owned();
             if text.len() > MAX_MATCH_LINE {
                 let mut cut = MAX_MATCH_LINE;
@@ -372,6 +384,9 @@ mod tests {
             is_regex: false,
             case_sensitive: true,
             content: None,
+            content_is_regex: false,
+            content_case_sensitive: true,
+            content_whole_words: false,
             max_depth: None,
             include_hidden: false,
             follow_symlinks: false,
@@ -524,7 +539,7 @@ mod tests {
 
         let mut q = query("*");
         q.content = Some("here".to_string());
-        q.case_sensitive = false;
+        q.content_case_sensitive = false;
         let (hits, errors) = run(&base, q);
         assert!(errors.is_empty());
         assert_eq!(rel_names(&base, &hits), vec!["hit.txt"]);
@@ -540,6 +555,46 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].matches.len(), 1);
         assert_eq!(hits[0].matches[0].line, 3);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn content_search_regex_matches() {
+        let base = make_base("content_regex");
+        std::fs::write(base.join("hit.txt"), "cat123\nno digits here\n").unwrap();
+
+        let mut q = query("*");
+        q.content = Some(r"cat\d+".to_string());
+        q.content_is_regex = true;
+        let (hits, errors) = run(&base, q);
+        assert!(errors.is_empty());
+        assert_eq!(rel_names(&base, &hits), vec!["hit.txt"]);
+        assert_eq!(hits[0].matches.len(), 1);
+        assert_eq!(hits[0].matches[0].line, 1);
+
+        // A literal-mode search for the same text finds nothing, confirming
+        // content_is_regex actually toggles matching mode.
+        let mut q = query("*");
+        q.content = Some(r"cat\d+".to_string());
+        let (hits, _) = run(&base, q);
+        assert!(hits.is_empty());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn content_search_whole_words() {
+        let base = make_base("content_whole_words");
+        std::fs::write(base.join("hit.txt"), "a cat sat\n").unwrap();
+        std::fs::write(base.join("miss.txt"), "category error\n").unwrap();
+
+        let mut q = query("*");
+        q.content = Some("cat".to_string());
+        q.content_whole_words = true;
+        let (hits, errors) = run(&base, q);
+        assert!(errors.is_empty());
+        assert_eq!(rel_names(&base, &hits), vec!["hit.txt"]);
 
         let _ = std::fs::remove_dir_all(&base);
     }

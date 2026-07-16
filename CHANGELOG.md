@@ -12,12 +12,16 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 - Asynchronous file search (`Alt-?` / `Ctrl-f`, action `search`): find files by name
   (glob or regex) and optionally by content from the active panel's directory, with
-  max-depth / hidden / follow-symlinks options. Hits stream live into a results panel
-  shown in place of the active panel (mc-style Enter, tagging, F5/F6/F8 to a normal
-  inactive panel, `Alt-r` re-run); content searches replace the inactive panel with a
-  matches panel that follows the selection and opens the new full-screen text viewer
-  jumped to the matching line. New color-scheme keys `search_match_fg`/`search_match_bg`.
-  See docs/FileSearch.md.
+  max-depth / hidden / follow-symlinks options. **File pattern** has its own **RegExp**/
+  **Case sensitive** checkboxes directly beneath it; **Containing text** has its own
+  independent **RegExp**/**Case sensitive**/**Whole words** checkboxes, so content
+  searches support regex and whole-word matching in addition to plain substrings. Hits
+  stream live into a results panel shown in place of the active panel (mc-style Enter,
+  tagging, F5/F6/F8 to a normal inactive panel, `Alt-r` re-run); content searches
+  replace the inactive panel with a matches panel that follows the selection and opens
+  the new full-screen text viewer jumped to the matching line — both consistently honor
+  the content search's regex/whole-word mode when highlighting. New color-scheme keys
+  `search_match_fg`/`search_match_bg`. See docs/FileSearch.md.
 - The most recent search a panel jumped away from (via Enter on a hit) stays reachable
   through that panel's ordinary back/forward history for the session: `Alt-Left`/
   `Alt-Right` move into and out of it in both directions, `Alt-Up` closes it like
