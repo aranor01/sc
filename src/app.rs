@@ -1461,6 +1461,16 @@ impl App {
         })
     }
 
+    /// Key label for the configured `refresh_panel` action, e.g. "Alt-r", used
+    /// in a results panel's "(partial, ... to refresh)" footer. None if the
+    /// binding is unset or is a chord.
+    fn refresh_panel_key_hint(&self) -> Option<String> {
+        self.config.keybindings.refresh_panel.iter().find_map(|b| match b {
+            KeyBinding::Single(ke) => Some(format_key_spelled(ke)),
+            KeyBinding::Chord(..) => None,
+        })
+    }
+
     fn results_side(&self) -> Option<Side> {
         if matches!(self.left.content, PanelContent::SearchResults(_)) {
             Some(Side::Left)
@@ -3371,6 +3381,7 @@ impl App {
         );
 
         // Panels
+        let refresh_key_hint = self.refresh_panel_key_hint();
         let left_active = self.active == Side::Left;
         let left_title = panel_title(&self.left);
         frame.render_stateful_widget(
@@ -3380,6 +3391,7 @@ impl App {
                 title: left_title,
                 time_format: &self.config.panels.time_format,
                 time_length: self.config.panels.time_length,
+                refresh_key_hint: refresh_key_hint.clone(),
             },
             layout.left,
             &mut self.left,
@@ -3393,6 +3405,7 @@ impl App {
                 title: right_title,
                 time_format: &self.config.panels.time_format,
                 time_length: self.config.panels.time_length,
+                refresh_key_hint,
             },
             layout.right,
             &mut self.right,

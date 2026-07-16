@@ -522,6 +522,11 @@ pub struct PanelWidget<'a> {
     pub title: String,
     pub time_format: &'a str,
     pub time_length: usize,
+    /// Key label for the configured `refresh_panel` action, e.g. "Alt-r", used
+    /// in the results-panel's "(partial, ... to refresh)" footer. `None` if
+    /// the binding is unset or is a chord, in which case the footer just says
+    /// "(partial)".
+    pub refresh_key_hint: Option<String>,
 }
 
 /// ASCII spinner frame for the results-panel footer, driven by the event
@@ -579,12 +584,15 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
                 } else if !sr.complete {
                     // No spinner competes for space here, but a narrow panel
                     // still needs to degrade gracefully rather than overflow.
-                    const FULL: &str = "(partial, Alt-r to refresh) ";
                     const SHORT: &str = "(partial) ";
+                    let full = match &self.refresh_key_hint {
+                        Some(key) => format!("(partial, {key} to refresh) "),
+                        None => SHORT.to_string(),
+                    };
                     let footer_max = (area.width as usize).saturating_sub(4);
                     let avail = footer_max.saturating_sub(text.chars().count());
-                    if avail >= FULL.chars().count() {
-                        text.push_str(FULL);
+                    if avail >= full.chars().count() {
+                        text.push_str(&full);
                     } else if avail >= SHORT.chars().count() {
                         text.push_str(SHORT);
                     }
@@ -1122,6 +1130,7 @@ mod tests {
             title: "matches".into(),
             time_format: "%y-%m-%d %H:%M",
             time_length: 14,
+            refresh_key_hint: None,
         };
         let area = Rect::new(0, 0, 30, 10);
         let mut buf = Buffer::empty(area);
@@ -1157,6 +1166,7 @@ mod tests {
             title: "matches".into(),
             time_format: "%y-%m-%d %H:%M",
             time_length: 14,
+            refresh_key_hint: None,
         };
         let area = Rect::new(0, 0, 40, 10);
         let mut buf = Buffer::empty(area);
@@ -1230,6 +1240,7 @@ mod tests {
             title: "results".into(),
             time_format: "%y-%m-%d %H:%M",
             time_length: 14,
+            refresh_key_hint: None,
         };
         let area = Rect::new(0, 0, 40, 10);
         let mut buf = Buffer::empty(area);
@@ -1245,6 +1256,87 @@ mod tests {
             "no spinner at footer tail of {bottom:?}"
         );
         assert!(bottom.contains("Searching"), "searching text missing: {bottom:?}");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn partial_results_panel(base: &std::path::Path) -> PanelState {
+        let root = NodePath(base.to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), root);
+        let mut sr = SearchResultsState::new(SearchQuery {
+            pattern: "*".into(),
+            is_regex: false,
+            case_sensitive: false,
+            content: None,
+            content_is_regex: false,
+            content_case_sensitive: false,
+            content_whole_words: false,
+            max_depth: None,
+            include_hidden: false,
+            follow_symlinks: false,
+        });
+        sr.running = false;
+        sr.complete = false;
+        panel.content = PanelContent::SearchResults(sr);
+        panel
+    }
+
+    /// The "(partial, ... to refresh)" footer must reflect the *current*
+    /// `refresh_panel` keybinding, not a hardcoded "Alt-r" — a user who
+    /// rebinds it would otherwise see stale, wrong instructions.
+    #[test]
+    fn partial_search_footer_uses_the_configured_refresh_key_hint() {
+        let base = make_dirs("partial_footer_custom_key", 0);
+        let mut panel = partial_results_panel(&base);
+
+        let cs = ColorScheme::default();
+        let widget = PanelWidget {
+            cs: &cs,
+            active: true,
+            title: "results".into(),
+            time_format: "%y-%m-%d %H:%M",
+            time_length: 14,
+            refresh_key_hint: Some("Ctrl-Alt-z".to_string()),
+        };
+        let area = Rect::new(0, 0, 60, 10);
+        let mut buf = Buffer::empty(area);
+        StatefulWidget::render(widget, area, &mut buf, &mut panel);
+
+        let bottom: String = (0..area.width)
+            .map(|x| buf.cell((x, area.height - 1)).unwrap().symbol().chars().next().unwrap())
+            .collect();
+        assert!(
+            bottom.contains("Ctrl-Alt-z to refresh"),
+            "footer must use the configured key, not a hardcoded one: {bottom:?}"
+        );
+        assert!(!bottom.contains("Alt-r"), "footer must not hardcode Alt-r: {bottom:?}");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn partial_search_footer_omits_key_hint_when_unset() {
+        let base = make_dirs("partial_footer_no_key", 0);
+        let mut panel = partial_results_panel(&base);
+
+        let cs = ColorScheme::default();
+        let widget = PanelWidget {
+            cs: &cs,
+            active: true,
+            title: "results".into(),
+            time_format: "%y-%m-%d %H:%M",
+            time_length: 14,
+            refresh_key_hint: None,
+        };
+        let area = Rect::new(0, 0, 60, 10);
+        let mut buf = Buffer::empty(area);
+        StatefulWidget::render(widget, area, &mut buf, &mut panel);
+
+        let bottom: String = (0..area.width)
+            .map(|x| buf.cell((x, area.height - 1)).unwrap().symbol().chars().next().unwrap())
+            .collect();
+        assert!(bottom.contains("(partial)"), "expected the bare partial marker: {bottom:?}");
+        assert!(!bottom.contains("to refresh"), "no key configured, so no refresh hint: {bottom:?}");
 
         let _ = std::fs::remove_dir_all(&base);
     }
