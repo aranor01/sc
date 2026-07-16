@@ -194,11 +194,12 @@ fn cap_match_line(text: &str, first_hit: (usize, usize)) -> String {
         start = text.len().saturating_sub(MAX_MATCH_LINE);
     }
     let mut end = (start + MAX_MATCH_LINE).min(text.len());
-    while start > 0 && !text.is_char_boundary(start) {
-        start -= 1;
+    // Snap inward (never outward) so the window never grows past MAX_MATCH_LINE.
+    while start < end && !text.is_char_boundary(start) {
+        start += 1;
     }
-    while end < text.len() && !text.is_char_boundary(end) {
-        end += 1;
+    while end > start && !text.is_char_boundary(end) {
+        end -= 1;
     }
     text[start..end].to_string()
 }
@@ -658,6 +659,21 @@ mod tests {
         assert!(m.text.contains("needle"), "match must survive the length cap: {:?}", m.text);
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cap_match_line_never_exceeds_the_cap_on_multi_byte_boundaries() {
+        // Every char is 3 bytes ('€'), so a computed window edge lands mid-char
+        // unless it happens to be a multiple of 3 — chosen here so BOTH the
+        // start and end land mid-character, which used to grow the window
+        // (by 2 bytes) past MAX_MATCH_LINE instead of shrinking it.
+        let text = "\u{20ac}".repeat(2000);
+        let result = cap_match_line(&text, (3000, 3000));
+        assert!(
+            result.len() <= MAX_MATCH_LINE,
+            "window must never exceed the cap: got {} bytes",
+            result.len()
+        );
     }
 
     #[test]
