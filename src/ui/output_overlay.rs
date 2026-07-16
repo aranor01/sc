@@ -43,7 +43,10 @@ impl OutputOverlayState {
     /// known. `highlight` (same shape as `OutputOverlayWidget::highlight`) is
     /// used to find where in the target line the actual match sits, so a match
     /// deep inside a long wrapped line lands in view instead of just the start
-    /// of its raw line. No-op if there's no pending request.
+    /// of its raw line. No-op if there's no pending request. If `text` no
+    /// longer has that many lines (e.g. the file was edited between when a
+    /// search hit recorded the line and this jump), leaves `scroll` untouched
+    /// rather than landing near the end of the file.
     pub fn resolve_pending_jump(&mut self, text: &str, width: u16, highlight: Option<(&str, bool, bool, bool)>) {
         let Some(line) = self.pending_line.take() else { return };
         let width = width as usize;
@@ -54,8 +57,10 @@ impl OutputOverlayState {
             });
 
         let mut rows_before = 0u64;
+        let mut found = false;
         for (idx, raw_line) in text.lines().enumerate() {
             if idx as u64 + 1 == line {
+                found = true;
                 if let Some((m_start, _)) =
                     matcher.as_ref().and_then(|m| m.find_matches(raw_line).into_iter().next())
                 {
@@ -65,7 +70,9 @@ impl OutputOverlayState {
             }
             rows_before += wrapped_row_count(raw_line, width) as u64;
         }
-        self.scroll = rows_before.saturating_sub(2).min(u16::MAX as u64) as u16;
+        if found {
+            self.scroll = rows_before.saturating_sub(2).min(u16::MAX as u64) as u16;
+        }
     }
 
     pub fn handle_key(&mut self, event: &KeyEvent, dismiss_bindings: &ActionBindings) -> OverlayOutcome {
@@ -413,6 +420,19 @@ mod tests {
     fn resolve_pending_jump_is_a_noop_without_a_pending_line() {
         let mut state = OutputOverlayState::new();
         state.scroll = 5;
+        state.resolve_pending_jump("a\nb\nc\n", 40, None);
+        assert_eq!(state.scroll, 5);
+    }
+
+    /// If the text no longer has as many lines as the requested jump target
+    /// (e.g. the file shrank between when a search hit recorded a line and
+    /// when the viewer opened it), the scroll must be left alone rather than
+    /// silently landing near the end of the file.
+    #[test]
+    fn resolve_pending_jump_leaves_scroll_untouched_for_an_out_of_range_line() {
+        let mut state = OutputOverlayState::new();
+        state.scroll = 5;
+        state.jump_to_line(100);
         state.resolve_pending_jump("a\nb\nc\n", 40, None);
         assert_eq!(state.scroll, 5);
     }
