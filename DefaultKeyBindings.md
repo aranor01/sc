@@ -134,6 +134,13 @@
        active panel; for content searches the inactive panel is replaced by a matches
        panel showing the matching lines of the selected hit. See @docs/FileSearch.md
 
+- A-m
+       toggle visibility of the matches panel (content-search results only), without
+       closing the underlying search. Works regardless of which panel is active, since
+       there is only ever one matches panel at a time. If no content search is active,
+       shows the status bar warning "The match panel is available only for search by
+       content results". See @docs/FileSearch.md
+
 - A-H
        open the path history popup for the active panel (most recent directory first)
 

@@ -139,10 +139,20 @@ pub fn parse_key_binding(s: &str) -> Result<KeyBinding> {
 
 /// Format a KeyEvent into a human-readable label like "F5", "Ctrl-Alt-F5", "C-s".
 pub fn format_key(event: &KeyEvent) -> String {
+    format_key_with(event, "C-", "A-", "S-")
+}
+
+/// Like `format_key`, but with modifiers spelled out ("Ctrl-", "Alt-", "Shift-")
+/// for use in status-bar hint text.
+pub fn format_key_spelled(event: &KeyEvent) -> String {
+    format_key_with(event, "Ctrl-", "Alt-", "Shift-")
+}
+
+fn format_key_with(event: &KeyEvent, ctrl: &str, alt: &str, shift: &str) -> String {
     let mut s = String::new();
-    if event.modifiers.contains(KeyModifiers::CONTROL) { s.push_str("C-"); }
-    if event.modifiers.contains(KeyModifiers::ALT)     { s.push_str("A-"); }
-    if event.modifiers.contains(KeyModifiers::SHIFT)   { s.push_str("S-"); }
+    if event.modifiers.contains(KeyModifiers::CONTROL) { s.push_str(ctrl); }
+    if event.modifiers.contains(KeyModifiers::ALT)     { s.push_str(alt); }
+    if event.modifiers.contains(KeyModifiers::SHIFT)   { s.push_str(shift); }
     let code = match event.code {
         KeyCode::F(n) => format!("F{n}"),
         KeyCode::Char(c) => c.to_string(),
@@ -226,6 +236,7 @@ pub struct KeyBindings {
     pub go_to_parent: ActionBindings,
     pub go_back: ActionBindings,
     pub go_forward: ActionBindings,
+    pub toggle_matches_panel: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -294,6 +305,7 @@ impl Default for KeyBindings {
             go_to_parent: vec![KeyBinding::Single(ke(Up, a))],
             go_back: vec![KeyBinding::Single(ke(Left, a))],
             go_forward: vec![KeyBinding::Single(ke(Right, a))],
+            toggle_matches_panel: vec![KeyBinding::Single(ke(Char('m'), a))],
         }
     }
 }
@@ -544,6 +556,7 @@ impl Config {
                     "go_to_parent" => cfg.keybindings.go_to_parent = bindings,
                     "go_back" => cfg.keybindings.go_back = bindings,
                     "go_forward" => cfg.keybindings.go_forward = bindings,
+                    "toggle_matches_panel" => cfg.keybindings.toggle_matches_panel = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }
@@ -647,6 +660,13 @@ mod tests {
         assert_eq!(cfg.colorscheme, ColorScheme::default());
         // spot-check a keybinding
         assert!(cfg.keybindings.exit.contains(&single(F(10), M::NONE)));
+        assert!(cfg.keybindings.toggle_matches_panel.contains(&single(Char('m'), M::ALT)));
+    }
+
+    #[test]
+    fn toggle_matches_panel_override_parses() {
+        let cfg = Config::load_from_str(r#"{"keybindings":{"toggle_matches_panel":"Alt-n"}}"#).unwrap();
+        assert!(cfg.keybindings.toggle_matches_panel.contains(&single(Char('n'), M::ALT)));
     }
 
     #[test]
@@ -801,5 +821,12 @@ mod tests {
         assert!(Color::from_hex("1a2b3c").is_err()); // missing #
         assert!(Color::from_hex("#1a2b3").is_err());  // too short
         assert!(Color::from_hex("#gggggg").is_err()); // invalid hex
+    }
+
+    #[test]
+    fn format_key_uses_shorthand_and_format_key_spelled_spells_it_out() {
+        let ke = KeyEvent::new(Char('m'), M::ALT);
+        assert_eq!(format_key(&ke), "A-m");
+        assert_eq!(format_key_spelled(&ke), "Alt-m");
     }
 }

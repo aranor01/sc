@@ -88,6 +88,7 @@ triggers the action):
 | `user_menu` | `F2` |
 | `exit` | `F10`, `Ctrl-q` |
 | `path_history` | `Alt-H`, `Alt-Down` |
+| `toggle_matches_panel` | `Alt-m` |
 
 Notes:
 

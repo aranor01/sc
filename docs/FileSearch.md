@@ -74,6 +74,15 @@ lifetime of the results panel:
 - While the matches panel is shown, file operations and the command-line/menu actions
   that reference the inactive panel (`%F`, `%D`, `%T`, `Ctrl-x Ctrl-t`, `Ctrl-x Ctrl-p`,
   …) are disabled.
+- `Alt-m` (action `toggle_matches_panel`) hides or reshows the matches panel without
+  closing the search — the results panel and the running/cached search are untouched,
+  and the companion side reverts to (or is rebuilt from) a normal directory panel. It
+  works regardless of which panel is active, since there's only one matches panel at a
+  time. Outside a content search (no search at all, or a name-only search) it shows the
+  status bar warning "The match panel is available only for search by content results".
+  When file operations refuse the matches panel as a destination, their warning
+  footer names this key, e.g. "File operations need a normal panel as destination (use
+  Alt-m to hide matches)".
 
 ## Text viewer
 
@@ -147,6 +156,7 @@ The IPC messages themselves are out of scope for v1.
 
 - Keybinding action `search`, default `["Alt-?", "Ctrl-f"]`. The filter dialog moves to
   `Alt-f` to make room.
+- Keybinding action `toggle_matches_panel`, default `"Alt-m"`.
 - Color scheme keys `search_match_fg` / `search_match_bg` — the highlighted match
   substring in the matches panel and in the text viewer.
 

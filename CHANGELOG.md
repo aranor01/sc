@@ -24,6 +24,11 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   new search (or `Alt-r`) drops whatever was cached. Not persisted to
   `panel_history.json`. A search cached before it finished is marked
   `(partial, Alt-r to refresh)` in its footer.
+- `Alt-m` (action `toggle_matches_panel`): show/hide the matches panel of a content
+  search without closing the search itself. Works from either panel. Outside a content
+  search, warns "The match panel is available only for search by content results"; the
+  existing "normal panel as destination" warning for F5/F6 now names this key when the
+  inactive panel is the matches panel.
 
 ### Changed
 
@@ -55,6 +60,11 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 - Pasting into the command line stopped working after the subshell was shown once via
   Ctrl-O — sc never handled bracketed-paste terminal events, and paste mode could be left
   enabled by the subshell's own readline session after returning to the sc UI.
+- F8 (delete) on a content search's results panel was refused with "File operations need
+  a normal panel as destination" whenever the matches panel was showing — delete has no
+  destination, so that check never applied to it. Deleting a hit now also re-syncs the
+  matches panel immediately (updated selection, or cleared if none remain) instead of
+  waiting for the next tick.
 
 ## [0.1.0] - 2026-07-09
 

@@ -24,7 +24,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::config::{ActionBindings, Config, KeyBinding};
+use crate::config::{format_key_spelled, ActionBindings, Config, KeyBinding};
 use crate::ipc::{parse_message, CmdlineInjectMode, IpcMessage, IpcServer};
 use crate::history::CommandHistory;
 use crate::macros::{MacroContext, PanelContext};
@@ -205,6 +205,7 @@ enum Action {
     GoToParent,
     GoBack,
     GoForward,
+    ToggleMatchesPanel,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -432,6 +433,10 @@ pub struct App {
     status: StatusBarState,
     // Running async search (None when idle or finished); drained each tick.
     search: Option<Box<dyn SearchHandle>>,
+    // True when the user toggled off the matches panel of a still-running/still-cached
+    // content search (Action::ToggleMatchesPanel); distinguishes that from "no content
+    // search at all", which also shows PanelContent::Dir on the companion side.
+    matches_panel_hidden: bool,
     // Full-screen text viewer content (file mode); None = viewer closed.
     viewer: Option<ViewerContent>,
     // Search dialog hit-test areas (updated each render)
@@ -569,6 +574,7 @@ impl App {
             ipc: IpcServer::new(),
             status: StatusBarState::default(),
             search: None,
+            matches_panel_hidden: false,
             viewer: None,
             search_cb_areas: Cell::new([None; 4]),
             search_input_areas: Cell::new([None; 3]),
@@ -721,6 +727,7 @@ impl App {
             (&kb.go_to_parent, Action::GoToParent),
             (&kb.go_back, Action::GoBack),
             (&kb.go_forward, Action::GoForward),
+            (&kb.toggle_matches_panel, Action::ToggleMatchesPanel),
         ]
     }
 
@@ -851,7 +858,7 @@ impl App {
                 self.modal = Modal::Confirm(ConfirmState::new(ConfirmOp::Move, files, Some(dst)));
             }
             Action::Delete => {
-                if !self.file_ops_allowed() { return; }
+                if !self.file_ops_source_allowed() { return; }
                 let files = self.active_panel().op_files();
                 if !files.is_empty() {
                     self.modal = Modal::Confirm(ConfirmState::new(ConfirmOp::Delete, files, None));
@@ -1165,6 +1172,40 @@ impl App {
                     self.set_status("Already bookmarked", true);
                 }
             }
+            Action::ToggleMatchesPanel => {
+                let Some(side) = self.results_side() else {
+                    self.set_status("The match panel is available only for search by content results", true);
+                    return;
+                };
+                let content_search = matches!(&self.panel(side).content, PanelContent::SearchResults(sr) if sr.content_search());
+                if !content_search {
+                    self.set_status("The match panel is available only for search by content results", true);
+                    return;
+                }
+                let other = side.other();
+                if matches!(self.panel(other).content, PanelContent::Matches(_)) {
+                    self.matches_panel_hidden = true;
+                    let panel = self.panel_mut(other);
+                    panel.content = PanelContent::Dir;
+                    panel.cursor = 0;
+                    panel.scroll = 0;
+                    panel.tagged.clear();
+                    panel.refresh();
+                } else {
+                    self.matches_panel_hidden = false;
+                    let (needle, case_sensitive) = match &self.panel(side).content {
+                        PanelContent::SearchResults(sr) => {
+                            (sr.query.content.clone().unwrap_or_default(), sr.query.case_sensitive)
+                        }
+                        _ => unreachable!(),
+                    };
+                    let panel = self.panel_mut(other);
+                    panel.content = PanelContent::Matches(MatchesState::new(needle, case_sensitive));
+                    panel.tagged.clear();
+                    panel.cursor = 0;
+                    panel.scroll = 0;
+                }
+            }
         }
     }
 
@@ -1356,18 +1397,44 @@ impl App {
 
     // ── File search ───────────────────────────────────────────────────────────
 
-    /// F5/F6/F8 need the active panel to hold real entries and the inactive
-    /// panel to be a normal directory (the destination).
-    fn file_ops_allowed(&mut self) -> bool {
+    /// F5/F6/F8 all need the active panel to hold real, taggable entries — the
+    /// matches panel doesn't.
+    fn file_ops_source_allowed(&mut self) -> bool {
         if matches!(self.active_panel().content, PanelContent::Matches(_)) {
             self.set_status("No file operations in the matches panel", true);
             return false;
         }
+        true
+    }
+
+    /// F5/F6 additionally need the inactive panel to be a normal directory, since
+    /// that's the copy/move destination. F8 (delete) has no destination, so it only
+    /// needs `file_ops_source_allowed`.
+    fn file_ops_allowed(&mut self) -> bool {
+        if !self.file_ops_source_allowed() {
+            return false;
+        }
         if !matches!(self.inactive_panel().content, PanelContent::Dir) {
-            self.set_status("File operations need a normal panel as destination", true);
+            let mut msg = "File operations need a normal panel as destination".to_string();
+            if matches!(self.inactive_panel().content, PanelContent::Matches(_)) {
+                if let Some(hint) = self.matches_panel_hint() {
+                    msg.push(' ');
+                    msg.push_str(&hint);
+                }
+            }
+            self.set_status(&msg, true);
             return false;
         }
         true
+    }
+
+    /// Status-bar hint naming the configured `toggle_matches_panel` key, e.g.
+    /// "(use Alt-m to hide matches)". None if the binding is unset or is a chord.
+    fn matches_panel_hint(&self) -> Option<String> {
+        self.config.keybindings.toggle_matches_panel.iter().find_map(|b| match b {
+            KeyBinding::Single(ke) => Some(format!("(use {} to hide matches)", format_key_spelled(ke))),
+            KeyBinding::Chord(..) => None,
+        })
     }
 
     fn results_side(&self) -> Option<Side> {
@@ -1525,6 +1592,7 @@ impl App {
     /// straight from the snapshot, and the companion Matches panel (content
     /// searches only) is rebuilt the same way `start_search` builds it live.
     fn restore_cached_search(&mut self, side: Side, cache: crate::panel_history::CachedSearch) {
+        self.matches_panel_hidden = false;
         let content_needle = cache.query.content.clone();
         let case_sensitive = cache.query.case_sensitive;
         let complete = cache.complete;
@@ -1568,6 +1636,7 @@ impl App {
     /// running worker. The results panel itself is left to the caller.
     fn end_search_companions(&mut self) {
         self.search = None; // dropping the handle cancels the worker
+        self.matches_panel_hidden = false;
         for side in [Side::Left, Side::Right] {
             let panel = self.panel_mut(side);
             if matches!(panel.content, PanelContent::Matches(_)) {
@@ -2080,6 +2149,10 @@ impl App {
 
         self.left.refresh();
         self.right.refresh();
+        // Deleting a hit may have shifted the results panel's selection (or
+        // emptied it); keep the companion matches panel, if any, in step
+        // rather than waiting for the next tick's sync_matches_panel() call.
+        self.sync_matches_panel();
 
         if !errors.is_empty() {
             self.modal = Modal::Error(errors.join("\n"));
@@ -4145,6 +4218,81 @@ mod tests {
 
         assert!(matches!(app.right.content, PanelContent::Matches(_)));
         assert_eq!(app.right.path.0, path_before);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn toggle_matches_panel_hides_and_reshows_without_touching_the_search() {
+        let base = make_search_base("toggle_matches");
+        std::fs::write(base.join("target").join("hit.txt"), "needle here\n").unwrap();
+        let mut app = test_app(&base);
+        let query = SearchQuery { content: Some("needle".to_string()), ..search_query("*") };
+        app.start_search(query);
+        wait_for_search_done(&mut app);
+        assert!(matches!(app.right.content, PanelContent::Matches(_)));
+
+        app.handle_action(Action::ToggleMatchesPanel);
+        assert!(matches!(app.right.content, PanelContent::Dir));
+        assert!(app.matches_panel_hidden);
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)), "hiding must not close the search");
+        assert!(!app.status_active());
+
+        app.handle_action(Action::ToggleMatchesPanel);
+        assert!(matches!(app.right.content, PanelContent::Matches(_)));
+        assert!(!app.matches_panel_hidden);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn delete_action_is_allowed_while_matches_panel_is_shown_and_syncs_it() {
+        let base = make_search_base("delete_with_matches");
+        std::fs::write(base.join("target").join("hit1.txt"), "needle one\n").unwrap();
+        std::fs::write(base.join("target").join("hit2.txt"), "needle two\n").unwrap();
+        let mut app = test_app(&base);
+        let query = SearchQuery { content: Some("needle".to_string()), ..search_query("*") };
+        app.start_search(query);
+        wait_for_search_done(&mut app);
+        assert_eq!(app.left.entries.len(), 2);
+        assert!(matches!(app.right.content, PanelContent::Matches(_)));
+
+        // Select and delete the first hit; F8 must not be refused for lacking a
+        // "normal panel" destination — Delete has no destination.
+        app.left.cursor = 0;
+        let first_name = app.left.entries[0].name.clone();
+        app.handle_action(Action::Delete);
+        assert!(!app.status_active(), "Delete must not warn about a missing destination panel");
+        let Modal::Confirm(state) = std::mem::replace(&mut app.modal, Modal::None) else {
+            panic!("Delete should have opened a confirm dialog");
+        };
+        app.execute_file_op(state);
+
+        assert_eq!(app.left.entries.len(), 1);
+        assert!(!app.left.entries.iter().any(|e| e.name == first_name));
+
+        // The matches panel must now reflect whatever is selected after the
+        // delete, not the deleted file.
+        let PanelContent::Matches(ms) = &app.right.content else { panic!("expected matches panel") };
+        assert_ne!(ms.file.as_deref(), Some(first_name.as_str()));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn toggle_matches_panel_warns_when_not_applicable() {
+        let base = make_search_base("toggle_matches_warn");
+        let mut app = test_app(&base);
+
+        app.handle_action(Action::ToggleMatchesPanel);
+        assert!(app.status_active(), "no search at all should warn");
+
+        app.start_search(search_query("*")); // name-only search, no `content`
+        wait_for_search_done(&mut app);
+        app.status = crate::ui::status_bar::StatusBarState::default();
+        app.handle_action(Action::ToggleMatchesPanel);
+        assert!(app.status_active(), "name-only search should warn too");
+        assert!(matches!(app.right.content, PanelContent::Dir));
 
         let _ = std::fs::remove_dir_all(&base);
     }
