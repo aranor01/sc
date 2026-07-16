@@ -33,6 +33,9 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   search, warns "The match panel is available only for search by content results"; the
   existing "normal panel as destination" warning for F5/F6 now names this key when the
   inactive panel is the matches panel.
+- Running a command (from the command line or via `Ctrl-o`/subshell passthrough) while
+  the matches panel is the active panel uses the directory of the file whose matches
+  are shown as the working directory, since the matches panel isn't a directory browser.
 
 ### Changed
 

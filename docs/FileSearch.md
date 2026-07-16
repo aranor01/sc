@@ -80,6 +80,10 @@ lifetime of the results panel:
 - While the matches panel is shown, file operations and the command-line/menu actions
   that reference the inactive panel (`%F`, `%D`, `%T`, `Ctrl-x Ctrl-t`, `Ctrl-x Ctrl-p`,
   …) are disabled.
+- Running a command line command or entering the subshell (`Ctrl-o`/`Alt-o`) while the
+  matches panel is the *active* panel uses the directory of the file whose matches are
+  shown as the working directory — the panel's own directory (from before it became a
+  matches panel) is not used, since it is no longer visible anywhere.
 - `Alt-m` (action `toggle_matches_panel`) hides or reshows the matches panel without
   closing the search — the results panel and the running/cached search are untouched,
   and the companion side reverts to (or is rebuilt from) a normal directory panel. It

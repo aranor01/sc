@@ -630,6 +630,20 @@ impl App {
         }
     }
 
+    /// Directory to use as cwd for shell commands run against the active panel.
+    /// A Matches panel isn't a directory browser: `panel.path` on it still holds
+    /// whatever directory was there before the panel got replaced by the matches
+    /// view, which is confusing as a cwd since that directory is now hidden. Use
+    /// the directory of the file whose matches are shown instead.
+    fn active_panel_shell_dir(&self) -> String {
+        if let PanelContent::Matches(ms) = &self.active_panel().content {
+            if let Some(dir) = ms.abs_path.as_deref().and_then(|p| Path::new(p).parent()) {
+                return dir.to_string_lossy().into_owned();
+            }
+        }
+        self.active_panel().path.0.clone()
+    }
+
     fn panel(&self, side: Side) -> &PanelState {
         match side {
             Side::Left => &self.left,
@@ -2028,7 +2042,7 @@ impl App {
         }
         self.cmdline = restore_to;
 
-        let cwd = self.active_panel().path.0.clone();
+        let cwd = self.active_panel_shell_dir();
 
         // Tear down TUI so any spawned process gets a real terminal.
         if self.mouse {
@@ -3200,7 +3214,7 @@ impl App {
         let cmdline_text = if sync_cmdline { self.cmdline.text.clone() } else { String::new() };
         let mut pending_ipc: Vec<String> = Vec::new();
         if let ShellMode::Subshell(ref sub) = self.shell_mode {
-            let cwd = self.active_panel().path.0.clone();
+            let cwd = self.active_panel_shell_dir();
             // Sync PTY window size so fullscreen programs (vim, mc) get the real dimensions.
             // Do this before draining: resize() sends SIGWINCH, which makes readline
             // redraw the shell's already-idle prompt, and that redraw must be caught
@@ -3260,8 +3274,10 @@ impl App {
                 // stateless mode so sc keeps working normally.
                 self.shell_mode = ShellMode::Stateless;
                 // Skip cwd sync — /proc/<pid>/cwd is gone.
-            } else {
-                // Sync active panel to wherever the subshell ended up.
+            } else if !matches!(self.active_panel().content, PanelContent::Matches(_)) {
+                // Sync active panel to wherever the subshell ended up. Skipped for a
+                // Matches panel: it isn't a directory browser, so there's no path to
+                // navigate it to, and doing so anyway would reset its cursor/scroll.
                 if let Ok(link) = std::fs::read_link(format!("/proc/{}/cwd", sub.child_pid)) {
                     let new_cwd = link.to_string_lossy().to_string();
                     let panel_cwd = self.active_panel().path.0.clone();
@@ -3704,9 +3720,14 @@ impl App {
             IpcMessage::ShowPanels(maybe_cwd) => {
                 self.show_output = false;
                 if let Some(new_cwd) = maybe_cwd {
-                    let panel_cwd = self.active_panel().path.0.clone();
-                    if new_cwd != panel_cwd {
-                        self.navigate_to_path(&new_cwd);
+                    // Skipped for a Matches panel: it isn't a directory browser, so
+                    // there's no path to navigate it to, and doing so anyway would
+                    // reset its cursor/scroll.
+                    if !matches!(self.active_panel().content, PanelContent::Matches(_)) {
+                        let panel_cwd = self.active_panel().path.0.clone();
+                        if new_cwd != panel_cwd {
+                            self.navigate_to_path(&new_cwd);
+                        }
                     }
                 }
             }
@@ -4105,6 +4126,26 @@ mod tests {
             assert!(Instant::now() < deadline, "search did not finish in time");
             std::thread::sleep(Duration::from_millis(2));
         }
+    }
+
+    #[test]
+    fn active_panel_shell_dir_uses_matched_files_directory_not_the_hidden_panel_path() {
+        let base = make_search_base("shell_dir_matches");
+        std::fs::write(base.join("target").join("hit.txt"), "needle here\n").unwrap();
+        let mut app = test_app(&base);
+        let query = SearchQuery { content: Some("needle".to_string()), ..search_query("*") };
+        app.start_search(query);
+        wait_for_search_done(&mut app);
+        app.sync_matches_panel();
+        app.active = Side::Right;
+        assert!(matches!(app.right.content, PanelContent::Matches(_)));
+        // The (hidden) panel.path is still `base/dest`, the pre-search directory —
+        // the shell dir must be the matched file's directory instead.
+        assert_eq!(app.right.path.0, base.join("dest").to_string_lossy());
+        let expected = base.join("target").to_string_lossy().into_owned();
+        assert_eq!(app.active_panel_shell_dir(), expected);
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
