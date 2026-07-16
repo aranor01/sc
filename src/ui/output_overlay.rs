@@ -16,6 +16,15 @@ use ratatui::{
 
 use super::to_color;
 
+/// Builds a `ContentMatcher` from a `(needle, case_sensitive, is_regex,
+/// whole_words)` highlight tuple, the same shape used by
+/// `OutputOverlayWidget::highlight`. Returns `None` for an empty needle or an
+/// invalid pattern (e.g. a bad regex).
+fn build_matcher(highlight: Option<(&str, bool, bool, bool)>) -> Option<ContentMatcher> {
+    let (needle, case_sensitive, is_regex, whole_words) = highlight.filter(|(needle, ..)| !needle.is_empty())?;
+    ContentMatcher::build(needle, is_regex, case_sensitive, whole_words).ok()
+}
+
 pub struct OutputOverlayState {
     pub scroll: u16,
     /// Set by `jump_to_line`, resolved into an actual `scroll` by
@@ -50,11 +59,7 @@ impl OutputOverlayState {
     pub fn resolve_pending_jump(&mut self, text: &str, width: u16, highlight: Option<(&str, bool, bool, bool)>) {
         let Some(line) = self.pending_line.take() else { return };
         let width = width as usize;
-        let matcher = highlight
-            .filter(|(needle, ..)| !needle.is_empty())
-            .and_then(|(needle, case_sensitive, is_regex, whole_words)| {
-                ContentMatcher::build(needle, is_regex, case_sensitive, whole_words).ok()
-            });
+        let matcher = build_matcher(highlight);
 
         let mut rows_before = 0u64;
         let mut found = false;
@@ -218,20 +223,19 @@ impl<'a> Widget for OutputOverlayWidget<'a> {
 
         let text_area = Rect { width: content_width(area), ..inner };
 
-        let para = match self.highlight {
-            Some((needle, case_sensitive, is_regex, whole_words)) if !needle.is_empty() => {
+        let matcher = build_matcher(self.highlight);
+        let para = match matcher {
+            Some(m) => {
                 let match_style = Style::default()
                     .fg(to_color(self.cs.search_match_fg))
                     .bg(to_color(self.cs.search_match_bg));
-                let matcher = ContentMatcher::build(needle, is_regex, case_sensitive, whole_words).ok();
                 let lines: Vec<Line> = self
                     .text
                     .lines()
                     .map(|line| {
                         let mut spans = Vec::new();
                         let mut pos = 0;
-                        let hits = matcher.as_ref().map(|m| m.find_matches(line)).unwrap_or_default();
-                        for (start, end) in hits {
+                        for (start, end) in m.find_matches(line) {
                             if start > pos {
                                 spans.push(Span::styled(&line[pos..start], style));
                             }
@@ -246,7 +250,7 @@ impl<'a> Widget for OutputOverlayWidget<'a> {
                     .collect();
                 Paragraph::new(lines)
             }
-            _ => Paragraph::new(self.text),
+            None => Paragraph::new(self.text),
         };
         let para = para
             .style(style)
@@ -435,5 +439,16 @@ mod tests {
         state.jump_to_line(100);
         state.resolve_pending_jump("a\nb\nc\n", 40, None);
         assert_eq!(state.scroll, 5);
+    }
+
+    #[test]
+    fn build_matcher_is_none_for_an_empty_needle() {
+        assert!(build_matcher(Some(("", true, false, false))).is_none());
+        assert!(build_matcher(None).is_none());
+    }
+
+    #[test]
+    fn build_matcher_is_some_for_a_valid_needle() {
+        assert!(build_matcher(Some(("needle", true, false, false))).is_some());
     }
 }
