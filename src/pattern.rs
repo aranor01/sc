@@ -167,6 +167,24 @@ fn is_word_boundary_match(haystack: &str, start: usize, end: usize) -> bool {
     before_ok && after_ok
 }
 
+/// Nearest char boundary at or after `idx` (never past `s.len()`). Moves
+/// `idx` forward, so the byte range it bounds can only shrink, never grow.
+pub fn ceil_char_boundary(s: &str, mut idx: usize) -> usize {
+    while idx < s.len() && !s.is_char_boundary(idx) {
+        idx += 1;
+    }
+    idx
+}
+
+/// Nearest char boundary at or before `idx`. Moves `idx` backward, so the
+/// byte range it bounds can only shrink, never grow.
+pub fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,5 +265,39 @@ mod tests {
     fn content_matcher_invalid_regex_reports_error() {
         let err = ContentMatcher::build("(", true, true, false).unwrap_err();
         assert!(err.starts_with("Invalid regex:"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn ceil_char_boundary_already_a_boundary_is_unchanged() {
+        assert_eq!(ceil_char_boundary("hello", 2), 2);
+    }
+
+    #[test]
+    fn ceil_char_boundary_moves_forward_to_next_boundary() {
+        let s = "a\u{20ac}b"; // '€' is 3 bytes, occupying indices 1..4
+        assert_eq!(ceil_char_boundary(s, 2), 4);
+        assert_eq!(ceil_char_boundary(s, 3), 4);
+    }
+
+    #[test]
+    fn ceil_char_boundary_at_end_of_string_stays_at_len() {
+        assert_eq!(ceil_char_boundary("hello", 5), 5);
+    }
+
+    #[test]
+    fn floor_char_boundary_already_a_boundary_is_unchanged() {
+        assert_eq!(floor_char_boundary("hello", 2), 2);
+    }
+
+    #[test]
+    fn floor_char_boundary_moves_backward_to_previous_boundary() {
+        let s = "a\u{20ac}b"; // '€' is 3 bytes, occupying indices 1..4
+        assert_eq!(floor_char_boundary(s, 2), 1);
+        assert_eq!(floor_char_boundary(s, 3), 1);
+    }
+
+    #[test]
+    fn floor_char_boundary_at_start_of_string_stays_at_zero() {
+        assert_eq!(floor_char_boundary("hello", 0), 0);
     }
 }

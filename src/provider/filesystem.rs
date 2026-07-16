@@ -2,7 +2,7 @@ use super::{
     LineMatch, NodeEntry, NodeKind, NodePath, Result, SearchEvent, SearchHandle, SearchHit,
     SearchQuery, TreeProvider,
 };
-use crate::pattern::{build_filter_pattern, ContentMatcher, FilterPattern};
+use crate::pattern::{build_filter_pattern, ceil_char_boundary, floor_char_boundary, ContentMatcher, FilterPattern};
 use anyhow::Context;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -201,14 +201,10 @@ fn cap_match_line(text: String, first_hit: (usize, usize)) -> String {
     if start + MAX_MATCH_LINE > text.len() {
         start = text.len().saturating_sub(MAX_MATCH_LINE);
     }
-    let mut end = (start + MAX_MATCH_LINE).min(text.len());
+    let end = (start + MAX_MATCH_LINE).min(text.len());
     // Snap inward (never outward) so the window never grows past MAX_MATCH_LINE.
-    while start < end && !text.is_char_boundary(start) {
-        start += 1;
-    }
-    while end > start && !text.is_char_boundary(end) {
-        end -= 1;
-    }
+    start = ceil_char_boundary(&text, start);
+    let end = floor_char_boundary(&text, end).max(start);
     text[start..end].to_string()
 }
 
