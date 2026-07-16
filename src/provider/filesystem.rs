@@ -175,6 +175,12 @@ fn search_worker(
 ) {
     let mut errors: Vec<String> = Vec::new();
     let mut found = 0usize;
+    // Only symlinked directories can introduce cycles (a plain walk without
+    // symlinks is a tree). Seeded with the root so a symlink pointing back
+    // at it is caught too.
+    let mut visited_dirs: std::collections::HashSet<PathBuf> = std::fs::canonicalize(&root)
+        .into_iter()
+        .collect();
     let mut stack: Vec<(PathBuf, u32)> = vec![(root, 1)];
 
     'walk: while let Some((dir, depth)) = stack.pop() {
@@ -216,17 +222,29 @@ fn search_worker(
                 .metadata()
                 .map(|m| m.file_type().is_symlink())
                 .unwrap_or(false);
-            let is_dir = if is_symlink {
-                std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false)
+            let follow_meta = if is_symlink {
+                std::fs::metadata(&path).ok()
             } else {
-                raw.metadata().map(|m| m.is_dir()).unwrap_or(false)
+                raw.metadata().ok()
             };
+            let is_dir = follow_meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            let is_regular_file = follow_meta.as_ref().map(|m| m.is_file()).unwrap_or(false);
 
             if is_dir
                 && (!is_symlink || query.follow_symlinks)
                 && query.max_depth.map(|d| depth < d).unwrap_or(true)
             {
-                stack.push((path.clone(), depth + 1));
+                if is_symlink {
+                    // Only descend if we haven't already visited this
+                    // directory by its canonical (cycle-resolved) identity.
+                    if let Ok(canon) = std::fs::canonicalize(&path) {
+                        if visited_dirs.insert(canon) {
+                            stack.push((path.clone(), depth + 1));
+                        }
+                    }
+                } else {
+                    stack.push((path.clone(), depth + 1));
+                }
             }
 
             if !pattern.matches(&name) {
@@ -235,6 +253,10 @@ fn search_worker(
             let hit = match &query.content {
                 None => Some(Vec::new()),
                 Some(_) if is_dir => None,
+                // FIFOs, sockets and devices can block or misbehave on open;
+                // only regular files are content-scanned. Name-only hits are
+                // unaffected — this only skips the content-match attempt.
+                Some(_) if !is_regular_file => None,
                 Some(needle) => match scan_file(&path, needle, query.case_sensitive) {
                     Ok(Some(matches)) if !matches.is_empty() => Some(matches),
                     Ok(_) => None, // binary file or no matching lines
@@ -523,6 +545,27 @@ mod tests {
     }
 
     #[test]
+    fn content_search_skips_fifo_instead_of_blocking() {
+        let base = make_base("fifo");
+        let fifo_path = base.join("pipe.rs");
+        let c_path = std::ffi::CString::new(fifo_path.to_str().unwrap()).unwrap();
+        let ret = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+        assert_eq!(ret, 0, "mkfifo failed: {}", std::io::Error::last_os_error());
+        std::fs::write(base.join("real.rs"), "needle here\n").unwrap();
+
+        let mut q = query("*.rs");
+        q.content = Some("needle".to_string());
+        // run()'s collect() has a 10s deadline: opening the FIFO (no writer
+        // ever attaches) used to block the worker thread forever, so a
+        // regression here fails the assertion instead of hanging.
+        let (hits, errors) = run(&base, q);
+        assert!(errors.is_empty());
+        assert_eq!(rel_names(&base, &hits), vec!["real.rs"]);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn symlinked_dirs_followed_only_on_request() {
         let base = make_base("symlink");
         std::fs::create_dir(base.join("real")).unwrap();
@@ -539,6 +582,23 @@ mod tests {
             rel_names(&base, &hits),
             vec!["link/inside.rs", "real/inside.rs"]
         );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn symlink_cycle_does_not_loop_forever() {
+        let base = make_base("cycle");
+        std::fs::create_dir(base.join("a")).unwrap();
+        std::fs::write(base.join("a").join("marker.rs"), "x").unwrap();
+        // a/loop -> base: a cycle back to an ancestor already on the walk.
+        std::os::unix::fs::symlink(&base, base.join("a").join("loop")).unwrap();
+
+        let mut q = query("marker.rs");
+        q.follow_symlinks = true;
+        let (hits, _) = run(&base, q); // run()'s collect() has a 10s deadline,
+        // so a regression here fails the assertion rather than hanging.
+        assert_eq!(rel_names(&base, &hits), vec!["a/marker.rs"]);
 
         let _ = std::fs::remove_dir_all(&base);
     }

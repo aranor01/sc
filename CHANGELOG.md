@@ -18,6 +18,12 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   matches panel that follows the selection and opens the new full-screen text viewer
   jumped to the matching line. New color-scheme keys `search_match_fg`/`search_match_bg`.
   See docs/FileSearch.md.
+- The most recent search a panel jumped away from now stays reachable through that
+  panel's back/forward history for the session: `Alt-Left`/`Alt-Right` move into and out
+  of it symmetrically in both directions, `Alt-Up` closes it like Esc-Esc, and starting a
+  new search (or `Alt-r`) drops whatever was cached. Not persisted to
+  `panel_history.json`. A search cached before it finished is marked
+  `(partial, Alt-r to refresh)` in its footer.
 
 ### Changed
 
@@ -26,6 +32,22 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Fixed
 
+- sc could crash on startup after a session ended with the active panel's history cursor
+  not at the newest entry (e.g. quitting right after `Alt-Left`): the cached-search
+  side-vector wasn't padded back into alignment after loading `panel_history.json`
+  (which never persists it), so the first navigation of the new session panicked.
+- Content search could hang forever on a FIFO with no writer (the search worker blocked
+  in `File::open` with no way to be cancelled); content-scanning now skips non-regular
+  files. A symlink cycle with "Follow symlinks" enabled could make the walker re-descend
+  into itself indefinitely; visited directories are now tracked by canonical path.
+- Several gaps in the search-history caching added above: jumping into a hit again from an
+  already-restored cached search could leave two caches resident at once; deleting a hit
+  from a restored cached search didn't update the cache, so it could resurrect later;
+  `Alt-Left` into a cache whose root directory had since been deleted silently restored it
+  instead of showing an error; the path-history popup (`Alt-H`) and IPC's `Filter` message
+  didn't respect the same "not available on a search panel" guard the equivalent keybound
+  actions have; and restoring a cached search didn't re-apply the panel's current sort
+  order or clear a stale error banner.
 - sc now compiles for aarch64-apple-darwin: added macOS-specific peer credential retrieval in IPC
   (`getsockopt(LOCAL_PEERCRED)` with `xucred` length/version validation), passed openpty's winsize
   argument as the `*mut` pointer macOS expects, and let the TIOCSCTTY ioctl request cast infer each

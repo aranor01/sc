@@ -637,6 +637,20 @@ impl App {
         }
     }
 
+    fn panel_history(&self, side: Side) -> &crate::panel_history::PanelHistory {
+        match side {
+            Side::Left => &self.panel_history_left,
+            Side::Right => &self.panel_history_right,
+        }
+    }
+
+    fn panel_history_mut(&mut self, side: Side) -> &mut crate::panel_history::PanelHistory {
+        match side {
+            Side::Left => &mut self.panel_history_left,
+            Side::Right => &mut self.panel_history_right,
+        }
+    }
+
     fn active_panel_mut(&mut self) -> &mut PanelState {
         match self.active {
             Side::Left => &mut self.left,
@@ -1013,6 +1027,15 @@ impl App {
                 self.modal = Modal::InputDialog(state);
             }
             Action::PathHistory => {
+                if matches!(self.active_panel().content, PanelContent::Matches(_)) {
+                    return;
+                }
+                if !matches!(self.active_panel().content, PanelContent::Dir) {
+                    // Picking a path-history entry is a "go somewhere new"
+                    // action like Back/Forward, not a plain close like
+                    // Alt-Up — close the search view, then open the popup.
+                    self.close_search();
+                }
                 let history = match self.active {
                     Side::Left => &self.panel_history_left,
                     Side::Right => &self.panel_history_right,
@@ -1089,8 +1112,14 @@ impl App {
                 self.modal = Modal::SearchDialog(state);
             }
             Action::GoToParent => {
+                if matches!(self.active_panel().content, PanelContent::Matches(_)) {
+                    return;
+                }
                 if !matches!(self.active_panel().content, PanelContent::Dir) {
+                    // Alt-Up on a search view just closes it, like Esc-Esc —
+                    // it doesn't also navigate to the parent of the search root.
                     self.close_search();
+                    return;
                 }
                 let current = self.active_panel().path.clone();
                 let parent_opt = self.active_panel().provider.parent(&current);
@@ -1105,54 +1134,26 @@ impl App {
                 self.push_path_history(&dest);
             }
             Action::GoBack => {
+                if matches!(self.active_panel().content, PanelContent::Matches(_)) {
+                    return;
+                }
                 if !matches!(self.active_panel().content, PanelContent::Dir) {
                     self.close_search();
                 }
-                let path_opt = match self.active {
-                    Side::Left => self.panel_history_left.go_back(),
-                    Side::Right => self.panel_history_right.go_back(),
-                };
-                let Some(path) = path_opt else { return; };
-                let path = absolutize_str(&path);
-                if !std::path::Path::new(&path).exists() {
-                    match self.active {
-                        Side::Left => { self.panel_history_left.go_forward(); }
-                        Side::Right => { self.panel_history_right.go_forward(); }
-                    }
-                    self.set_status(&format!("Path no longer exists: {path}"), true);
-                    return;
-                }
-                let panel = self.active_panel_mut();
-                panel.path = crate::provider::NodePath(path);
-                panel.cursor = 0;
-                panel.scroll = 0;
-                panel.tagged.clear();
-                panel.refresh();
+                let side = self.active;
+                let Some(path) = self.panel_history_mut(side).go_back() else { return; };
+                self.land_on_history_path(side, path, |h| { h.go_forward(); });
             }
             Action::GoForward => {
+                if matches!(self.active_panel().content, PanelContent::Matches(_)) {
+                    return;
+                }
                 if !matches!(self.active_panel().content, PanelContent::Dir) {
                     self.close_search();
                 }
-                let path_opt = match self.active {
-                    Side::Left => self.panel_history_left.go_forward(),
-                    Side::Right => self.panel_history_right.go_forward(),
-                };
-                let Some(path) = path_opt else { return; };
-                let path = absolutize_str(&path);
-                if !std::path::Path::new(&path).exists() {
-                    match self.active {
-                        Side::Left => { self.panel_history_left.go_back(); }
-                        Side::Right => { self.panel_history_right.go_back(); }
-                    }
-                    self.set_status(&format!("Path no longer exists: {path}"), true);
-                    return;
-                }
-                let panel = self.active_panel_mut();
-                panel.path = crate::provider::NodePath(path);
-                panel.cursor = 0;
-                panel.scroll = 0;
-                panel.tagged.clear();
-                panel.refresh();
+                let side = self.active;
+                let Some(path) = self.panel_history_mut(side).go_forward() else { return; };
+                self.land_on_history_path(side, path, |h| { h.go_back(); });
             }
             Action::BookmarkAdd => {
                 let path = self.active_panel().path.0.clone();
@@ -1418,8 +1419,10 @@ impl App {
     }
 
     fn start_search(&mut self, query: SearchQuery) {
-        // A new search replaces any existing search view.
+        // A new search replaces any existing search view and drops any cached one.
         self.close_search();
+        let side = self.active;
+        self.panel_history_mut(side).clear_caches();
         let root = self.active_panel().path.clone();
         let handle = match self.active_panel().provider.search(&root, query.clone()) {
             Ok(h) => h,
@@ -1455,6 +1458,8 @@ impl App {
             _ => return,
         };
         self.search = None; // cancel the current worker
+        let side = self.active;
+        self.panel_history_mut(side).clear_caches();
         let root = self.active_panel().path.clone();
         match self.active_panel().provider.search(&root, query.clone()) {
             Ok(handle) => {
@@ -1464,6 +1469,7 @@ impl App {
                 panel.tagged.clear();
                 panel.cursor = 0;
                 panel.scroll = 0;
+                panel.error = None;
                 let inactive = self.inactive_panel_mut();
                 if let PanelContent::Matches(ms) = &mut inactive.content {
                     ms.file = None;
@@ -1475,6 +1481,86 @@ impl App {
                 self.search = Some(handle);
             }
             Err(e) => self.modal = Modal::Error(e.to_string()),
+        }
+    }
+
+    /// After `go_back()`/`go_forward()` return `path` for `side`, either replay
+    /// the search cached at that history slot or navigate to it as an ordinary
+    /// directory. `rollback` undoes the cursor move if a plain-directory path
+    /// no longer exists on disk (mirrors each caller's own direction).
+    fn land_on_history_path(
+        &mut self,
+        side: Side,
+        path: String,
+        rollback: impl FnOnce(&mut crate::panel_history::PanelHistory),
+    ) {
+        if let Some(cache) = self.panel_history(side).current_cache().cloned() {
+            if !std::path::Path::new(&cache.root.0).exists() {
+                rollback(self.panel_history_mut(side));
+                // The cache is now useless (its root is gone) — evict it so
+                // this same slot doesn't keep failing this check forever.
+                self.panel_history_mut(side).clear_caches();
+                self.set_status(&format!("Path no longer exists: {}", cache.root.0), true);
+                return;
+            }
+            self.restore_cached_search(side, cache);
+            return;
+        }
+        let abs = absolutize_str(&path);
+        if !std::path::Path::new(&abs).exists() {
+            rollback(self.panel_history_mut(side));
+            self.set_status(&format!("Path no longer exists: {abs}"), true);
+            return;
+        }
+        let panel = self.panel_mut(side);
+        panel.path = crate::provider::NodePath(abs);
+        panel.cursor = 0;
+        panel.scroll = 0;
+        panel.tagged.clear();
+        panel.refresh();
+    }
+
+    /// Reconstruct a finished/interrupted search from its cache, replaying it
+    /// rather than re-listing the directory — cursor/entries/matches come
+    /// straight from the snapshot, and the companion Matches panel (content
+    /// searches only) is rebuilt the same way `start_search` builds it live.
+    fn restore_cached_search(&mut self, side: Side, cache: crate::panel_history::CachedSearch) {
+        let content_needle = cache.query.content.clone();
+        let case_sensitive = cache.query.case_sensitive;
+        let complete = cache.complete;
+        let selected = cache.selected.clone();
+        let root = cache.root.clone();
+        let sr = SearchResultsState {
+            query: cache.query,
+            running: false,
+            scanning: None,
+            matches: cache.matches,
+            complete,
+        };
+        let panel = self.panel_mut(side);
+        panel.path = root;
+        panel.entries = cache.entries;
+        panel.content = PanelContent::SearchResults(sr);
+        panel.tagged.clear();
+        panel.scroll = 0;
+        panel.error = None;
+        // content is already SearchResults, so this dispatches to the
+        // sort-only branch (no disk I/O) — applies the panel's current sort
+        // to the restored entries instead of leaving snapshot-time order.
+        // Must run before locating `selected`, since sorting reorders entries.
+        panel.refresh();
+        panel.cursor = selected
+            .as_deref()
+            .and_then(|name| panel.entries.iter().position(|e| e.name == name))
+            .unwrap_or(0);
+        if let Some(needle) = content_needle {
+            let other = side.other();
+            let panel_other = self.panel_mut(other);
+            panel_other.content = PanelContent::Matches(MatchesState::new(needle, case_sensitive));
+            panel_other.tagged.clear();
+            panel_other.cursor = 0;
+            panel_other.scroll = 0;
+            self.sync_matches_panel();
         }
     }
 
@@ -1522,7 +1608,27 @@ impl App {
             let panel = self.active_panel();
             panel.provider.join(&panel.path, &rel).0
         };
+        let side = self.active;
+        let root = self.active_panel().path.clone();
+        let cache = match &self.active_panel().content {
+            PanelContent::SearchResults(sr) => Some(Box::new(crate::panel_history::CachedSearch {
+                root: root.clone(),
+                query: sr.query.clone(),
+                entries: self.active_panel().entries.clone(),
+                matches: sr.matches.clone(),
+                selected: Some(rel.clone()),
+                complete: sr.complete,
+            })),
+            _ => None,
+        };
         self.end_search_companions();
+        if let Some(cache) = cache {
+            // At most one cached search per side: drop whatever was cached
+            // before attaching this one, so jumping again from an
+            // already-restored cache can't leave two resident at once.
+            self.panel_history_mut(side).clear_caches();
+            self.panel_history_mut(side).push_with_cache(&root.0, Some(cache));
+        }
         let panel = self.active_panel_mut();
         panel.content = PanelContent::Dir;
         panel.tagged.clear();
@@ -1637,6 +1743,7 @@ impl App {
             if done.is_some() {
                 sr.running = false;
                 sr.scanning = None;
+                sr.complete = true;
             }
         }
         if let Some(errors) = done {
@@ -1956,6 +2063,16 @@ impl App {
                             sr.matches.remove(name);
                         }
                         panel.entries.retain(|e| !files.contains(&e.name));
+                        // If this view came from a cached search (Alt-Left),
+                        // the cache is a separate copy — without this, the
+                        // deleted entries would reappear next time it's replayed.
+                        let side = self.active;
+                        if let Some(cache) = self.panel_history_mut(side).current_cache_mut() {
+                            for name in &files {
+                                cache.matches.remove(name);
+                            }
+                            cache.entries.retain(|e| !files.contains(&e.name));
+                        }
                     }
                 }
             }
@@ -3456,6 +3573,10 @@ impl App {
                 self.show_cmdline = true;
             }
             IpcMessage::Filter(pattern) => {
+                if !matches!(self.active_panel().content, PanelContent::Dir) {
+                    self.set_status("Filter is not available in search panels", true);
+                    return;
+                }
                 if pattern.is_empty() {
                     self.active_panel_mut().filter = None;
                 } else {
@@ -3823,5 +3944,346 @@ mod tests {
     fn abbreviate_home_no_home_dir_unchanged() {
         let r = abbreviate_home("/var/log", None);
         assert_eq!(r, "/var/log");
+    }
+
+    // ── Search-history caching ────────────────────────────────────────────
+
+    fn search_query(pattern: &str) -> SearchQuery {
+        SearchQuery {
+            pattern: pattern.to_string(),
+            is_regex: false,
+            case_sensitive: true,
+            content: None,
+            max_depth: None,
+            include_hidden: false,
+            follow_symlinks: false,
+        }
+    }
+
+    fn make_search_base(name: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!("sc_app_search_test_{name}"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("target")).unwrap();
+        std::fs::create_dir_all(base.join("dest")).unwrap();
+        base
+    }
+
+    fn test_app(base: &Path) -> App {
+        App::new(
+            Config::default(),
+            base.to_path_buf(),
+            base.join("dest"),
+            &AppState::default(),
+            crate::panel_history::PanelHistory::default(),
+            crate::panel_history::PanelHistory::default(),
+            false,
+        )
+    }
+
+    fn wait_for_search_done(app: &mut App) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            app.poll_search();
+            if let PanelContent::SearchResults(sr) = &app.left.content {
+                if !sr.running {
+                    return;
+                }
+            } else {
+                return;
+            }
+            assert!(Instant::now() < deadline, "search did not finish in time");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn jump_into_dir_hit_then_go_back_restores_cached_search() {
+        let base = make_search_base("jump_back");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        assert_eq!(app.left.entries.len(), 1);
+        assert_eq!(app.left.entries[0].name, "target");
+
+        app.activate_search_hit(); // jump into the "target" dir hit
+        assert!(matches!(app.left.content, PanelContent::Dir));
+        assert_eq!(app.left.path.0, base.join("target").to_string_lossy());
+
+        app.handle_action(Action::GoBack);
+        match &app.left.content {
+            PanelContent::SearchResults(sr) => {
+                assert!(!sr.running);
+                assert!(sr.complete);
+            }
+            _ => panic!("expected SearchResults after Alt-Left"),
+        }
+        assert_eq!(app.left.entries.len(), 1);
+        assert_eq!(app.left.entries[0].name, "target");
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn back_back_forward_forward_retraces_symmetrically() {
+        let base = make_search_base("bbff");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        app.activate_search_hit(); // now at base/target, Dir
+
+        app.handle_action(Action::GoBack); // -> cached search at base
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        app.handle_action(Action::GoBack); // -> plain base (the startup history entry)
+        assert!(matches!(app.left.content, PanelContent::Dir));
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        app.handle_action(Action::GoForward); // -> cached search at base again
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        app.handle_action(Action::GoForward); // -> back to base/target
+        assert!(matches!(app.left.content, PanelContent::Dir));
+        assert_eq!(app.left.path.0, base.join("target").to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn go_to_parent_on_live_search_only_closes_no_parent_nav() {
+        let base = make_search_base("goparent_live");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+
+        app.handle_action(Action::GoToParent);
+        assert!(matches!(app.left.content, PanelContent::Dir));
+        assert_eq!(app.left.path.0, base.to_string_lossy()); // not base's parent
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn go_to_parent_on_restored_cached_search_only_closes_no_parent_nav() {
+        let base = make_search_base("goparent_cached");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        app.activate_search_hit(); // -> base/target
+        app.handle_action(Action::GoBack); // -> cached search restored, at base
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+
+        app.handle_action(Action::GoToParent);
+        assert!(matches!(app.left.content, PanelContent::Dir));
+        assert_eq!(app.left.path.0, base.to_string_lossy()); // not base's parent
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn new_search_evicts_previous_cached_search() {
+        let base = make_search_base("evict");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        app.activate_search_hit(); // -> base/target (Dir); caches "target" search at base's slot
+
+        app.start_search(search_query("*")); // clears the cache attached to base's slot
+        app.close_search(); // back to Dir(base/target) without jumping (no new cache)
+
+        app.handle_action(Action::GoBack);
+        assert!(matches!(app.left.content, PanelContent::Dir));
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cache_snapshot_preserves_incomplete_flag_when_jumping_mid_scan() {
+        let base = make_search_base("complete_flag");
+        let mut app = test_app(&base);
+
+        // Simulate a search interrupted mid-scan: still running, one hit in already.
+        let mut sr = SearchResultsState::new(search_query("target"));
+        sr.running = true;
+        sr.complete = false;
+        app.left.content = PanelContent::SearchResults(sr);
+        app.left.entries = vec![NodeEntry {
+            name: "target".into(),
+            kind: NodeKind::Dir,
+            size: 0,
+            modified: std::time::SystemTime::UNIX_EPOCH,
+            permissions: String::new(),
+        }];
+        app.left.cursor = 0;
+
+        app.activate_search_hit(); // jump while the search was still "running"
+
+        app.handle_action(Action::GoBack);
+        match &app.left.content {
+            PanelContent::SearchResults(sr) => assert!(!sr.complete, "should be cached as partial"),
+            _ => panic!("expected SearchResults"),
+        }
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn matches_panel_active_ignores_history_navigation() {
+        let base = make_search_base("matches_noop");
+        let mut app = test_app(&base);
+        app.right.content = PanelContent::Matches(MatchesState::new("x".into(), false));
+        app.active = Side::Right;
+        let path_before = app.right.path.0.clone();
+
+        app.handle_action(Action::GoBack);
+        app.handle_action(Action::GoForward);
+        app.handle_action(Action::GoToParent);
+
+        assert!(matches!(app.right.content, PanelContent::Matches(_)));
+        assert_eq!(app.right.path.0, path_before);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn jumping_again_from_restored_cache_does_not_leave_two_cached_searches() {
+        let base = make_search_base("double_cache");
+        std::fs::create_dir_all(base.join("target2")).unwrap();
+        let mut app = test_app(&base);
+        app.start_search(search_query("target*"));
+        wait_for_search_done(&mut app);
+        assert_eq!(app.left.entries.len(), 2);
+
+        app.left.cursor = 0;
+        app.activate_search_hit(); // jump into the first hit, caches search at base
+        app.handle_action(Action::GoBack); // restore it
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+
+        // Select the other hit and jump again from the restored view.
+        let other = if app.left.entries[0].name == "target" { 1 } else { 0 };
+        app.left.cursor = other;
+        app.activate_search_hit();
+
+        let resident = app.panel_history_left.caches.iter().filter(|c| c.is_some()).count();
+        assert_eq!(resident, 1, "at most one cached search should ever be resident per side");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn deleting_a_hit_from_a_restored_cache_updates_the_cache_too() {
+        let base = make_search_base("delete_syncs_cache");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        app.activate_search_hit(); // -> base/target, caches search at base
+        app.handle_action(Action::GoBack); // restore cached search at base
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+        assert_eq!(app.left.entries.len(), 1);
+
+        app.left.tagged.insert("target".to_string());
+        app.execute_file_op(ConfirmState::new(ConfirmOp::Delete, vec!["target".to_string()], None));
+        assert!(app.left.entries.is_empty());
+
+        // The CachedSearch attached to this history slot must be updated
+        // too, not just the live view — otherwise a later replay resurrects
+        // the deleted hit.
+        let cache = app.panel_history_left.current_cache().expect("cache should still be attached");
+        assert!(cache.entries.is_empty(), "deleted hit must be removed from the cache too");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn going_back_to_a_cache_whose_root_was_deleted_shows_an_error_instead_of_restoring() {
+        let base = make_search_base("root_deleted");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        app.activate_search_hit(); // -> base/target, caches search rooted at base
+
+        std::fs::remove_dir_all(&base).unwrap(); // the cached root no longer exists
+
+        app.handle_action(Action::GoBack);
+        assert!(
+            !matches!(app.left.content, PanelContent::SearchResults(_)),
+            "must not silently restore a search rooted at a directory that no longer exists"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn path_history_closes_search_before_opening_popup() {
+        let base = make_search_base("pathhist_guard");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        app.activate_search_hit(); // -> base/target
+        app.handle_action(Action::GoBack); // restore cached search at base
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+
+        app.handle_action(Action::PathHistory);
+        assert!(matches!(app.left.content, PanelContent::Dir), "search view must be closed first");
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+        assert!(matches!(app.modal, Modal::PathHistoryList(_)));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn ipc_filter_is_refused_while_a_search_panel_is_active() {
+        let base = make_search_base("ipc_filter_guard");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+
+        app.handle_ipc(crate::ipc::IpcMessage::Filter("*.rs".to_string()));
+        assert!(app.left.filter.is_none(), "filter must stay unset while a search panel is active");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn restoring_a_cached_search_reapplies_the_panels_current_sort() {
+        let base = make_search_base("resort_on_restore");
+        std::fs::create_dir_all(base.join("a_target")).unwrap();
+        let mut app = test_app(&base);
+        app.start_search(search_query("*target*"));
+        wait_for_search_done(&mut app);
+        assert_eq!(app.left.entries.len(), 2);
+        app.left.cursor = 0;
+        app.activate_search_hit(); // -> Dir; caches the search at base in ascending order
+
+        app.left.sort_asc = false; // changed after the cache was captured
+        app.handle_action(Action::GoBack); // restore; must resort per current settings
+
+        let names: Vec<&str> = app.left.entries.iter().map(|e| e.name.as_str()).collect();
+        let mut expected = names.clone();
+        expected.sort_by_key(|b| std::cmp::Reverse(b.to_lowercase()));
+        assert_eq!(names, expected, "restored entries should honor the panel's current sort");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn restoring_a_cached_search_clears_a_stale_panel_error() {
+        let base = make_search_base("clear_stale_error");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        app.activate_search_hit(); // -> base/target, caches search at base
+        app.left.error = Some("stale error from an earlier failed listing".to_string());
+
+        app.handle_action(Action::GoBack);
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+        assert!(app.left.error.is_none(), "restoring a cached search must clear a stale panel error");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -62,11 +62,15 @@ pub struct SearchResultsState {
     pub scanning: Option<String>,
     /// Root-relative hit path → its matching lines (content searches).
     pub matches: HashMap<String, Vec<LineMatch>>,
+    /// Set only when a `Done` event was actually received — i.e. the search
+    /// ran to completion, as opposed to being interrupted by navigating away
+    /// mid-scan. Drives the `(partial, Alt-r to refresh)` footer marker.
+    pub complete: bool,
 }
 
 impl SearchResultsState {
     pub fn new(query: SearchQuery) -> Self {
-        SearchResultsState { query, running: true, scanning: None, matches: HashMap::new() }
+        SearchResultsState { query, running: true, scanning: None, matches: HashMap::new(), complete: false }
     }
 
     pub fn content_search(&self) -> bool {
@@ -488,6 +492,18 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
                                 truncate_path_front(scan, path_max)
                             ));
                         }
+                    }
+                } else if !sr.complete {
+                    // No spinner competes for space here, but a narrow panel
+                    // still needs to degrade gracefully rather than overflow.
+                    const FULL: &str = "(partial, Alt-r to refresh) ";
+                    const SHORT: &str = "(partial) ";
+                    let footer_max = (area.width as usize).saturating_sub(4);
+                    let avail = footer_max.saturating_sub(text.chars().count());
+                    if avail >= FULL.chars().count() {
+                        text.push_str(FULL);
+                    } else if avail >= SHORT.chars().count() {
+                        text.push_str(SHORT);
                     }
                 }
             }
