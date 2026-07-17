@@ -58,6 +58,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   panel) or a mouse double-click didn't record the destination in that panel's own
   back/forward history, so `Alt-Left`/`Alt-Right` could subsequently land on unrelated
   directories or skip a level.
+- Filter/select-group/unselect-group dialogs now show their validation error at the
+  bottom of the dialog.
 
 ## [0.1.0] - 2026-07-09
 

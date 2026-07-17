@@ -258,32 +258,32 @@ pub fn render_input_dialog(
     // Only expose cursor when input field is focused
     let cursor_out = if input_focused { cursor_pos } else { None };
 
-    // Error line (inner.y + 1)
-    if let Some(ref err) = state.error {
-        let err_style = Style::default().fg(to_color(cs.dialog_error_fg)).bg(to_color(cs.dialog_bg));
-        let truncated: String = err.chars().take(inner.width as usize).collect();
-        buf.set_string(inner.x, inner.y + 1, &truncated, err_style);
-    }
-
-    // Checkboxes (inner.y + 2..4) and buttons row
-    let (cb_fo_rect, cb_cs_rect, cb_re_rect, button_row) = if let Some(ref cb) = state.checkboxes {
+    // Checkboxes (inner.y + 1..3) and buttons row
+    let (cb_fo_rect, cb_cs_rect, cb_re_rect, error_row, button_row) = if let Some(ref cb) = state.checkboxes {
         let cb_x = inner.x + 1;
         let fo = render_checkbox(
-            cb_x, inner.y + 2, buf, "Files only",
+            cb_x, inner.y + 1, buf, "Files only",
             cb.files_only, state.focus.is_focused(1), cs,
         );
         let cs_r = render_checkbox(
-            cb_x, inner.y + 3, buf, "Case sensitive",
+            cb_x, inner.y + 2, buf, "Case sensitive",
             cb.case_sensitive, state.focus.is_focused(2), cs,
         );
         let re = render_checkbox(
-            cb_x, inner.y + 4, buf, "RegExp",
+            cb_x, inner.y + 3, buf, "RegExp",
             cb.is_regexp, state.focus.is_focused(3), cs,
         );
-        (Some(fo), Some(cs_r), Some(re), inner.y + 6)
+        (Some(fo), Some(cs_r), Some(re), inner.y + 4, inner.y + 6)
     } else {
-        (None, None, None, inner.y + 2)
+        (None, None, None, inner.y + 1, inner.y + 2)
     };
+
+    // Error line — always the row immediately above the button row.
+    if let Some(ref err) = state.error {
+        let err_style = Style::default().fg(to_color(cs.dialog_error_fg)).bg(to_color(cs.dialog_bg));
+        let truncated: String = err.chars().take(inner.width as usize).collect();
+        buf.set_string(inner.x, error_row, &truncated, err_style);
+    }
 
     // Buttons
     const OK_LABEL: &str = "[ OK ]";
