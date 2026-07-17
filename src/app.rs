@@ -207,6 +207,7 @@ enum Action {
     GoBack,
     GoForward,
     ToggleMatchesPanel,
+    View,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -743,6 +744,7 @@ impl App {
             (&kb.go_back, Action::GoBack),
             (&kb.go_forward, Action::GoForward),
             (&kb.toggle_matches_panel, Action::ToggleMatchesPanel),
+            (&kb.view, Action::View),
         ]
     }
 
@@ -1231,7 +1233,27 @@ impl App {
                     panel.scroll = 0;
                 }
             }
+            Action::View => self.view_current_entry(),
         }
+    }
+
+    /// Opens the active panel's current entry in the internal viewer (Shift-F3, and
+    /// the `:view` internal default-file-action command). On a `Matches` panel this is
+    /// the same as pressing Enter there (jump to the matched line, highlighted); on a
+    /// `Dir`/`SearchResults` panel it shows the whole file with no highlight.
+    fn view_current_entry(&mut self) {
+        if matches!(self.active_panel().content, PanelContent::Matches(_)) {
+            self.open_match_in_viewer();
+            return;
+        }
+        let panel = self.active_panel();
+        let Some(entry) = panel.current_entry() else { return };
+        if entry.kind == NodeKind::Dir {
+            self.set_status("Cannot view a directory", true);
+            return;
+        }
+        let abs = panel.provider.join(&panel.path, &entry.name).0;
+        self.open_file_in_viewer(&abs, None, None);
     }
 
     /// Runs `mutate`, then records `side`'s new path in its own back/forward
@@ -1854,15 +1876,30 @@ impl App {
             let line = ms.matches.get(panel.cursor).map(|m| m.line).unwrap_or(1);
             (abs, ms.needle.clone(), ms.case_sensitive, ms.content_is_regex, ms.content_whole_words, line)
         };
-        match std::fs::read(&abs) {
+        let highlight = Some((needle, case_sensitive, content_is_regex, content_whole_words));
+        self.open_file_in_viewer(&abs, highlight, Some(line));
+    }
+
+    /// Reads `abs` and shows it in the internal viewer. `highlight`, if set, is the
+    /// (needle, case_sensitive, is_regex, whole_words) tuple used to highlight matches
+    /// (content-search jumps); `jump_line` scrolls to that 1-based line.
+    fn open_file_in_viewer(
+        &mut self,
+        abs: &str,
+        highlight: Option<(String, bool, bool, bool)>,
+        jump_line: Option<u64>,
+    ) {
+        match std::fs::read(abs) {
             Ok(bytes) => {
                 self.show_output = false;
                 self.viewer = Some(ViewerContent {
-                    title: format!(" {} (Esc to close) ", display_path(&abs)),
+                    title: format!(" {} (Esc to close) ", display_path(abs)),
                     text: String::from_utf8_lossy(&bytes).into_owned(),
-                    highlight: Some((needle, case_sensitive, content_is_regex, content_whole_words)),
+                    highlight,
                 });
-                self.overlay.jump_to_line(line);
+                if let Some(line) = jump_line {
+                    self.overlay.jump_to_line(line);
+                }
             }
             Err(e) => self.set_status(&format!("Cannot open {}: {}", abs, e), true),
         }
@@ -2088,6 +2125,40 @@ impl App {
         if result.untag_inactive {
             self.inactive_panel_mut().tagged.clear();
         }
+        self.cmdline.text = result.text;
+        self.cmdline.move_end();
+        self.execute_command(false, prior_cmdline, false);
+    }
+
+    /// Enter/double-click on a file with an empty command line: resolves
+    /// `panels.default_action_executable`/`default_action_text` (falling back to
+    /// `panels.default_action` when the specific one is empty) and runs it. `:view`
+    /// opens the internal viewer; anything else is a shell command template expanded
+    /// with a restricted macro context (see `expand_default_action_command`).
+    fn open_current_entry_default_action(&mut self) {
+        let panel = self.active_panel();
+        let Some(entry) = panel.current_entry() else { return };
+        if entry.kind == NodeKind::Dir {
+            return;
+        }
+        let executable = crate::provider::is_executable(&entry.permissions);
+        let template = resolve_default_action_template(executable, &self.config.panels);
+        if template.is_empty() {
+            return;
+        }
+        if template == ":view" {
+            self.view_current_entry();
+        } else {
+            self.execute_default_action(template.to_string());
+        }
+    }
+
+    /// Runs a `panels.default_action*` command template against the active panel's
+    /// current entry, with only `%f`/`%x`/`%b`/`%d` meaningful (see
+    /// `expand_default_action_command`).
+    fn execute_default_action(&mut self, cmd_template: String) {
+        let prior_cmdline = self.cmdline.clone();
+        let result = self.expand_default_action_command(&cmd_template);
         self.cmdline.text = result.text;
         self.cmdline.move_end();
         self.execute_command(false, prior_cmdline, false);
@@ -2520,6 +2591,13 @@ impl App {
                 KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
                 | KeyCode::Home | KeyCode::End | KeyCode::Enter => {
                     self.quicksearch = None;
+                    if event.code == KeyCode::Enter
+                        && matches!(self.active_panel().content, PanelContent::Dir)
+                        && self.active_panel().current_entry().map(|e| e.kind != NodeKind::Dir).unwrap_or(false)
+                    {
+                        self.open_current_entry_default_action();
+                        return;
+                    }
                     let am = self.action_mode();
                     let vh = self.active_vh();
                     let path_before = self.active_panel().path.0.clone();
@@ -2571,6 +2649,12 @@ impl App {
                 }
                 (KeyCode::Enter, PanelContent::Matches(_)) => {
                     self.open_match_in_viewer();
+                    return;
+                }
+                (KeyCode::Enter, PanelContent::Dir)
+                    if self.active_panel().current_entry().map(|e| e.kind != NodeKind::Dir).unwrap_or(false) =>
+                {
+                    self.open_current_entry_default_action();
                     return;
                 }
                 (KeyCode::Esc, PanelContent::SearchResults(_) | PanelContent::Matches(_)) => {
@@ -2696,6 +2780,21 @@ impl App {
             tagged: inactive.tagged.iter().cloned().collect(),
         };
         let ctx = MacroContext { active: active_ctx, inactive: inactive_ctx };
+        crate::macros::expand(template, &ctx)
+    }
+
+    /// Like `expand_menu_command`, but leaves `inactive` and `active.tagged` at their
+    /// defaults so `%F`/`%D`/`%t`/`%T`/`%u`/`%U`/`%S` degrade to empty and `%s` falls
+    /// back to `%f` — a `panels.default_action*` command acts on a single entry, with
+    /// no tagged-files or inactive-panel context to draw on.
+    fn expand_default_action_command(&self, template: &str) -> crate::macros::ExpandResult {
+        let active = self.active_panel();
+        let active_ctx = PanelContext {
+            current_file: active.current_name(),
+            dir: active.path.0.clone(),
+            tagged: Vec::new(),
+        };
+        let ctx = MacroContext { active: active_ctx, inactive: PanelContext::default() };
         crate::macros::expand(template, &ctx)
     }
 
@@ -3007,7 +3106,7 @@ impl App {
 
         match btn {
             MouseButton::Left => {
-                enum DoubleAct { None, Hit, Match }
+                enum DoubleAct { None, Hit, Match, DefaultAction }
                 self.panel_mut(clicked_side).move_cursor_to_row(entry_row, vh);
                 // Only a double-click on a directory entry can change the panel's
                 // path (via enter_dir()), so the before/after clone-and-compare
@@ -3021,7 +3120,7 @@ impl App {
                                 if panel.current_entry().map(|e| e.kind == NodeKind::Dir).unwrap_or(false) {
                                     (panel.enter_dir(), DoubleAct::None)
                                 } else {
-                                    (None, DoubleAct::None)
+                                    (None, DoubleAct::DefaultAction)
                                 }
                             }
                             PanelContent::SearchResults(_) => (None, DoubleAct::Hit),
@@ -3038,6 +3137,7 @@ impl App {
                     // clicked_side became the active panel above
                     DoubleAct::Hit => self.activate_search_hit(),
                     DoubleAct::Match => self.open_match_in_viewer(),
+                    DoubleAct::DefaultAction => self.open_current_entry_default_action(),
                     DoubleAct::None => {}
                 }
             }
@@ -3888,6 +3988,14 @@ fn panel_title(panel: &PanelState) -> String {
             None => "Matches".to_string(),
         },
     }
+}
+
+/// Resolves which `panels.default_action*` template applies to a file with the given
+/// executable-bit state: `default_action_executable`/`default_action_text` if non-empty,
+/// else `default_action` (which may itself be empty, meaning no-op).
+fn resolve_default_action_template(executable: bool, cfg: &crate::config::PanelsConfig) -> &str {
+    let specific = if executable { &cfg.default_action_executable } else { &cfg.default_action_text };
+    if !specific.is_empty() { specific } else { &cfg.default_action }
 }
 
 /// True when a user-menu command template uses a macro that reads the
@@ -4839,6 +4947,111 @@ mod tests {
         app.handle_action(Action::GoBack);
         assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
         assert!(app.left.error.is_none(), "restoring a cached search must clear a stale panel error");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn panels_cfg(exec: &str, text: &str, fallback: &str) -> crate::config::PanelsConfig {
+        crate::config::PanelsConfig {
+            default_action_executable: exec.to_string(),
+            default_action_text: text.to_string(),
+            default_action: fallback.to_string(),
+            ..crate::config::PanelsConfig::default()
+        }
+    }
+
+    #[test]
+    fn resolve_default_action_template_uses_specific_field_when_set() {
+        let cfg = panels_cfg("run %f", ":view", "true");
+        assert_eq!(resolve_default_action_template(true, &cfg), "run %f");
+        assert_eq!(resolve_default_action_template(false, &cfg), ":view");
+    }
+
+    #[test]
+    fn resolve_default_action_template_falls_back_when_specific_field_empty() {
+        let cfg = panels_cfg("", "", "echo fallback");
+        assert_eq!(resolve_default_action_template(true, &cfg), "echo fallback");
+        assert_eq!(resolve_default_action_template(false, &cfg), "echo fallback");
+    }
+
+    #[test]
+    fn resolve_default_action_template_empty_fallback_is_noop() {
+        let cfg = panels_cfg("", "", "");
+        assert_eq!(resolve_default_action_template(true, &cfg), "");
+        assert_eq!(resolve_default_action_template(false, &cfg), "");
+    }
+
+    #[test]
+    fn view_action_opens_current_entry_in_viewer() {
+        let base = make_search_base("view_action");
+        std::fs::write(base.join("hello.txt"), "hello world\n").unwrap();
+        let mut app = test_app(&base);
+        let idx = app.left.entries.iter().position(|e| e.name == "hello.txt").unwrap();
+        app.left.cursor = idx;
+        app.handle_action(Action::View);
+        let viewer = app.viewer.as_ref().expect("Action::View should open the viewer");
+        assert!(viewer.text.contains("hello world"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn view_action_refuses_a_directory_entry() {
+        let base = make_search_base("view_action_dir");
+        let mut app = test_app(&base);
+        let idx = app.left.entries.iter().position(|e| e.name == "target").unwrap();
+        app.left.cursor = idx;
+        app.handle_action(Action::View);
+        assert!(app.viewer.is_none());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn enter_on_non_executable_file_opens_viewer_via_default_text_action() {
+        let base = make_search_base("enter_default_view");
+        std::fs::write(base.join("notes.txt"), "some notes\n").unwrap();
+        let mut app = test_app(&base);
+        let idx = app.left.entries.iter().position(|e| e.name == "notes.txt").unwrap();
+        app.left.cursor = idx;
+        app.open_current_entry_default_action();
+        let viewer = app.viewer.as_ref().expect("default_action_text=:view should open the viewer");
+        assert!(viewer.text.contains("some notes"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn enter_while_quicksearch_active_also_opens_viewer_via_default_text_action() {
+        // Regression: quicksearch's own Enter handling calls PanelState::handle_key
+        // directly, which historically bypassed the App-level default-action dispatch
+        // that a plain Enter (without quicksearch active) goes through.
+        let base = make_search_base("quicksearch_enter_default_view");
+        std::fs::write(base.join("notes.txt"), "some notes\n").unwrap();
+        let mut app = test_app(&base);
+        let idx = app.left.entries.iter().position(|e| e.name == "notes.txt").unwrap();
+        app.left.cursor = idx;
+        app.quicksearch = Some("notes.txt".to_string());
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.quicksearch.is_none(), "Enter should always close the quicksearch prompt");
+        let viewer = app.viewer.as_ref().expect("Enter on a file during quicksearch should open the viewer");
+        assert!(viewer.text.contains("some notes"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn enter_on_executable_file_is_a_noop_by_default() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = make_search_base("enter_default_exec");
+        let script = base.join("run.sh");
+        std::fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut app = test_app(&base);
+        let idx = app.left.entries.iter().position(|e| e.name == "run.sh").unwrap();
+        app.left.cursor = idx;
+        app.open_current_entry_default_action();
+        assert!(app.viewer.is_none(), "default_action_executable is empty and falls back to an empty default_action");
 
         let _ = std::fs::remove_dir_all(&base);
     }

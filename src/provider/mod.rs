@@ -21,6 +21,32 @@ pub struct NodeEntry {
     pub permissions: String,
 }
 
+/// True if any of the owner/group/other execute bits is set in a `permissions` string
+/// of the `-rwxrwxrwx` form produced by `filesystem::unix_permissions`.
+pub fn is_executable(permissions: &str) -> bool {
+    let b = permissions.as_bytes();
+    [3, 6, 9].iter().any(|&i| b.get(i) == Some(&b'x'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_executable_true_for_any_exec_bit() {
+        assert!(is_executable("-rwxr--r--"));
+        assert!(is_executable("-rw-r-xr--"));
+        assert!(is_executable("-rw-r--r-x"));
+    }
+
+    #[test]
+    fn is_executable_false_when_no_exec_bit() {
+        assert!(!is_executable("-rw-r--r--"));
+        // The leading type char (d/l/-) is irrelevant here — callers gate on NodeKind.
+        assert!(!is_executable("drw-r--r--"));
+    }
+}
+
 /// One matching line of a content search (mirrors `grep -nZ` records).
 #[derive(Debug, Clone)]
 pub struct LineMatch {

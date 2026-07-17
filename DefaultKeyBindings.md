@@ -53,6 +53,11 @@
        open the unselect group dialog: untags all visible entries in the active panel matching
        the given pattern (same options as `+`)
 
+- F3
+       open the internal full-screen text viewer on the currently selected file (see
+       docs/Configuration.md's `panels.default_action*` settings for what Enter and
+       double-click do by default)
+
 - F5
        copy the tagged files (or if there are no tagged files, the selected file) in the active panel to the directory shown by the inactive panel
 

@@ -89,6 +89,7 @@ triggers the action):
 | `exit` | `F10`, `Ctrl-q` |
 | `path_history` | `Alt-H`, `Alt-Down` |
 | `toggle_matches_panel` | `Alt-m` |
+| `view` | `F3` |
 
 Notes:
 
@@ -130,7 +131,7 @@ All three can be overridden per-launch on the command line; see
 ```jsonc
 {
   "menu": [
-    { "label": "View", "command": "less %f", "keys": "F3" },
+    { "label": "View", "command": "less %f", "keys": "Shift-F3" },
     { "label": "Edit", "command": "$EDITOR %f", "keys": "F4" },
     { "label": "Diff", "command": "diff %f %F" },
     { "label": "Word count", "command": "wc -l %t", "add_to_bar": true }
@@ -210,7 +211,10 @@ The values above are the built-in defaults; only include the keys you want to ch
 {
   "panels": {
     "time_format": "%y-%m-%d %H:%M",
-    "time_lenght": 14
+    "time_lenght": 14,
+    "default_action_executable": "",
+    "default_action_text": ":view",
+    "default_action": ""
   }
 }
 ```
@@ -220,6 +224,20 @@ The values above are the built-in defaults; only include the keys you want to ch
 - `time_lenght` — width in characters of the Mtime column (header and cells). Formatted
   dates are truncated or padded to this width, so it should match the length produced by
   `time_format`. Defaults to `14`.
+- `default_action_executable` / `default_action_text` / `default_action` — what Enter and
+  double-click do on a file (never on a directory) in the active panel. `default_action_executable`
+  applies when the file has any executable permission bit set; `default_action_text`
+  applies otherwise. Either falls back to `default_action` when left empty (`""`), and an
+  empty `default_action` is a no-op — sc does nothing, same as today's behavior, unless
+  you opt in. `default_action_text` defaults to `:view`.
+
+  A value of `:view` is the one built-in command currently supported: it opens the
+  internal text viewer, the same as pressing `F3` (action `view`). Any other
+  non-empty value is a shell command template, run the same way as a
+  [user menu](#user-menu) command, except only the current-file macros — `%f`, `%x`,
+  `%b`, `%d` — are meaningful; the inactive-panel and tagged-files macros (`%F`, `%D`,
+  `%t`, `%T`, `%u`, `%U`, `%s`, `%S`) don't apply to a single-entry default action and
+  expand to empty. See @MacroSubstitution.md.
 
 ## Related files
 

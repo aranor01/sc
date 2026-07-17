@@ -261,6 +261,32 @@ mod tests {
         assert_eq!(expand("%9", &simple("f")).text, "%9");
     }
 
+    /// Mirrors the restricted context `App::expand_default_action_command` builds for
+    /// `panels.default_action*` commands: active file/dir populated, inactive panel and
+    /// active tagged files left at their defaults.
+    #[test]
+    fn expand_with_restricted_context_only_active_file_and_dir_macros_work() {
+        let c = MacroContext {
+            active: PanelContext {
+                current_file: "foo.txt".to_string(),
+                dir: "/home".to_string(),
+                tagged: Vec::new(),
+            },
+            inactive: PanelContext::default(),
+        };
+        assert_eq!(expand("%f", &c).text, "foo.txt");
+        assert_eq!(expand("%x", &c).text, "txt");
+        assert_eq!(expand("%b", &c).text, "foo");
+        assert_eq!(expand("%d", &c).text, "/home");
+        assert_eq!(expand("%F", &c).text, "");
+        assert_eq!(expand("%D", &c).text, "");
+        assert_eq!(expand("%t", &c).text, "");
+        assert_eq!(expand("%T", &c).text, "");
+        assert_eq!(expand("%S", &c).text, "");
+        // %s falls back to the active file when there are no tagged files.
+        assert_eq!(expand("%s", &c).text, "foo.txt");
+    }
+
     #[test]
     fn expand_trailing_percent() {
         assert_eq!(expand("hello%", &simple("f")).text, "hello%");

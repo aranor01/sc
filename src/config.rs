@@ -237,6 +237,7 @@ pub struct KeyBindings {
     pub go_back: ActionBindings,
     pub go_forward: ActionBindings,
     pub toggle_matches_panel: ActionBindings,
+    pub view: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -306,6 +307,7 @@ impl Default for KeyBindings {
             go_back: vec![KeyBinding::Single(ke(Left, a))],
             go_forward: vec![KeyBinding::Single(ke(Right, a))],
             toggle_matches_panel: vec![KeyBinding::Single(ke(Char('m'), a))],
+            view: vec![KeyBinding::Single(ke(F(3), n))],
         }
     }
 }
@@ -401,6 +403,14 @@ impl Default for ColorScheme {
 pub struct PanelsConfig {
     pub time_format: String,
     pub time_length: usize,
+    /// Action for Enter/double-click on an executable file. Empty falls back to
+    /// `default_action`.
+    pub default_action_executable: String,
+    /// Action for Enter/double-click on a non-executable file. Empty falls back to
+    /// `default_action`.
+    pub default_action_text: String,
+    /// Fallback action used when the specific field above is empty. Empty is a no-op.
+    pub default_action: String,
 }
 
 impl Default for PanelsConfig {
@@ -408,6 +418,9 @@ impl Default for PanelsConfig {
         PanelsConfig {
             time_format: "%y-%m-%d %H:%M".to_string(),
             time_length: 14,
+            default_action_executable: String::new(),
+            default_action_text: ":view".to_string(),
+            default_action: String::new(),
         }
     }
 }
@@ -463,7 +476,7 @@ fn generate_default_config(scripts_dir: &std::path::Path) -> String {
     format!(
         r#"{{
   "menu": [
-    {{ "label": "View",        "command": "{s}/view.sh %f",                             "keys": "F3" }},
+    {{ "label": "View",        "command": "{s}/view.sh %f",                             "keys": "Shift-F3" }},
     {{ "label": "Edit",        "command": "{s}/edit.sh %f",                             "keys": "F4" }},
     {{ "label": "Edit config", "command": "{s}/edit.sh ~/.config/sc/config.json" }}
   ]
@@ -557,6 +570,7 @@ impl Config {
                     "go_back" => cfg.keybindings.go_back = bindings,
                     "go_forward" => cfg.keybindings.go_forward = bindings,
                     "toggle_matches_panel" => cfg.keybindings.toggle_matches_panel = bindings,
+                    "view" => cfg.keybindings.view = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }
@@ -618,6 +632,15 @@ impl Config {
             }
             if let Some(v) = panels.get("time_lenght").and_then(|v| v.as_u64()) {
                 cfg.panels.time_length = v as usize;
+            }
+            if let Some(v) = panels.get("default_action_executable").and_then(|v| v.as_str()) {
+                cfg.panels.default_action_executable = v.to_string();
+            }
+            if let Some(v) = panels.get("default_action_text").and_then(|v| v.as_str()) {
+                cfg.panels.default_action_text = v.to_string();
+            }
+            if let Some(v) = panels.get("default_action").and_then(|v| v.as_str()) {
+                cfg.panels.default_action = v.to_string();
             }
         }
 
@@ -828,5 +851,38 @@ mod tests {
         let ke = KeyEvent::new(Char('m'), M::ALT);
         assert_eq!(format_key(&ke), "A-m");
         assert_eq!(format_key_spelled(&ke), "Alt-m");
+    }
+
+    #[test]
+    fn view_default_binding_is_f3() {
+        let cfg = Config::load_from_str("{}").unwrap();
+        assert_eq!(cfg.keybindings.view, vec![single(F(3), M::NONE)]);
+    }
+
+    #[test]
+    fn view_binding_configurable() {
+        let cfg = Config::load_from_str(r#"{"keybindings":{"view":"Alt-v"}}"#).unwrap();
+        assert_eq!(cfg.keybindings.view, vec![single(Char('v'), M::ALT)]);
+    }
+
+    #[test]
+    fn panels_default_action_fields_have_expected_defaults() {
+        let cfg = Config::load_from_str("{}").unwrap();
+        assert_eq!(cfg.panels.default_action_executable, "");
+        assert_eq!(cfg.panels.default_action_text, ":view");
+        assert_eq!(cfg.panels.default_action, "");
+    }
+
+    #[test]
+    fn panels_default_action_fields_configurable() {
+        let json = r#"{"panels":{
+            "default_action_executable": "%f",
+            "default_action_text": "echo %f",
+            "default_action": "true"
+        }}"#;
+        let cfg = Config::load_from_str(json).unwrap();
+        assert_eq!(cfg.panels.default_action_executable, "%f");
+        assert_eq!(cfg.panels.default_action_text, "echo %f");
+        assert_eq!(cfg.panels.default_action, "true");
     }
 }
