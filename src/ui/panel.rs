@@ -76,6 +76,16 @@ impl SearchResultsState {
     pub fn content_search(&self) -> bool {
         self.query.content.is_some()
     }
+
+    /// Marks the search as no longer running, whether interrupted (`Esc`) or
+    /// finished on its own (`Done`). `complete` distinguishes the two — an
+    /// interrupt leaves it `false`, which drives the `(partial, Alt-r to
+    /// refresh)` footer marker.
+    pub fn stop(&mut self, complete: bool) {
+        self.running = false;
+        self.scanning = None;
+        self.complete = complete;
+    }
 }
 
 /// State of a panel showing the matching lines of the file selected in the

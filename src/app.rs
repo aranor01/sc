@@ -999,17 +999,14 @@ impl App {
                 }
                 let path = self.active_panel().path.clone();
                 let inactive_side = self.active.other();
-                let path_before = self.inactive_panel().path.0.clone();
-                let inactive = self.inactive_panel_mut();
-                inactive.path = path;
-                inactive.cursor = 0;
-                inactive.scroll = 0;
-                inactive.tagged.clear();
-                inactive.refresh();
-                let path_after = self.inactive_panel().path.0.clone();
-                if path_after != path_before {
-                    self.push_path_history_for(inactive_side, &path_after);
-                }
+                self.record_path_change(inactive_side, |app| {
+                    let inactive = app.panel_mut(inactive_side);
+                    inactive.path = path;
+                    inactive.cursor = 0;
+                    inactive.scroll = 0;
+                    inactive.tagged.clear();
+                    inactive.refresh();
+                });
             }
             Action::Rename => {
                 if !matches!(self.active_panel().content, PanelContent::Dir) {
@@ -1237,6 +1234,20 @@ impl App {
         }
     }
 
+    /// Runs `mutate`, then records `side`'s new path in its own back/forward
+    /// history if `mutate` changed it. For call sites that assign a panel's
+    /// `.path` directly (bypassing `navigate_to_path`), so `Alt-Left`/`Alt-Right`
+    /// still see the new directory.
+    fn record_path_change<T>(&mut self, side: Side, mutate: impl FnOnce(&mut Self) -> T) -> T {
+        let before = self.panel(side).path.0.clone();
+        let result = mutate(self);
+        if self.panel(side).path.0 != before {
+            let after = self.panel(side).path.0.clone();
+            self.push_path_history_for(side, &after);
+        }
+        result
+    }
+
     fn push_path_history(&mut self, path: &str) {
         self.push_path_history_for(self.active, path);
     }
@@ -1261,6 +1272,16 @@ impl App {
         panel.tagged.clear();
         panel.refresh();
         self.push_path_history(&path);
+    }
+
+    /// Close-search-then-navigate used by the path-history popup's Accept
+    /// handlers (keyboard and mouse): picking a history entry is a "go
+    /// somewhere new" commitment, so any open search view is closed first.
+    fn navigate_from_path_history(&mut self, path: &str) {
+        if !matches!(self.active_panel().content, PanelContent::Dir) {
+            self.close_search();
+        }
+        self.navigate_to_path(path);
     }
 
     fn navigate_to_bookmark(&mut self, path: &str) {
@@ -1735,8 +1756,7 @@ impl App {
         self.search = None; // dropping the handle cancels the worker
         if let Some(side) = self.results_side() {
             if let PanelContent::SearchResults(sr) = &mut self.panel_mut(side).content {
-                sr.running = false;
-                sr.scanning = None;
+                sr.stop(false);
             }
         }
     }
@@ -1903,9 +1923,7 @@ impl App {
                 sr.scanning = Some(display_path(&dir.0));
             }
             if done.is_some() {
-                sr.running = false;
-                sr.scanning = None;
-                sr.complete = true;
+                sr.stop(true);
             }
         }
         if let Some(errors) = done {
@@ -2370,10 +2388,7 @@ impl App {
                 match outcome {
                     PopupOutcome::Accept(path) => {
                         self.modal = Modal::None;
-                        if !matches!(self.active_panel().content, PanelContent::Dir) {
-                            self.close_search();
-                        }
-                        self.navigate_to_path(&path);
+                        self.navigate_from_path_history(&path);
                     }
                     PopupOutcome::Dismissed => self.modal = Modal::None,
                     _ => {}
@@ -2826,10 +2841,7 @@ impl App {
                         } else { None };
                         self.modal = Modal::None;
                         if let Some(p) = path {
-                            if !matches!(self.active_panel().content, PanelContent::Dir) {
-                                self.close_search();
-                            }
-                            self.navigate_to_path(&p);
+                            self.navigate_from_path_history(&p);
                         }
                     } else if !area.contains(up) {
                         self.modal = Modal::None;
@@ -2996,36 +3008,31 @@ impl App {
         match btn {
             MouseButton::Left => {
                 enum DoubleAct { None, Hit, Match }
-                let mut act = DoubleAct::None;
-                let path_before = self.panel(clicked_side).path.0.clone();
-                let nav_err = {
-                    let panel = match clicked_side {
-                        Side::Left => &mut self.left,
-                        Side::Right => &mut self.right,
-                    };
-                    panel.move_cursor_to_row(entry_row, vh);
-                    if is_double {
+                self.panel_mut(clicked_side).move_cursor_to_row(entry_row, vh);
+                // Only a double-click on a directory entry can change the panel's
+                // path (via enter_dir()), so the before/after clone-and-compare
+                // needed to record that in history is only done in that case —
+                // ordinary single clicks skip it entirely.
+                let (nav_err, act) = if is_double {
+                    self.record_path_change(clicked_side, |app| {
+                        let panel = app.panel_mut(clicked_side);
                         match &panel.content {
                             PanelContent::Dir => {
                                 if panel.current_entry().map(|e| e.kind == NodeKind::Dir).unwrap_or(false) {
-                                    panel.enter_dir()
+                                    (panel.enter_dir(), DoubleAct::None)
                                 } else {
-                                    None
+                                    (None, DoubleAct::None)
                                 }
                             }
-                            PanelContent::SearchResults(_) => { act = DoubleAct::Hit; None }
-                            PanelContent::Matches(_) => { act = DoubleAct::Match; None }
+                            PanelContent::SearchResults(_) => (None, DoubleAct::Hit),
+                            PanelContent::Matches(_) => (None, DoubleAct::Match),
                         }
-                    } else {
-                        None
-                    }
+                    })
+                } else {
+                    (None, DoubleAct::None)
                 };
                 if let Some(err) = nav_err {
                     self.set_status(&err, true);
-                }
-                let path_after = self.panel(clicked_side).path.0.clone();
-                if path_after != path_before {
-                    self.push_path_history_for(clicked_side, &path_after);
                 }
                 match act {
                     // clicked_side became the active panel above

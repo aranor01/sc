@@ -37,9 +37,11 @@ pub struct PanelHistory {
 }
 
 impl PanelHistory {
-    /// The only insertion point. `cache` attaches a replayable search to this
-    /// slot; ordinary navigation passes `None`.
-    pub fn push_with_cache(&mut self, path: &str, cache: Option<Box<CachedSearch>>) {
+    /// Realigns `caches` with `entries` (padding after a load whose `index`
+    /// was nonzero left `caches` deserialized empty) and drops the forward
+    /// part of history, i.e. every entry before `index`, resetting `index`
+    /// to 0. Shared by `push_with_cache` and `truncate_forward`.
+    fn drop_forward(&mut self) {
         // `caches` is never persisted, so after loading a saved history whose
         // `index` was nonzero, `entries`/`index` come back populated while
         // `caches` deserializes empty. Pad it back into alignment before any
@@ -52,6 +54,12 @@ impl PanelHistory {
             self.caches.drain(0..self.index);
             self.index = 0;
         }
+    }
+
+    /// The only insertion point. `cache` attaches a replayable search to this
+    /// slot; ordinary navigation passes `None`.
+    pub fn push_with_cache(&mut self, path: &str, cache: Option<Box<CachedSearch>>) {
+        self.drop_forward();
         self.entries.insert(0, path.to_string());
         self.caches.insert(0, cache);
         self.entries.truncate(MAX_HISTORY);
@@ -113,14 +121,7 @@ impl PanelHistory {
     /// started (e.g. opening a search view on top of it), so any
     /// previously-reachable forward entries stop being reachable.
     pub fn truncate_forward(&mut self) {
-        while self.caches.len() < self.entries.len() {
-            self.caches.push(None);
-        }
-        if self.index > 0 {
-            self.entries.drain(0..self.index);
-            self.caches.drain(0..self.index);
-            self.index = 0;
-        }
+        self.drop_forward();
     }
 
     pub fn unique_entries(&self) -> Vec<&str> {
