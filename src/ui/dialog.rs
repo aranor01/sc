@@ -258,7 +258,7 @@ pub fn render_input_dialog(
     // Only expose cursor when input field is focused
     let cursor_out = if input_focused { cursor_pos } else { None };
 
-    // Checkboxes (inner.y + 1..3) and buttons row
+    // Checkboxes (inner.y + 1..4) and buttons row
     let (cb_fo_rect, cb_cs_rect, cb_re_rect, error_row, button_row) = if let Some(ref cb) = state.checkboxes {
         let cb_x = inner.x + 1;
         let fo = render_checkbox(
@@ -278,7 +278,8 @@ pub fn render_input_dialog(
         (None, None, None, inner.y + 1, inner.y + 2)
     };
 
-    // Error line — always the row immediately above the button row.
+    // Error line — the row immediately above the button row (with a blank row
+    // between the checkboxes and the error line, when checkboxes are present).
     if let Some(ref err) = state.error {
         let err_style = Style::default().fg(to_color(cs.dialog_error_fg)).bg(to_color(cs.dialog_bg));
         let truncated: String = err.chars().take(inner.width as usize).collect();

@@ -2544,9 +2544,10 @@ impl App {
             return;
         }
 
-        // Search views: Enter activates a hit / opens the viewer; Esc closes the
-        // whole search view (with a non-empty cmdline the first Esc only enters
-        // action mode below, so this is effectively Esc Esc).
+        // Search views: Enter activates a hit / opens the viewer; Esc interrupts a
+        // still-running search in place, then closes the whole search view on a
+        // second press (with a non-empty cmdline, an extra leading Esc enters
+        // action mode below first).
         if event.modifiers == KeyModifiers::NONE && self.action_mode() {
             match (event.code, &self.active_panel().content) {
                 (KeyCode::Enter, PanelContent::SearchResults(_)) => {
