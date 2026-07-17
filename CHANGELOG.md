@@ -27,7 +27,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 - The most recent search a panel jumped away from (via Enter on a hit) stays reachable
   through that panel's ordinary back/forward history for the session: `Alt-Left`/
   `Alt-Right` move into and out of it in both directions, `Alt-Up` closes it like
-  Esc-Esc, and starting a new search (or `Alt-r`) drops whatever was cached. Not
+  Esc-Esc, and starting a new search (or `Alt-r`) drops whatever was cached along with
+  any stale forward history, so `Alt-Right` has nothing left to jump to. Not
   persisted to `panel_history.json`. A search cached before it finished is marked
   `(partial, Alt-r to refresh)` in its footer.
 - `Alt-m` (action `toggle_matches_panel`): show/hide the matches panel of a content
@@ -50,6 +51,10 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   portable ioctl/winsize types) — no behavior change on Linux.
 - Pasting into the command line stopped working after the subshell was shown once via
   Ctrl-O.
+- Navigating into a directory via Alt-i (open the active panel's directory in the other
+  panel) or a mouse double-click didn't record the destination in that panel's own
+  back/forward history, so `Alt-Left`/`Alt-Right` could subsequently land on unrelated
+  directories or skip a level.
 
 ## [0.1.0] - 2026-07-09
 

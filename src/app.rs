@@ -998,12 +998,18 @@ impl App {
                     return;
                 }
                 let path = self.active_panel().path.clone();
+                let inactive_side = self.active.other();
+                let path_before = self.inactive_panel().path.0.clone();
                 let inactive = self.inactive_panel_mut();
                 inactive.path = path;
                 inactive.cursor = 0;
                 inactive.scroll = 0;
                 inactive.tagged.clear();
                 inactive.refresh();
+                let path_after = self.inactive_panel().path.0.clone();
+                if path_after != path_before {
+                    self.push_path_history_for(inactive_side, &path_after);
+                }
             }
             Action::Rename => {
                 if !matches!(self.active_panel().content, PanelContent::Dir) {
@@ -1052,12 +1058,10 @@ impl App {
                 if matches!(self.active_panel().content, PanelContent::Matches(_)) {
                     return;
                 }
-                if !matches!(self.active_panel().content, PanelContent::Dir) {
-                    // Picking a path-history entry is a "go somewhere new"
-                    // action like Back/Forward, not a plain close like
-                    // Alt-Up — close the search view, then open the popup.
-                    self.close_search();
-                }
+                // Opening the popup doesn't commit to navigating anywhere —
+                // Esc can still dismiss it with no effect — so the search
+                // view (if any) is left alone here and only closed once an
+                // entry is actually picked, in the Accept handlers below.
                 let history = match self.active {
                     Side::Left => &self.panel_history_left,
                     Side::Right => &self.panel_history_right,
@@ -1162,22 +1166,22 @@ impl App {
                 if matches!(self.active_panel().content, PanelContent::Matches(_)) {
                     return;
                 }
+                let side = self.active;
+                let Some(path) = self.panel_history_mut(side).go_back() else { return; };
                 if !matches!(self.active_panel().content, PanelContent::Dir) {
                     self.close_search();
                 }
-                let side = self.active;
-                let Some(path) = self.panel_history_mut(side).go_back() else { return; };
                 self.land_on_history_path(side, path, |h| { h.go_forward(); });
             }
             Action::GoForward => {
                 if matches!(self.active_panel().content, PanelContent::Matches(_)) {
                     return;
                 }
+                let side = self.active;
+                let Some(path) = self.panel_history_mut(side).go_forward() else { return; };
                 if !matches!(self.active_panel().content, PanelContent::Dir) {
                     self.close_search();
                 }
-                let side = self.active;
-                let Some(path) = self.panel_history_mut(side).go_forward() else { return; };
                 self.land_on_history_path(side, path, |h| { h.go_back(); });
             }
             Action::BookmarkAdd => {
@@ -1234,7 +1238,11 @@ impl App {
     }
 
     fn push_path_history(&mut self, path: &str) {
-        match self.active {
+        self.push_path_history_for(self.active, path);
+    }
+
+    fn push_path_history_for(&mut self, side: Side, path: &str) {
+        match side {
             Side::Left => self.panel_history_left.push(path),
             Side::Right => self.panel_history_right.push(path),
         }
@@ -1541,6 +1549,7 @@ impl App {
         self.close_search();
         let side = self.active;
         self.panel_history_mut(side).clear_caches();
+        self.panel_history_mut(side).truncate_forward();
         let root = self.active_panel().path.clone();
         let handle = match self.active_panel().provider.search(&root, query.clone()) {
             Ok(h) => h,
@@ -1582,6 +1591,7 @@ impl App {
         self.search = None; // cancel the current worker
         let side = self.active;
         self.panel_history_mut(side).clear_caches();
+        self.panel_history_mut(side).truncate_forward();
         let root = self.active_panel().path.clone();
         match self.active_panel().provider.search(&root, query.clone()) {
             Ok(handle) => {
@@ -2336,6 +2346,9 @@ impl App {
                 match outcome {
                     PopupOutcome::Accept(path) => {
                         self.modal = Modal::None;
+                        if !matches!(self.active_panel().content, PanelContent::Dir) {
+                            self.close_search();
+                        }
                         self.navigate_to_path(&path);
                     }
                     PopupOutcome::Dismissed => self.modal = Modal::None,
@@ -2784,6 +2797,9 @@ impl App {
                         } else { None };
                         self.modal = Modal::None;
                         if let Some(p) = path {
+                            if !matches!(self.active_panel().content, PanelContent::Dir) {
+                                self.close_search();
+                            }
                             self.navigate_to_path(&p);
                         }
                     } else if !area.contains(up) {
@@ -2952,6 +2968,7 @@ impl App {
             MouseButton::Left => {
                 enum DoubleAct { None, Hit, Match }
                 let mut act = DoubleAct::None;
+                let path_before = self.panel(clicked_side).path.0.clone();
                 let nav_err = {
                     let panel = match clicked_side {
                         Side::Left => &mut self.left,
@@ -2976,6 +2993,10 @@ impl App {
                 };
                 if let Some(err) = nav_err {
                     self.set_status(&err, true);
+                }
+                let path_after = self.panel(clicked_side).path.0.clone();
+                if path_after != path_before {
+                    self.push_path_history_for(clicked_side, &path_after);
                 }
                 match act {
                     // clicked_side became the active panel above
@@ -4294,6 +4315,113 @@ mod tests {
     }
 
     #[test]
+    fn starting_new_search_drops_stale_forward_history() {
+        let base = make_search_base("new_search_drops_forward");
+        let mut app = test_app(&base);
+        // Navigate into base/target, then back to base — target becomes a
+        // forward-reachable entry.
+        app.navigate_to_path(&base.join("target").to_string_lossy());
+        assert_eq!(app.left.path.0, base.join("target").to_string_lossy());
+        app.handle_action(Action::GoBack);
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+
+        // The new search should have invalidated that stale forward entry:
+        // Alt-Right must be a complete no-op, not a jump to base/target.
+        app.handle_action(Action::GoForward);
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn alt_right_on_fresh_search_with_no_forward_history_is_a_noop() {
+        let base = make_search_base("fresh_search_no_forward");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+
+        app.handle_action(Action::GoForward);
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn alt_left_on_fresh_search_with_no_back_history_is_a_noop() {
+        let base = make_search_base("fresh_search_no_back");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+
+        app.handle_action(Action::GoBack);
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn sync_panels_records_inactive_panel_history() {
+        let base = make_search_base("sync_panels_history");
+        let mut app = test_app(&base);
+        // Right panel starts at base/dest. Navigate it into base/target, then
+        // back to base/dest — base/target becomes a forward-reachable entry.
+        app.active = Side::Right;
+        app.navigate_to_path(&base.join("target").to_string_lossy());
+        app.handle_action(Action::GoBack);
+        assert_eq!(app.right.path.0, base.join("dest").to_string_lossy());
+
+        // Sync the right (inactive) panel to the left panel's directory (base).
+        app.active = Side::Left;
+        app.handle_action(Action::SyncPanels);
+        assert_eq!(app.right.path.0, base.to_string_lossy());
+
+        // The sync must have been recorded in the right panel's own history:
+        // forward no longer reaches the stale base/target entry, and back
+        // returns to the pre-sync directory.
+        app.active = Side::Right;
+        app.handle_action(Action::GoForward);
+        assert_eq!(app.right.path.0, base.to_string_lossy());
+
+        app.handle_action(Action::GoBack);
+        assert_eq!(app.right.path.0, base.join("dest").to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn double_click_into_directory_updates_panel_history() {
+        let base = make_search_base("double_click_history");
+        let mut app = test_app(&base);
+        app.left_area.set(Rect::new(0, 0, 40, 20));
+        // ".." sits first, then entries sorted by name ascending: "dest", "target".
+        assert_eq!(app.left.entries[0].name, "..");
+        assert_eq!(app.left.entries[1].name, "dest");
+        assert_eq!(app.left.entries[2].name, "target");
+        let col = 3;
+        let row = 4; // inner_y=1 (border), header at inner_y, entries start at inner_y+1=2; row 4 = third entry ("target")
+
+        app.handle_panel_down(col, row, MouseButton::Left);
+        app.handle_panel_down(col, row, MouseButton::Left); // double-click within the 400ms window
+        assert_eq!(app.left.path.0, base.join("target").to_string_lossy());
+
+        // The double-click destination must have been recorded: Alt-Left
+        // returns to the pre-click directory.
+        app.handle_action(Action::GoBack);
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn new_search_evicts_previous_cached_search() {
         let base = make_search_base("evict");
         let mut app = test_app(&base);
@@ -4503,7 +4631,7 @@ mod tests {
     }
 
     #[test]
-    fn path_history_closes_search_before_opening_popup() {
+    fn path_history_popup_leaves_search_open_until_a_pick_is_made() {
         let base = make_search_base("pathhist_guard");
         let mut app = test_app(&base);
         app.start_search(search_query("target"));
@@ -4512,10 +4640,22 @@ mod tests {
         app.handle_action(Action::GoBack); // restore cached search at base
         assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
 
+        // Opening the popup doesn't commit to navigating anywhere yet.
         app.handle_action(Action::PathHistory);
-        assert!(matches!(app.left.content, PanelContent::Dir), "search view must be closed first");
-        assert_eq!(app.left.path.0, base.to_string_lossy());
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)), "search view must stay open while just browsing history");
         assert!(matches!(app.modal, Modal::PathHistoryList(_)));
+
+        // Dismissing without picking anything must leave the search untouched.
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(app.modal, Modal::None));
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)), "Esc must not have closed the search");
+
+        // Picking an entry is the actual "go somewhere new" commitment.
+        app.handle_action(Action::PathHistory);
+        let expected = app.panel_history_left.unique_entries()[0].to_string();
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(app.left.content, PanelContent::Dir), "search view must be closed once a pick is made");
+        assert_eq!(app.left.path.0, expected);
 
         let _ = std::fs::remove_dir_all(&base);
     }

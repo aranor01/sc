@@ -107,6 +107,22 @@ impl PanelHistory {
         }
     }
 
+    /// Drops the forward part of history (as `push_with_cache` does when
+    /// `index > 0`) without inserting a new entry — for callers where the
+    /// panel's directory hasn't changed but a new navigation branch has
+    /// started (e.g. opening a search view on top of it), so any
+    /// previously-reachable forward entries stop being reachable.
+    pub fn truncate_forward(&mut self) {
+        while self.caches.len() < self.entries.len() {
+            self.caches.push(None);
+        }
+        if self.index > 0 {
+            self.entries.drain(0..self.index);
+            self.caches.drain(0..self.index);
+            self.index = 0;
+        }
+    }
+
     pub fn unique_entries(&self) -> Vec<&str> {
         let mut seen = std::collections::HashSet::new();
         self.entries.iter()
@@ -292,6 +308,31 @@ mod tests {
         assert_eq!(h.entries, vec!["/d", "/c"]);
         assert_eq!(h.caches.len(), 2);
         assert!(h.caches.iter().all(|c| c.is_none()));
+    }
+
+    #[test]
+    fn truncate_forward_drops_forward_entries_and_resets_index() {
+        let mut h = PanelHistory::default();
+        h.push("/a");
+        h.push_with_cache("/b", Some(dummy_cache("/b")));
+        h.push("/c");
+        h.go_back(); // index now points at /b, /c is a forward entry
+        h.truncate_forward();
+        assert_eq!(h.entries, vec!["/b", "/a"]);
+        assert_eq!(h.index, 0);
+        assert_eq!(h.caches.len(), h.entries.len());
+        assert!(h.caches[0].is_some()); // /b's cache survives, it wasn't forward
+        assert!(h.go_forward().is_none());
+    }
+
+    #[test]
+    fn truncate_forward_is_a_noop_at_index_zero() {
+        let mut h = PanelHistory::default();
+        h.push("/a");
+        h.push("/b");
+        h.truncate_forward();
+        assert_eq!(h.entries, vec!["/b", "/a"]);
+        assert_eq!(h.index, 0);
     }
 
     #[test]
