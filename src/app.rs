@@ -1489,6 +1489,13 @@ impl App {
         }
     }
 
+    fn search_still_running(&self) -> bool {
+        match self.results_side() {
+            Some(side) => matches!(&self.panel(side).content, PanelContent::SearchResults(sr) if sr.running),
+            None => false,
+        }
+    }
+
     fn execute_search_dialog(&mut self, mut state: SearchDialogState) {
         let pattern_text = state.pattern.text.trim().to_string();
         let pattern = if pattern_text.is_empty() { "*".to_string() } else { pattern_text };
@@ -1718,7 +1725,24 @@ impl App {
         }
     }
 
-    /// Esc in a search view: cancel the search and restore both panels to the
+    /// First Esc on a still-running search: cancel the worker but leave the
+    /// results (and matches) panel showing what was found so far, marked
+    /// `(partial, Alt-r to refresh)` — the same marker used when a search is
+    /// interrupted by jumping away and back. Companion Matches panel is left
+    /// untouched; a second Esc, now that nothing is running, does the full
+    /// `close_search()`.
+    fn interrupt_search(&mut self) {
+        self.search = None; // dropping the handle cancels the worker
+        if let Some(side) = self.results_side() {
+            if let PanelContent::SearchResults(sr) = &mut self.panel_mut(side).content {
+                sr.running = false;
+                sr.scanning = None;
+            }
+        }
+    }
+
+    /// Esc once the search is no longer running (already interrupted or
+    /// complete): cancel the search and restore both panels to the
     /// directories they showed before (their paths never changed).
     fn close_search(&mut self) {
         self.end_search_companions();
@@ -2534,7 +2558,11 @@ impl App {
                     return;
                 }
                 (KeyCode::Esc, PanelContent::SearchResults(_) | PanelContent::Matches(_)) => {
-                    self.close_search();
+                    if self.search_still_running() {
+                        self.interrupt_search();
+                    } else {
+                        self.close_search();
+                    }
                     return;
                 }
                 _ => {}
@@ -4310,6 +4338,101 @@ mod tests {
         app.handle_action(Action::GoToParent);
         assert!(matches!(app.left.content, PanelContent::Dir));
         assert_eq!(app.left.path.0, base.to_string_lossy()); // not base's parent
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn esc_on_running_search_interrupts_without_closing() {
+        let base = make_search_base("esc_interrupt");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        // No wait_for_search_done: sr.running only flips inside poll_search,
+        // which we don't call, so it's still true here deterministically.
+        match &app.left.content {
+            PanelContent::SearchResults(sr) => assert!(sr.running),
+            _ => panic!("expected a live SearchResults panel"),
+        }
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        match &app.left.content {
+            PanelContent::SearchResults(sr) => {
+                assert!(!sr.running, "first Esc must interrupt, not just leave it running");
+                assert!(!sr.complete, "an interrupted search isn't complete");
+            }
+            _ => panic!("first Esc must not close the search view"),
+        }
+        assert!(app.search.is_none(), "the worker must be cancelled");
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn second_esc_after_interrupt_closes_search() {
+        let base = make_search_base("esc_interrupt_then_close");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)); // interrupt
+        assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)); // close
+        assert!(matches!(app.left.content, PanelContent::Dir));
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn esc_on_already_complete_search_closes_immediately() {
+        let base = make_search_base("esc_complete_closes");
+        let mut app = test_app(&base);
+        app.start_search(search_query("target"));
+        wait_for_search_done(&mut app);
+        match &app.left.content {
+            PanelContent::SearchResults(sr) => {
+                assert!(!sr.running);
+                assert!(sr.complete);
+            }
+            _ => panic!("expected a completed SearchResults panel"),
+        }
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(app.left.content, PanelContent::Dir), "a single Esc closes once already complete");
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn esc_on_matches_panel_interrupts_the_results_panel() {
+        let base = make_search_base("esc_interrupt_via_matches");
+        std::fs::write(base.join("target").join("hit.txt"), "needle here\n").unwrap();
+        let mut app = test_app(&base);
+        let query = SearchQuery { content: Some("needle".to_string()), ..search_query("*") };
+        app.start_search(query);
+        wait_for_search_done(&mut app);
+        app.sync_matches_panel();
+        // Re-open the search live (as if it were still running) after it
+        // completed, so we can drive the interrupt path deterministically
+        // while focus is on the Matches panel.
+        if let PanelContent::SearchResults(sr) = &mut app.left.content {
+            sr.running = true;
+            sr.complete = false;
+        }
+        app.active = Side::Right;
+        assert!(matches!(app.right.content, PanelContent::Matches(_)));
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        match &app.left.content {
+            PanelContent::SearchResults(sr) => assert!(!sr.running, "results panel must be interrupted from the Matches panel too"),
+            _ => panic!("first Esc must not close the search view"),
+        }
+        assert!(matches!(app.right.content, PanelContent::Matches(_)), "Matches panel must be untouched by an interrupt");
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(app.left.content, PanelContent::Dir));
+        assert!(matches!(app.right.content, PanelContent::Dir));
 
         let _ = std::fs::remove_dir_all(&base);
     }

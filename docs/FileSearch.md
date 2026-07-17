@@ -39,9 +39,15 @@ When the search starts, the active panel is replaced by a *results panel*:
 - **Enter** behaves like mc: on a directory hit the panel becomes a normal panel showing
   that directory; on a file hit it becomes a normal panel showing the parent directory
   with the file selected.
-- **Esc** cancels a running search, closes the results (and matches) panel and restores
-  both panels to their previous directories. As everywhere in sc, when the command line
-  is not empty the first Esc only enters action mode — so this is effectively Esc Esc.
+- **Esc** while the search is still running interrupts it in place: the worker stops but
+  the results (and matches) panel keeps showing what was found so far, marked
+  `(partial, Alt-r to refresh)` in its footer — the same marker used when a search is
+  interrupted by jumping away and back (see below). A second Esc — or the first Esc once
+  the search is already interrupted or has completed on its own — closes the results
+  (and matches) panel and restores both panels to their previous directories. As
+  everywhere in sc, when the command line is not empty an Esc only enters action mode
+  first — so closing a still-running search takes Esc, Esc, Esc; a finished one takes
+  Esc, Esc.
 - Tagging works normally (`Insert`, `*`, `+`, `-`), and quicksearch (`/`) matches over
   the displayed relative paths.
 - **F5/F6/F8** operate on the tagged (or selected) hits, with the inactive panel's
@@ -56,8 +62,10 @@ When the search starts, the active panel is replaced by a *results panel*:
 The most recent search a panel jumped away from (via Enter on a hit) stays reachable
 through that panel's ordinary back/forward history for the rest of the session:
 `Alt-Left`/`Alt-Right` move into and out of it exactly like any other history entry, in
-both directions. `Alt-Up` on a search view, live or restored, closes it like Esc-Esc — it
-does not additionally navigate to the parent of the search root. History navigation is a
+both directions. `Alt-Up` on a search view, live or restored, running or not, always
+closes it outright in one step — unlike Esc it never just interrupts a running search
+first, and it does not additionally navigate to the parent of the search root. History
+navigation is a
 no-op while the matches panel is focused (`Tab` back to the results panel first). Starting
 a new search, or `Alt-r`, drops whatever was cached. This isn't persisted to
 `panel_history.json` — it's process-memory only, and starting a fresh `sc` session never
