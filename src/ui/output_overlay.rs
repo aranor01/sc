@@ -32,20 +32,28 @@ pub struct OutputOverlayState {
     /// width-dependent, and `jump_to_line` is called before that width is
     /// available (from key handling, not from the render pass).
     pending_line: Option<u64>,
+    /// Set after whan scrolling downward and by refresh, consumed by
+    /// `cap_scroll` in the render cycle.
+    pending_cap_scroll: bool,
+    /// Total wrapped display rows the text occupies at the last render
+    /// width. Computed first time is needed by `resolve_pending_end`.
+    total_rows: Option<u64>,
 }
 
 impl OutputOverlayState {
     pub fn new() -> Self {
-        Self { scroll: 0, pending_line: None }
+        Self { scroll: 0, pending_line: None, pending_cap_scroll: false, total_rows: None }
     }
 
-    /// Resets scroll to the top and drops any unresolved `jump_to_line` request.
-    /// Called whenever the viewer starts showing different content, so a new
-    /// file (or command output) never inherits the previous one's scroll
-    /// position.
+    /// Resets scroll to the top and drops any unresolved `jump_to_line` or
+    /// `End` request. Called whenever the viewer starts showing different
+    /// content, so a new file (or command output) never inherits the
+    /// previous one's scroll position.
     pub fn reset_scroll(&mut self) {
         self.scroll = 0;
         self.pending_line = None;
+        self.pending_cap_scroll = false;
+        self.total_rows = None;
     }
 
     /// Request the view be scrolled so the given 1-based source line ends up a
@@ -92,15 +100,53 @@ impl OutputOverlayState {
         }
     }
 
+    /// Recomputes and caches the total wrapped-row count for `text` at `width`,
+    /// when it's needed to calculate the upper limit for `scroll``
+    /// Safe to call unconditionally from `render`; it's a no-op on `scroll`
+    /// when nothing is pending.
+    pub fn cap_scroll(&mut self, text: &str, width: u16, viewport_height: u16) {
+        if !self.pending_cap_scroll {
+            return;
+        }
+        self.pending_cap_scroll = false;
+
+        // Cheap upper-bound check: wrapped row count is always >= raw line count,
+        // so if we're within the limit we don't call wrapped_row_count
+        let scroll_limit = text.lines().count().saturating_sub(viewport_height as usize).min(u16::MAX as usize) as u16;
+
+        if self.scroll <= scroll_limit
+        {
+            return;
+        }
+
+        let width = width as usize;
+        // Match render()'s tab expansion so the row count lines up with what's
+        // actually displayed.
+        let total_rows = self.total_rows.get_or_insert_with(|| {
+            text.lines()
+            .map(|raw_line| wrapped_row_count(&super::expand_tabs(raw_line), width) as u64)
+            .sum()
+        });
+
+        let scroll_limit = total_rows.saturating_sub(viewport_height as u64).min(u16::MAX as u64) as u16;
+
+        if self.scroll > scroll_limit
+        {
+            self.scroll = scroll_limit;
+        }
+    }
+
     pub fn handle_key(&mut self, event: &KeyEvent, dismiss_bindings: &ActionBindings) -> OverlayOutcome {
         if event.code == KeyCode::Esc || bindings_match_event(dismiss_bindings, event) {
             return OverlayOutcome::Dismissed;
         }
         match event.code {
             KeyCode::Up => { self.scroll = self.scroll.saturating_sub(1); OverlayOutcome::Consumed }
-            KeyCode::Down => { self.scroll = self.scroll.saturating_add(1); OverlayOutcome::Consumed }
+            KeyCode::Down => { self.scroll = self.scroll.saturating_add(1); self.pending_cap_scroll = true; OverlayOutcome::Consumed }
             KeyCode::PageUp => { self.scroll = self.scroll.saturating_sub(20); OverlayOutcome::Consumed }
-            KeyCode::PageDown => { self.scroll = self.scroll.saturating_add(20); OverlayOutcome::Consumed }
+            KeyCode::PageDown => { self.scroll = self.scroll.saturating_add(20); self.pending_cap_scroll = true; OverlayOutcome::Consumed }
+            KeyCode::Home => { self.scroll = 0u16; OverlayOutcome::Consumed }
+            KeyCode::End => { self.scroll = u16::MAX; self.pending_cap_scroll = true; OverlayOutcome::Consumed }
             _ => OverlayOutcome::Passthrough,
         }
     }
@@ -110,14 +156,23 @@ impl OutputOverlayState {
             self.scroll = self.scroll.saturating_sub((-delta) as u16);
         } else {
             self.scroll = self.scroll.saturating_add(delta as u16);
+            self.pending_cap_scroll = true;
         }
     }
 
     pub fn scrollbar_click(&mut self, track_row: usize, inner_h: usize, total_lines: usize) {
         if let Some(pos) = (track_row * total_lines).checked_div(inner_h) {
+            if pos > (self.scroll as usize) {
+                self.pending_cap_scroll = true;
+            }
             self.scroll = pos as u16;
         }
     }
+
+    pub fn refresh(&mut self) {
+        self.pending_cap_scroll = true;
+    }
+
 }
 
 /// Width available for wrapped text inside the overlay: `area` minus the 2
@@ -164,6 +219,14 @@ fn whitespace_runs(line: &str) -> Vec<(bool, &str)> {
 /// hard-broken drops the one character that triggers each wrap point (ratatui
 /// elides exactly that character even with `trim:false`); a non-whitespace
 /// run doesn't.
+// replace with ratatui method in the future
+// let lines: Vec<Line> = text
+//     .lines()
+//     .map(|raw_line| Line::from(super::expand_tabs(raw_line)))
+//     .collect();
+// Paragraph::new(lines)
+//     .wrap(Wrap { trim: false })
+//     .line_count(width) as u64;
 fn wrapped_row_count(line: &str, width: usize) -> usize {
     let width = width.max(1);
     if line.is_empty() {
@@ -207,15 +270,15 @@ fn wrapped_row_count(line: &str, width: usize) -> usize {
 pub struct OutputOverlayWidget<'a> {
     pub cs: &'a ColorScheme,
     pub text: &'a str,
-    pub scroll: u16,
     pub title: &'a str,
     /// `(needle, case_sensitive, is_regex, whole_words)` — occurrences get the
     /// search-match colors.
     pub highlight: Option<(&'a str, bool, bool, bool)>,
 }
 
-impl<'a> Widget for OutputOverlayWidget<'a> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
+impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
+    type State = OutputOverlayState;
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         Widget::render(Clear, area, buf);
 
         let block = Block::default()
@@ -231,9 +294,13 @@ impl<'a> Widget for OutputOverlayWidget<'a> {
             .fg(to_color(self.cs.panel_fg))
             .bg(to_color(self.cs.panel_bg));
 
-        let total_lines = self.text.lines().count();
+        let total_lines = state.total_rows.unwrap_or(self.text.lines().count() as u64) as usize;
 
         let text_area = Rect { width: content_width(area), ..inner };
+        state.cap_scroll(self.text, text_area.width, inner.height);
+
+        state.resolve_pending_jump(self.text, text_area.width, self.highlight);
+        
 
         let matcher = build_matcher(self.highlight);
         let match_style = Style::default()
@@ -269,7 +336,7 @@ impl<'a> Widget for OutputOverlayWidget<'a> {
         let para = para
             .style(style)
             .wrap(Wrap { trim: false })
-            .scroll((self.scroll, 0));
+            .scroll((state.scroll, 0));
         Widget::render(para, text_area, buf);
 
         let scrollbar_area = Rect {
@@ -278,7 +345,7 @@ impl<'a> Widget for OutputOverlayWidget<'a> {
             ..inner
         };
         let mut scrollbar_state = ScrollbarState::new(total_lines)
-            .position(self.scroll as usize);
+            .position(state.scroll as usize).viewport_content_length(inner.height as usize);
         StatefulWidget::render(
             Scrollbar::new(ScrollbarOrientation::VerticalRight),
             scrollbar_area,
