@@ -56,6 +56,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   navigation now record the destination in that panel's own back/forward history.
 - Filter/select-group/unselect-group dialogs now show their validation error at the
   bottom of the dialog.
+- The command output overlay now resets its scroll position to the top each time a new
+  command runs.
 
 ## [0.1.0] - 2026-07-09
 

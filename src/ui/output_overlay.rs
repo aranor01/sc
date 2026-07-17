@@ -39,6 +39,15 @@ impl OutputOverlayState {
         Self { scroll: 0, pending_line: None }
     }
 
+    /// Resets scroll to the top and drops any unresolved `jump_to_line` request.
+    /// Called whenever the viewer starts showing different content, so a new
+    /// file (or command output) never inherits the previous one's scroll
+    /// position.
+    pub fn reset_scroll(&mut self) {
+        self.scroll = 0;
+        self.pending_line = None;
+    }
+
     /// Request the view be scrolled so the given 1-based source line ends up a
     /// couple of rows below the top when possible. Takes effect on the next
     /// `resolve_pending_jump` call (from the render pass), since converting a raw

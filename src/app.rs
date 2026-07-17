@@ -1897,6 +1897,7 @@ impl App {
                     text: String::from_utf8_lossy(&bytes).into_owned(),
                     highlight,
                 });
+                self.overlay.reset_scroll();
                 if let Some(line) = jump_line {
                     self.overlay.jump_to_line(line);
                 }
@@ -2227,6 +2228,7 @@ impl App {
         let raw = crate::subshell::run_with_pty_capture(&wrapped, &cwd);
         let text = normalize_pty_output(&raw);
         self.last_output = if text.trim().is_empty() { None } else { Some(text) };
+        self.overlay.reset_scroll();
 
         let _ = enable_raw_mode();
         if self.mouse {
@@ -4991,6 +4993,26 @@ mod tests {
         app.handle_action(Action::View);
         let viewer = app.viewer.as_ref().expect("Action::View should open the viewer");
         assert!(viewer.text.contains("hello world"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn view_action_resets_scroll_for_a_newly_opened_file() {
+        let base = make_search_base("view_action_scroll_reset");
+        std::fs::write(base.join("a.txt"), "a\n").unwrap();
+        std::fs::write(base.join("b.txt"), "b\n").unwrap();
+        let mut app = test_app(&base);
+
+        let idx_a = app.left.entries.iter().position(|e| e.name == "a.txt").unwrap();
+        app.left.cursor = idx_a;
+        app.handle_action(Action::View);
+        app.overlay.scroll = 42; // simulate having scrolled down while viewing a.txt
+
+        let idx_b = app.left.entries.iter().position(|e| e.name == "b.txt").unwrap();
+        app.left.cursor = idx_b;
+        app.handle_action(Action::View);
+        assert_eq!(app.overlay.scroll, 0, "opening a new file must not inherit the previous file's scroll position");
 
         let _ = std::fs::remove_dir_all(&base);
     }
