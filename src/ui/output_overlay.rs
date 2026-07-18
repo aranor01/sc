@@ -97,6 +97,7 @@ impl OutputOverlayState {
         }
         if found {
             self.scroll = rows_before.saturating_sub(2).min(u16::MAX as u64) as u16;
+            self.pending_cap_scroll = true;
         }
     }
 
