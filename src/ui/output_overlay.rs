@@ -360,12 +360,16 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
 mod tests {
     use super::*;
 
-    fn render_to_buffer(text: &str, scroll: u16, area: Rect) -> Buffer {
+    fn render_to_buffer(text: &str, area: Rect, state: &mut OutputOverlayState) -> Buffer {
         let cs = ColorScheme::default();
-        let widget = OutputOverlayWidget { cs: &cs, text, scroll, title: "test", highlight: None };
+        let widget = OutputOverlayWidget { cs: &cs, text, title: "test", highlight: None };
         let mut buf = Buffer::empty(area);
-        Widget::render(widget, area, &mut buf);
+        StatefulWidget::render(widget, area, &mut buf, state);
         buf
+    }
+
+    fn render_to_buffer_with_default_state(text: &str, area: Rect) -> Buffer {
+        render_to_buffer(text, area, &mut OutputOverlayState::new())
     }
 
     fn row_text(buf: &Buffer, y: u16, area: Rect) -> String {
@@ -406,7 +410,7 @@ mod tests {
         let lines = ["short1", &"A".repeat(60), "short2", "needle-here"];
         let text = format!("{}\n", lines.join("\n"));
         let area = Rect::new(0, 0, 16, 30);
-        let buf = render_to_buffer(&text, 0, area);
+        let buf = render_to_buffer_with_default_state(&text, area);
         let content_w = content_width(area) as usize;
 
         let predicted_rows_before: usize =
@@ -427,7 +431,7 @@ mod tests {
         let lines = ["short1", indented.as_str(), "short2", "needle-here"];
         let text = format!("{}\n", lines.join("\n"));
         let area = Rect::new(0, 0, 16, 30);
-        let buf = render_to_buffer(&text, 0, area);
+        let buf = render_to_buffer_with_default_state(&text, area);
         let content_w = content_width(area) as usize;
 
         let predicted_rows_before: usize =
@@ -447,7 +451,7 @@ mod tests {
         let lines = ["short1", wide_line.as_str(), "short2", "needle-here"];
         let text = format!("{}\n", lines.join("\n"));
         let area = Rect::new(0, 0, 16, 30);
-        let buf = render_to_buffer(&text, 0, area);
+        let buf = render_to_buffer_with_default_state(&text, area);
         let content_w = content_width(area) as usize;
 
         let predicted_rows_before: usize =
@@ -472,7 +476,7 @@ mod tests {
         state.jump_to_line(4);
         state.resolve_pending_jump(&text, content_width(area), None);
 
-        let buf = render_to_buffer(&text, state.scroll, area);
+        let buf = render_to_buffer(&text, area, &mut state);
         assert!(
             find_row_containing(&buf, area, "needle-here").is_some(),
             "target line must be visible after jump_to_line despite earlier wrapping"
@@ -483,24 +487,23 @@ mod tests {
     /// file with one giant space-separated line) must itself end up visible —
     /// jumping to the start of that raw line isn't enough when the match is
     /// dozens of wrapped rows into it.
-    #[test]
-    fn jump_to_line_finds_a_match_deep_inside_a_long_wrapped_line() {
-        let words: Vec<String> = (0..40).map(|i| format!("filler-word-{i:03}-padded")).collect();
-        let mut long_line = words.join(" ");
-        long_line.push_str(" needle-token more-filler-after-the-match-token-here");
-        let text = format!("intro\n{long_line}\n");
-        let area = Rect::new(0, 0, 20, 8);
+fn jump_to_line_finds_a_match_deep_inside_a_long_wrapped_line() {
+    let words: Vec<String> = (0..40).map(|i| format!("filler-word-{i:03}-padded")).collect();
+    let mut long_line = words.join(" ");
+    long_line.push_str(" needle-token more-filler-after-the-match-token-here");
+    let text = format!("intro\n{long_line}\n");
+    let area = Rect::new(0, 0, 20, 8);
 
-        let mut state = OutputOverlayState::new();
-        state.jump_to_line(2);
-        state.resolve_pending_jump(&text, content_width(area), Some(("needle-token", true, false, false)));
+    let mut state = OutputOverlayState::new();
+    state.jump_to_line(2);
+    state.resolve_pending_jump(&text, content_width(area), Some(("needle-token", true, false, false)));
 
-        let buf = render_to_buffer(&text, state.scroll, area);
-        assert!(
-            find_row_containing(&buf, area, "needle-token").is_some(),
-            "the match itself must be visible, not just the start of its (long) raw line"
-        );
-    }
+    let buf = render_to_buffer(&text, area, &mut state);
+    assert!(
+        find_row_containing(&buf, area, "needle-token").is_some(),
+        "the match itself must be visible, not just the start of its (long) raw line"
+    );
+}
 
     #[test]
     fn resolve_pending_jump_is_a_noop_without_a_pending_line() {
@@ -541,7 +544,7 @@ mod tests {
     fn viewer_expands_tabs_before_rendering() {
         let text = "before\ttab\tneedle\n";
         let area = Rect::new(0, 0, 40, 10);
-        let buf = render_to_buffer(text, 0, area);
+        let buf = render_to_buffer_with_default_state(text, area);
 
         let row = find_row_containing(&buf, area, "needle").expect("line must be rendered");
         let content = row_text(&buf, row, area);
