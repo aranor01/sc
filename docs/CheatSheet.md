@@ -69,7 +69,7 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 | Action | Description | Config key: default |
 |---|---|---|
 | Copy | Copy tagged files (or the selected file) to the inactive panel's directory | `copy`: `F5` |
-| Move | Move tagged files (or the selected file) to the inactive panel's directory | `move_entry`: `F6` |
+| Move | Move tagged files (or the selected file) to the inactive panel's directory | `move`: `F6` |
 | Delete | Delete the tagged files (or the selected file) in the active panel | `delete`: `F8` |
 | Rename | Rename the currently selected file | `rename`: `Shift-F6` |
 | Make Directory | Create a new directory in the active panel | `mkdir`: `F7` |

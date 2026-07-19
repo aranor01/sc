@@ -93,9 +93,7 @@ triggers the action):
 
 Notes:
 
-- The JSON key for the Move action is `move`, not `move_entry`.
-- Unrecognized action names in `keybindings` are ignored rather than rejected, so old or
-  misspelled entries don't prevent the rest of the file from loading.
+- Unrecognized action names in `keybindings` are ignored.
 - A handful of interaction keys (Up/Down/PageUp/PageDown/Home/End/Enter/Esc for list and
   popup navigation, and Del to remove an entry from the bookmarks popup) are fixed and not
   configurable — see the "non-configurable" note in
