@@ -79,7 +79,7 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 | Action | Description | Config key: default |
 |---|---|---|
 | Insert Filename | Copy the selected file name to the command line | `cmdline_insert_filename`: `Alt-Enter`, `Ctrl-Enter` |
-| Insert Full Path | Copy the full path of the selected file to the command line | `cmdline_insert_fullpath`: `Ctrl-Shift-Enter` |
+| Insert Full Path | Copy the full path of the selected file to the command line | `cmdline_insert_fullpath`: `Ctrl-Shift-Enter`, `Ctrl-x f` |
 | Autocomplete | Autocomplete filenames, commands, variables, usernames, and hostnames | `cmdline_complete`: `Alt-Tab`, `Ctrl-Space` |
 | Insert Tagged (Active) | Copy tagged files of the active panel to the command line | `cmdline_insert_tagged`: `Ctrl-x t` |
 | Insert Tagged (Inactive) | Copy tagged files of the inactive panel to the command line | `cmdline_insert_tagged_other`: `Ctrl-x Ctrl-t` |

@@ -79,7 +79,7 @@
 - C-Enter
        same as A-Enter
 
-- C-S-Enter
+- C-S-Enter. C-x f
        copy the full path name of the currently selected file to the command line.
 
 - A-Tab

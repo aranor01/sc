@@ -263,7 +263,13 @@ impl Default for KeyBindings {
                 KeyBinding::Single(ke(Enter, a)),
                 KeyBinding::Single(ke(Enter, c)),
             ],
-            cmdline_insert_fullpath: vec![KeyBinding::Single(ke(Enter, cs))],
+            cmdline_insert_fullpath: vec![
+                KeyBinding::Single(ke(Enter, cs)),
+                    KeyBinding::Chord(
+                    ke(Char('x'), c),
+                    ke(Char('f'), n),
+                )
+            ],
             cmdline_complete: vec![KeyBinding::Single(ke(Tab, a)), KeyBinding::Single(ke(Char(' '), c))],
             cmdline_insert_tagged: vec![KeyBinding::Chord(
                 ke(Char('x'), c),
