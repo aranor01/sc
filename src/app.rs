@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use unicode_width::UnicodeWidthChar;
+use unicode_general_category::{get_general_category, GeneralCategory};
 
 use anyhow::Result;
 use crossterm::{
@@ -501,6 +502,30 @@ fn normalize_pty_output(bytes: &[u8]) -> String {
     out
 }
 
+fn is_bidi_or_invisible(c: char) -> bool {
+    matches!(
+        get_general_category(c),
+        GeneralCategory::Format // covers all Cf: bidi controls, zero-width joiners, etc.
+    )
+}
+
+fn normalize_text_file(bytes: &[u8]) -> String {
+        let s = String::from_utf8_lossy(bytes);
+        let s = s.replace('\r', "");
+        let s = ANSI_RE.replace_all(&s, |caps: &regex::Captures| {
+            ".".repeat(caps.get(0).unwrap().as_str().chars().count())
+        });
+        let mut out = String::with_capacity(s.len());
+        for ch in s.chars() {
+            match ch {
+                '\n' | '\t' => out.push(ch),
+                c if c.is_control() => out.push('.'),
+                c if is_bidi_or_invisible(c) => {}, // Unicode bidi/zero-width
+                _ => out.push(ch),
+            }
+        }
+        out
+}
 
 
 impl App {
@@ -1894,7 +1919,7 @@ impl App {
                 self.show_output = false;
                 self.viewer = Some(ViewerContent {
                     title: format!(" {} (Esc to close) ", display_path(abs)),
-                    text: String::from_utf8_lossy(&bytes).into_owned(),
+                    text: normalize_text_file(&bytes),
                     highlight,
                 });
                 self.overlay.reset_scroll();
