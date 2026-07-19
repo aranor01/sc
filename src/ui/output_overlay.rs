@@ -421,7 +421,7 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
             width: 1,
             ..inner
         };
-        let mut scrollbar_state = ScrollbarState::new(total_lines  as usize - inner.height as usize + 1)
+        let mut scrollbar_state = ScrollbarState::new((1 + total_lines  as usize).saturating_sub(inner.height as usize))
             .position(state.scroll as usize);
         StatefulWidget::render(
             Scrollbar::new(ScrollbarOrientation::VerticalRight),
