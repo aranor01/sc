@@ -27,33 +27,44 @@ fn build_matcher(highlight: Option<(&str, bool, bool, bool)>) -> Option<ContentM
 
 pub struct OutputOverlayState {
     pub scroll: u16,
-    /// Set by `jump_to_line`, resolved into an actual `scroll` by
-    /// `resolve_pending_jump` once the render width is known — wrapping is
-    /// width-dependent, and `jump_to_line` is called before that width is
-    /// available (from key handling, not from the render pass).
     pending_line: Option<u64>,
-    /// Set after whan scrolling downward and by refresh, consumed by
-    /// `cap_scroll` in the render cycle.
     pending_cap_scroll: bool,
-    /// Total wrapped display rows the text occupies at the last render
-    /// width. Computed first time is needed by `resolve_pending_end`.
-    total_rows: Option<u64>,
+    /// Wrap width `row_cache` was last built at. Checked against the render
+    /// width on every use; a mismatch forces a rebuild, since every cached
+    /// row count is a function of wrap width.
+    row_cache_width: u16,
+    /// `row_cache[i]` = wrapped rows occupied by raw lines `0..i`, i.e. the
+    /// scroll offset at which raw line `i` begins (`row_cache[0] == 0`
+    /// always). Grows lazily and monotonically: only ever extended as far
+    /// as a render, jump, or cap-scroll has actually needed, and never
+    /// re-walks a line it's already accounted for. This is what lets
+    /// scrolling through a huge file expand tabs for each line once ever,
+    /// rather than for the whole file every frame.
+    row_cache: Vec<u64>,
+    /// Set once `row_cache` has an entry for every line, at which point
+    /// `row_cache.len() - 1` is the true line count and `row_cache.last()`
+    /// the true total wrapped-row count — both previously found by
+    /// rescanning `text` directly.
+    row_cache_complete: bool,
 }
 
 impl OutputOverlayState {
     pub fn new() -> Self {
-        Self { scroll: 0, pending_line: None, pending_cap_scroll: false, total_rows: None }
+        Self {
+            scroll: 0,
+            pending_line: None,
+            pending_cap_scroll: false,
+            row_cache_width: 0,
+            row_cache: vec![0],
+            row_cache_complete: false,
+        }
     }
 
-    /// Resets scroll to the top and drops any unresolved `jump_to_line` or
-    /// `End` request. Called whenever the viewer starts showing different
-    /// content, so a new file (or command output) never inherits the
-    /// previous one's scroll position.
     pub fn reset_scroll(&mut self) {
         self.scroll = 0;
         self.pending_line = None;
         self.pending_cap_scroll = false;
-        self.total_rows = None;
+        self.reset_row_cache();
     }
 
     /// Request the view be scrolled so the given 1-based source line ends up a
@@ -64,80 +75,138 @@ impl OutputOverlayState {
         self.pending_line = Some(line);
     }
 
-    /// Converts a pending `jump_to_line` request into an actual wrap-aware
-    /// `scroll` value, now that `width` (the content area's column count) is
-    /// known. `highlight` (same shape as `OutputOverlayWidget::highlight`) is
-    /// used to find where in the target line the actual match sits, so a match
-    /// deep inside a long wrapped line lands in view instead of just the start
-    /// of its raw line. No-op if there's no pending request. If `text` no
-    /// longer has that many lines (e.g. the file was edited between when a
-    /// search hit recorded the line and this jump), leaves `scroll` untouched
-    /// rather than landing near the end of the file.
-    pub fn resolve_pending_jump(&mut self, text: &str, width: u16, highlight: Option<(&str, bool, bool, bool)>) {
-        let Some(line) = self.pending_line.take() else { return };
-        let width = width as usize;
-        let matcher = build_matcher(highlight);
+    fn reset_row_cache(&mut self) {
+        self.row_cache.clear();
+        self.row_cache.push(0);
+        self.row_cache_complete = false;
+    }
 
-        let mut rows_before = 0u64;
-        let mut found = false;
-        for (idx, raw_line) in text.lines().enumerate() {
-            // Match render()'s tab expansion so the predicted row lines up
-            // with what's actually displayed.
-            let line_text = super::expand_tabs(raw_line);
-            if idx as u64 + 1 == line {
-                found = true;
-                if let Some((m_start, _)) =
-                    matcher.as_ref().and_then(|m| m.find_matches(&line_text).into_iter().next())
-                {
-                    rows_before += (wrapped_row_count(&line_text[..m_start], width) - 1) as u64;
-                }
-                break;
-            }
-            rows_before += wrapped_row_count(&line_text, width) as u64;
-        }
-        if found {
-            self.scroll = rows_before.saturating_sub(2).min(u16::MAX as u64) as u16;
-            self.pending_cap_scroll = true;
+    /// Rebuilds `row_cache` from scratch if `width` differs from what it was
+    /// last built at. Cheap to call unconditionally; it's a no-op once the
+    /// width matches.
+    fn sync_row_cache_width(&mut self, width: u16) {
+        if self.row_cache_width != width {
+            self.row_cache_width = width;
+            self.reset_row_cache();
         }
     }
 
-    /// Recomputes and caches the total wrapped-row count for `text` at `width`,
-    /// when it's needed to calculate the upper limit for `scroll``
-    /// Safe to call unconditionally from `render`; it's a no-op on `scroll`
-    /// when nothing is pending.
+    /// Extends `row_cache`, resuming from wherever it left off, until it has
+    /// an entry for raw line `line_idx` or the file runs out. Used by
+    /// `resolve_pending_jump`, which needs the row offset of one specific
+    /// line and is only called on an actual jump, not every frame.
+    fn ensure_row_cache_to_line(&mut self, text: &str, width: u16, line_idx: usize) {
+        self.sync_row_cache_width(width);
+        if self.row_cache_complete || self.row_cache.len() - 1 > line_idx {
+            return;
+        }
+        let w = width.max(1) as usize;
+        let already = self.row_cache.len() - 1;
+        let mut rows = *self.row_cache.last().unwrap();
+        for raw_line in text.lines().skip(already) {
+            rows += wrapped_row_count(&super::expand_tabs(raw_line), w) as u64;
+            self.row_cache.push(rows);
+            if self.row_cache.len() - 1 > line_idx {
+                return;
+            }
+        }
+        self.row_cache_complete = true;
+    }
+
+    /// Extends `row_cache` until its last entry exceeds `scroll` (i.e. it
+    /// covers enough lines to locate row `scroll`) or the file runs out.
+    /// This is the one `render` calls every frame — but since it only ever
+    /// walks lines past what's already cached, a stationary or slowly
+    /// moving scroll position costs nothing.
+    fn ensure_row_cache_to_scroll(&mut self, text: &str, width: u16, scroll: u64) {
+        self.sync_row_cache_width(width);
+        if self.row_cache_complete {
+            return;
+        }
+        let w = width.max(1) as usize;
+        let already = self.row_cache.len() - 1;
+        let mut rows = *self.row_cache.last().unwrap();
+        if rows > scroll {
+            return; // already covers it
+        }
+        for raw_line in text.lines().skip(already) {
+            rows += wrapped_row_count(&super::expand_tabs(raw_line), w) as u64;
+            self.row_cache.push(rows);
+            if rows > scroll {
+                return;
+            }
+        }
+        self.row_cache_complete = true;
+    }
+
+    /// Extends `row_cache` over every remaining line, so `row_cache.last()`
+    /// becomes the true total wrapped-row count. Only called when that's
+    /// actually needed (e.g. `End`, or a scroll target past what's been
+    /// scanned so far) — not on every frame.
+    fn ensure_row_cache_complete(&mut self, text: &str, width: u16) {
+        self.sync_row_cache_width(width);
+        if self.row_cache_complete {
+            return;
+        }
+        let w = width.max(1) as usize;
+        let already = self.row_cache.len() - 1;
+        let mut rows = *self.row_cache.last().unwrap();
+        for raw_line in text.lines().skip(already) {
+            rows += wrapped_row_count(&super::expand_tabs(raw_line), w) as u64;
+            self.row_cache.push(rows);
+        }
+        self.row_cache_complete = true;
+    }
+
+    pub fn resolve_pending_jump(&mut self, text: &str, width: u16, highlight: Option<(&str, bool, bool, bool)>) {
+        let Some(line) = self.pending_line.take() else { return };
+        let line_idx = (line - 1) as usize;
+        self.ensure_row_cache_to_line(text, width, line_idx);
+        if line_idx >= self.row_cache.len() - 1 {
+            return; // text no longer has that many lines
+        }
+        let mut rows_before = self.row_cache[line_idx];
+        if let Some(raw_line) = text.lines().nth(line_idx) {
+            let line_text = super::expand_tabs(raw_line);
+            let matcher = build_matcher(highlight);
+            if let Some((m_start, _)) =
+                matcher.as_ref().and_then(|m| m.find_matches(&line_text).into_iter().next())
+            {
+                rows_before += (wrapped_row_count(&line_text[..m_start], width as usize) - 1) as u64;
+            }
+        }
+        self.scroll = rows_before.saturating_sub(2).min(u16::MAX as u64) as u16;
+        self.pending_cap_scroll = true;
+    }
+
     pub fn cap_scroll(&mut self, text: &str, width: u16, viewport_height: u16) {
         if !self.pending_cap_scroll {
             return;
         }
         self.pending_cap_scroll = false;
 
-        // Cheap upper-bound check: wrapped row count is always >= raw line count,
-        // so if we're within the limit we don't call wrapped_row_count
-        let scroll_limit = text.lines().count().saturating_sub(viewport_height as usize).min(u16::MAX as usize) as u16;
-
-        if self.scroll <= scroll_limit
-        {
+        // Cheap bound: reuse the cache's line count if we already know it
+        // exactly; otherwise fall back to a plain (tab-expansion-free) count,
+        // same cost as before.
+        let line_count = if self.row_cache_complete {
+            self.row_cache.len() - 1
+        } else {
+            text.lines().count()
+        };
+        let scroll_limit = line_count.saturating_sub(viewport_height as usize).min(u16::MAX as usize) as u16;
+        if self.scroll <= scroll_limit {
             return;
         }
 
-        let width = width as usize;
-        // Match render()'s tab expansion so the row count lines up with what's
-        // actually displayed.
-        let total_rows = self.total_rows.get_or_insert_with(|| {
-            text.lines()
-            .map(|raw_line| wrapped_row_count(&super::expand_tabs(raw_line), width) as u64)
-            .sum()
-        });
-
+        self.ensure_row_cache_complete(text, width);
+        let total_rows = *self.row_cache.last().unwrap();
         let scroll_limit = total_rows.saturating_sub(viewport_height as u64).min(u16::MAX as u64) as u16;
-
-        if self.scroll > scroll_limit
-        {
+        if self.scroll > scroll_limit {
             self.scroll = scroll_limit;
         }
     }
 
-    pub fn handle_key(&mut self, event: &KeyEvent, dismiss_bindings: &ActionBindings) -> OverlayOutcome {
+        pub fn handle_key(&mut self, event: &KeyEvent, dismiss_bindings: &ActionBindings) -> OverlayOutcome {
         if event.code == KeyCode::Esc || bindings_match_event(dismiss_bindings, event) {
             return OverlayOutcome::Dismissed;
         }
@@ -173,7 +242,6 @@ impl OutputOverlayState {
     pub fn refresh(&mut self) {
         self.pending_cap_scroll = true;
     }
-
 }
 
 /// Width available for wrapped text inside the overlay: `area` minus the 2
@@ -295,24 +363,32 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
             .fg(to_color(self.cs.panel_fg))
             .bg(to_color(self.cs.panel_bg));
 
-        let total_lines = state.total_rows.unwrap_or(self.text.lines().count() as u64) as usize;
+        let width = content_width(area);
+        let text_area = Rect { width, ..inner };
+        state.cap_scroll(self.text, width, inner.height);
+        state.resolve_pending_jump(self.text, width, self.highlight);
 
-        let text_area = Rect { width: content_width(area), ..inner };
-        state.cap_scroll(self.text, text_area.width, inner.height);
+        state.ensure_row_cache_to_scroll(self.text, width, state.scroll as u64);
+        let start_idx = state.row_cache.partition_point(|&r| r <= state.scroll as u64) - 1;
+        let rows_before = state.row_cache[start_idx];
+        let take_n = inner.height as usize + 1; // slack for a row scrolled mid-way into
 
-        state.resolve_pending_jump(self.text, text_area.width, self.highlight);
-        
+        let total_lines = if state.row_cache_complete {
+            state.row_cache.len() - 1
+        } else {
+            self.text.lines().count()
+        };
 
         let matcher = build_matcher(self.highlight);
         let match_style = Style::default()
             .fg(to_color(self.cs.search_match_fg))
             .bg(to_color(self.cs.search_match_bg));
-        // Tabs must be expanded before matching/rendering: a raw tab written
-        // to the terminal jumps the physical cursor past what ratatui's
-        // buffer model expects, breaking the overlay's own border on that row.
+
         let lines: Vec<Line> = self
             .text
             .lines()
+            .skip(start_idx)
+            .take(take_n)
             .map(|raw_line| {
                 let line = super::expand_tabs(raw_line);
                 let Some(m) = matcher.as_ref() else {
@@ -333,11 +409,11 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
                 Line::from(spans)
             })
             .collect();
-        let para = Paragraph::new(lines);
-        let para = para
+
+        let para = Paragraph::new(lines)
             .style(style)
             .wrap(Wrap { trim: false })
-            .scroll((state.scroll, 0));
+            .scroll(((state.scroll as u64 - rows_before) as u16, 0));
         Widget::render(para, text_area, buf);
 
         let scrollbar_area = Rect {
@@ -487,23 +563,23 @@ mod tests {
     /// file with one giant space-separated line) must itself end up visible —
     /// jumping to the start of that raw line isn't enough when the match is
     /// dozens of wrapped rows into it.
-fn jump_to_line_finds_a_match_deep_inside_a_long_wrapped_line() {
-    let words: Vec<String> = (0..40).map(|i| format!("filler-word-{i:03}-padded")).collect();
-    let mut long_line = words.join(" ");
-    long_line.push_str(" needle-token more-filler-after-the-match-token-here");
-    let text = format!("intro\n{long_line}\n");
-    let area = Rect::new(0, 0, 20, 8);
+	fn jump_to_line_finds_a_match_deep_inside_a_long_wrapped_line() {
+	    let words: Vec<String> = (0..40).map(|i| format!("filler-word-{i:03}-padded")).collect();
+	    let mut long_line = words.join(" ");
+	    long_line.push_str(" needle-token more-filler-after-the-match-token-here");
+	    let text = format!("intro\n{long_line}\n");
+	    let area = Rect::new(0, 0, 20, 8);
 
-    let mut state = OutputOverlayState::new();
-    state.jump_to_line(2);
-    state.resolve_pending_jump(&text, content_width(area), Some(("needle-token", true, false, false)));
+	    let mut state = OutputOverlayState::new();
+	    state.jump_to_line(2);
+	    state.resolve_pending_jump(&text, content_width(area), Some(("needle-token", true, false, false)));
 
-    let buf = render_to_buffer(&text, area, &mut state);
-    assert!(
-        find_row_containing(&buf, area, "needle-token").is_some(),
-        "the match itself must be visible, not just the start of its (long) raw line"
-    );
-}
+	    let buf = render_to_buffer(&text, area, &mut state);
+	    assert!(
+		find_row_containing(&buf, area, "needle-token").is_some(),
+		"the match itself must be visible, not just the start of its (long) raw line"
+	    );
+	}
 
     #[test]
     fn resolve_pending_jump_is_a_noop_without_a_pending_line() {
