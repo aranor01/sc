@@ -374,9 +374,9 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
         let take_n = inner.height as usize + 1; // slack for a row scrolled mid-way into
 
         let total_lines = if state.row_cache_complete {
-            state.row_cache.len() - 1
+            *state.row_cache.last().unwrap()
         } else {
-            self.text.lines().count()
+            *(state.row_cache.last().unwrap()).max(&(self.text.lines().count() as u64))
         };
 
         let matcher = build_matcher(self.highlight);
@@ -421,8 +421,8 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
             width: 1,
             ..inner
         };
-        let mut scrollbar_state = ScrollbarState::new(total_lines)
-            .position(state.scroll as usize).viewport_content_length(inner.height as usize);
+        let mut scrollbar_state = ScrollbarState::new(total_lines  as usize - inner.height as usize + 1)
+            .position(state.scroll as usize);
         StatefulWidget::render(
             Scrollbar::new(ScrollbarOrientation::VerticalRight),
             scrollbar_area,
