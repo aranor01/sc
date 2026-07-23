@@ -223,19 +223,23 @@ The values above are the built-in defaults; only include the keys you want to ch
   dates are truncated or padded to this width, so it should match the length produced by
   `time_format`. Defaults to `14`.
 - `default_action_executable` / `default_action_text` / `default_action` — what Enter and
-  double-click do on a file (never on a directory) in the active panel. `default_action_executable`
-  applies when the file has any executable permission bit set; `default_action_text`
-  applies otherwise. Either falls back to `default_action` when left empty (`""`), and an
-  empty `default_action` is a no-op — sc does nothing, same as today's behavior, unless
-  you opt in. `default_action_text` defaults to `:view`.
-
-  A value of `:view` is the one built-in command currently supported: it opens the
+  double-click do on a file in the active panel.
+  A value of `:view` is the only built-in command currently supported, it opens the
   internal text viewer, the same as pressing `F3` (action `view`). Any other
-  non-empty value is a shell command template, run the same way as a
+  non-empty value is a shell command template, it run the same way as a
   [user menu](#user-menu) command, except only the current-file macros — `%f`, `%x`,
   `%b`, `%d` — are meaningful; the inactive-panel and tagged-files macros (`%F`, `%D`,
-  `%t`, `%T`, `%u`, `%U`, `%s`, `%S`) don't apply to a single-entry default action and
-  expand to empty. See @MacroSubstitution.md.
+  `%t`, `%T`, `%u`, `%U`, `%s`, `%S`) expand to empty. See @MacroSubstitution.md.
+  They are tried in order:
+  1. `default_action_executable` — used if the file has its executable permission bit set.
+  The default is an empty string (falls back to `default_action_text`), use `%f` if you
+  want the file to be executed.
+  2. `default_action_text` — used if the file looks like a text file, determined by
+  checking whether the initial portion of the file contains no NUL characters.
+  The default is `:view`.
+  3. `default_action_executable` — used when neither of the above properties apply.
+  The default is an empty string.
+  
 
 ## Related files
 

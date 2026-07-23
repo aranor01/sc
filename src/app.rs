@@ -527,6 +527,32 @@ fn normalize_text_file(bytes: &[u8]) -> String {
         out
 }
 
+fn try_open_text_file(
+    abs: &str,
+    noop_because_it_is_binary: Option<&mut bool>,
+) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::{BufRead, Read};
+
+    let mut reader = std::io::BufReader::new(std::fs::File::open(abs)?);
+
+    if let Some(flag) = noop_because_it_is_binary {
+        if reader.fill_buf()?.contains(&0u8) {
+            *flag = true;
+            return Ok(None);
+        }
+    }
+
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes)?;
+    Ok(Some(bytes))
+}
+
+fn is_text_file(abs: &str) -> bool {
+    let mut noop_because_it_is_binary:Option<&mut bool> = Some(&mut false);
+    _ = try_open_text_file(abs, noop_because_it_is_binary.as_deref_mut());
+    !*noop_because_it_is_binary.unwrap()
+}
+
 
 impl App {
     pub fn new(config: Config, left_path: PathBuf, right_path: PathBuf, state: &AppState,
@@ -1258,15 +1284,25 @@ impl App {
                     panel.scroll = 0;
                 }
             }
-            Action::View => self.view_current_entry(),
+            Action::View => self.view_current_entry(None),
         }
+    }
+
+    fn is_current_entry_text_file(&self) -> bool {
+        let panel = self.active_panel();
+        let Some(entry) = panel.current_entry() else { return false };
+        if entry.kind != NodeKind::File {
+            return false;
+        }
+        let abs = panel.provider.join(&panel.path, &entry.name).0;
+        is_text_file(&abs)
     }
 
     /// Opens the active panel's current entry in the internal viewer (Shift-F3, and
     /// the `:view` internal default-file-action command). On a `Matches` panel this is
     /// the same as pressing Enter there (jump to the matched line, highlighted); on a
     /// `Dir`/`SearchResults` panel it shows the whole file with no highlight.
-    fn view_current_entry(&mut self) {
+    fn view_current_entry(&mut self, noop_because_it_is_binary: Option<&mut bool>) {
         if matches!(self.active_panel().content, PanelContent::Matches(_)) {
             self.open_match_in_viewer();
             return;
@@ -1278,7 +1314,7 @@ impl App {
             return;
         }
         let abs = panel.provider.join(&panel.path, &entry.name).0;
-        self.open_file_in_viewer(&abs, None, None);
+        self.open_file_in_viewer(&abs, None, None, noop_because_it_is_binary);
     }
 
     /// Runs `mutate`, then records `side`'s new path in its own back/forward
@@ -1902,20 +1938,23 @@ impl App {
             (abs, ms.needle.clone(), ms.case_sensitive, ms.content_is_regex, ms.content_whole_words, line)
         };
         let highlight = Some((needle, case_sensitive, content_is_regex, content_whole_words));
-        self.open_file_in_viewer(&abs, highlight, Some(line));
+        self.open_file_in_viewer(&abs, highlight, Some(line), None);
     }
 
     /// Reads `abs` and shows it in the internal viewer. `highlight`, if set, is the
     /// (needle, case_sensitive, is_regex, whole_words) tuple used to highlight matches
     /// (content-search jumps); `jump_line` scrolls to that 1-based line.
+    /// `noop_because_it_is_binary` do nothing if not None and the first block contains
+    /// a null character, and it's content is set to the result of the check
     fn open_file_in_viewer(
         &mut self,
         abs: &str,
         highlight: Option<(String, bool, bool, bool)>,
         jump_line: Option<u64>,
+        noop_because_it_is_binary: Option<&mut bool>,
     ) {
-        match std::fs::read(abs) {
-            Ok(bytes) => {
+        match try_open_text_file(abs, noop_because_it_is_binary) {
+            Ok(Some(bytes)) => {
                 self.show_output = false;
                 self.viewer = Some(ViewerContent {
                     title: format!(" {} (Esc to close) ", display_path(abs)),
@@ -1927,6 +1966,7 @@ impl App {
                     self.overlay.jump_to_line(line);
                 }
             }
+            Ok(None) => {} // binary file detected, nothing to do
             Err(e) => self.set_status(&format!("Cannot open {}: {}", abs, e), true),
         }
     }
@@ -2168,13 +2208,42 @@ impl App {
             return;
         }
         let executable = crate::provider::is_executable(&entry.permissions);
-        let template = resolve_default_action_template(executable, &self.config.panels);
-        if template.is_empty() {
-            return;
-        }
-        if template == ":view" {
-            self.view_current_entry();
+        // let cfg = &self.config.panels;
+
+        let mut template: &str = if executable && !self.config.panels.default_action_executable.is_empty() {
+            &self.config.panels.default_action_executable
         } else {
+            let text_action = &self.config.panels.default_action_text;
+            if text_action.is_empty() {
+                ""
+            } else if text_action == ":view" {
+                if text_action == &self.config.panels.default_action {
+                    // this silly configuration (both :view) is not so unlikely because one is the default value
+                    // let the catchall branch handle it, so the binary check is not performed
+                    text_action
+                } else {
+                    let mut noop_because_it_is_binary:Option<&mut bool> = Some(&mut false);
+                    self.view_current_entry(noop_because_it_is_binary.as_deref_mut());
+                    if *noop_because_it_is_binary.unwrap() {
+                        ""
+                    } else {
+                        return;
+                    }
+                }
+            } else if self.is_current_entry_text_file() {
+                text_action
+            } else {
+                ""
+            }
+        };
+
+        if template.is_empty() {
+            template = &self.config.panels.default_action;
+        }
+
+        if template == ":view" {
+            self.view_current_entry(None);
+        } else if !template.is_empty() {
             self.execute_default_action(template.to_string());
         }
     }
@@ -5085,14 +5154,31 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_executable_file_is_a_noop_by_default() {
+    fn enter_on_executable_text_file_view_it_by_default() {
         use std::os::unix::fs::PermissionsExt;
-        let base = make_search_base("enter_default_exec");
+        let executable_text_content = "#!/bin/sh\necho hi\n";
+        let base = make_search_base("enter_default_text_exec");
         let script = base.join("run.sh");
-        std::fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
+        std::fs::write(&script, executable_text_content).unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let mut app = test_app(&base);
         let idx = app.left.entries.iter().position(|e| e.name == "run.sh").unwrap();
+        app.left.cursor = idx;
+        app.open_current_entry_default_action();
+        assert!(app.viewer.is_some_and(|v| v.text == executable_text_content), "default_action_executable is empty and falls back to default_action_text = \":view\"");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn enter_on_executable_binary_is_a_noop_by_default() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = make_search_base("enter_default_exec");
+        let script = base.join("a_binary_exe.bin");
+        std::fs::write(&script, "\0dummy\0content\0with\0nulls").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut app = test_app(&base);
+        let idx = app.left.entries.iter().position(|e| e.name == "a_binary_exe.bin").unwrap();
         app.left.cursor = idx;
         app.open_current_entry_default_action();
         assert!(app.viewer.is_none(), "default_action_executable is empty and falls back to an empty default_action");

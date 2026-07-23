@@ -37,9 +37,9 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   are shown as the working directory, since the matches panel isn't a directory browser.
 - `F3` (action `view`): opens the internal full-screen text viewer on the active panel's
   current entry. The bundled default menu's external "View" entry moves to `Shift-F3`.
-- Enter/double-click on a file now runs `panels.default_action_executable` or
-  `panels.default_action_text` (falling back to `panels.default_action`), defaulting to
-  opening the internal viewer for non-executable files and doing nothing otherwise.
+- Enter and double-click on a file now trigger the "default action", that can be
+  configured using the `panels.default_action_*` configuaration parameters or their
+  fallback `panels.default_action`.
 
 ### Changed
 
