@@ -648,6 +648,7 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
         } else if visible_height > 0 && state.cursor >= state.scroll + visible_height {
             state.scroll = state.cursor + 1 - visible_height;
         }
+        state.scroll = state.scroll.min(state.entries.len().saturating_sub(visible_height));
 
         let available_width = inner.width as usize;
         let time_length = self.time_length;
