@@ -58,6 +58,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   bottom of the dialog.
 - The command output overlay now resets its scroll position to the top each time a new
   command runs.
+- Resizing the terminal now doesn't hide the subshell.
 
 ## [0.1.0] - 2026-07-09
 

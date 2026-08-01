@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
-use std::io;
+use std::{io, time::Duration};
 use std::os::unix::io::RawFd;
+use crossterm::event::{ self, Event } ;
 
 pub struct Subshell {
     pub master_fd: RawFd,
@@ -89,10 +90,7 @@ impl Subshell {
         use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
         enable_raw_mode()?;
-
-        let master = self.master_fd;
-        let result = passthrough_loop(master, ipc_fd);
-
+        let result = self.passthrough_loop(ipc_fd);
         disable_raw_mode()?;
         result
     }
@@ -137,6 +135,65 @@ impl Subshell {
             libc::ioctl(self.master_fd, libc::TIOCSWINSZ, &ws);
             libc::kill(self.child_pid, libc::SIGWINCH);
         }
+    }
+
+    /// Passthrough loop: copies stdin→master and master→stdout until Ctrl+O, EOF,
+    /// or a ShowPanels IPC message arrives on `ipc_fd`. Any other IPC message received
+    /// while looping is queued and returned so the caller can process it once passthrough
+    /// exits, instead of being silently discarded.
+    fn passthrough_loop(&self, ipc_fd: Option<RawFd>) -> Result<Vec<String>> {
+        let stdin_fd = libc::STDIN_FILENO;
+        let stdout_fd = libc::STDOUT_FILENO;
+        let mut buf = [0u8; 4096];
+        let mut pending: Vec<String> = Vec::new();
+
+        loop {
+            let mut fds = [
+                libc::pollfd { fd: stdin_fd,                 events: libc::POLLIN, revents: 0 },
+                libc::pollfd { fd: self.master_fd,                   events: libc::POLLIN, revents: 0 },
+                libc::pollfd { fd: ipc_fd.unwrap_or(-1),     events: libc::POLLIN, revents: 0 },
+            ];
+            let nfds = if ipc_fd.is_some() { 3 } else { 2 };
+            let r = unsafe { libc::poll(fds.as_mut_ptr(), nfds, -1) };
+            if r < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR)
+                    && event::poll(Duration::from_millis(50))? {
+                    if let Event::Resize(cols, rows) = event::read()? {
+                        self.resize(cols, rows);
+                        continue;
+                    }
+                }
+                break;
+            }
+
+            if fds[0].revents & libc::POLLIN != 0 {
+                let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
+                if n <= 0 { break; }
+                let data = &buf[..n as usize];
+                if data.contains(&0x0F) { break; } // Ctrl+O
+                let _ = unsafe { libc::write(self.master_fd, data.as_ptr() as *const _, data.len()) };
+            }
+
+            if fds[1].revents & libc::POLLIN != 0 {
+                let n = unsafe { libc::read(self.master_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
+                if n <= 0 { break; }
+                let data = &buf[..n as usize];
+                let _ = unsafe { libc::write(stdout_fd, data.as_ptr() as *const _, data.len()) };
+            }
+
+            if fds[2].revents & libc::POLLIN != 0 {
+                if let Some(fd) = ipc_fd {
+                    if let Some(raw) = ipc_accept_message(fd) {
+                        if raw.lines().next().map(|l| l.trim()) == Some("ShowPanels") {
+                            break;
+                        }
+                        pending.push(raw);
+                    }
+                }
+            }
+        }
+        Ok(pending)
     }
 
     /// Check if the child process is still alive.
@@ -291,55 +348,6 @@ fn drain_fd(fd: RawFd) -> Vec<u8> {
     }
     unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
     out
-}
-
-/// Passthrough loop: copies stdin→master and master→stdout until Ctrl+O, EOF,
-/// or a ShowPanels IPC message arrives on `ipc_fd`. Any other IPC message received
-/// while looping is queued and returned so the caller can process it once passthrough
-/// exits, instead of being silently discarded.
-fn passthrough_loop(master: RawFd, ipc_fd: Option<RawFd>) -> Result<Vec<String>> {
-    let stdin_fd = libc::STDIN_FILENO;
-    let stdout_fd = libc::STDOUT_FILENO;
-    let mut buf = [0u8; 4096];
-    let mut pending: Vec<String> = Vec::new();
-
-    loop {
-        let mut fds = [
-            libc::pollfd { fd: stdin_fd,                 events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: master,                   events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: ipc_fd.unwrap_or(-1),     events: libc::POLLIN, revents: 0 },
-        ];
-        let nfds = if ipc_fd.is_some() { 3 } else { 2 };
-        let r = unsafe { libc::poll(fds.as_mut_ptr(), nfds, -1) };
-        if r < 0 { break; }
-
-        if fds[0].revents & libc::POLLIN != 0 {
-            let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
-            if n <= 0 { break; }
-            let data = &buf[..n as usize];
-            if data.contains(&0x0F) { break; } // Ctrl+O
-            let _ = unsafe { libc::write(master, data.as_ptr() as *const _, data.len()) };
-        }
-
-        if fds[1].revents & libc::POLLIN != 0 {
-            let n = unsafe { libc::read(master, buf.as_mut_ptr() as *mut _, buf.len()) };
-            if n <= 0 { break; }
-            let data = &buf[..n as usize];
-            let _ = unsafe { libc::write(stdout_fd, data.as_ptr() as *const _, data.len()) };
-        }
-
-        if fds[2].revents & libc::POLLIN != 0 {
-            if let Some(fd) = ipc_fd {
-                if let Some(raw) = ipc_accept_message(fd) {
-                    if raw.lines().next().map(|l| l.trim()) == Some("ShowPanels") {
-                        break;
-                    }
-                    pending.push(raw);
-                }
-            }
-        }
-    }
-    Ok(pending)
 }
 
 /// Non-blocking accept on the IPC listener fd. Returns the raw message payload if a
