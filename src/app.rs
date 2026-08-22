@@ -1213,26 +1213,10 @@ impl App {
                 self.push_path_history(&dest);
             }
             Action::GoBack => {
-                if matches!(self.active_panel().content, PanelContent::Matches(_)) {
-                    return;
-                }
-                let side = self.active;
-                let Some(path) = self.panel_history_mut(side).go_back() else { return; };
-                if !matches!(self.active_panel().content, PanelContent::Dir) {
-                    self.close_search();
-                }
-                self.land_on_history_path(side, path, |h| { h.go_forward(); });
+                self.land_on_history_path(|h| { h.go_back() }, |h| { h.go_forward(); });
             }
             Action::GoForward => {
-                if matches!(self.active_panel().content, PanelContent::Matches(_)) {
-                    return;
-                }
-                let side = self.active;
-                let Some(path) = self.panel_history_mut(side).go_forward() else { return; };
-                if !matches!(self.active_panel().content, PanelContent::Dir) {
-                    self.close_search();
-                }
-                self.land_on_history_path(side, path, |h| { h.go_back(); });
+                self.land_on_history_path(|h| { h.go_forward() }, |h| { h.go_back(); });
             }
             Action::BookmarkAdd => {
                 let path = self.active_panel().path.0.clone();
@@ -1339,6 +1323,13 @@ impl App {
         match side {
             Side::Left => self.panel_history_left.push(path),
             Side::Right => self.panel_history_right.push(path),
+        }
+    }
+
+    fn active_panel_history(&mut self) -> &mut crate::panel_history::PanelHistory {
+        match self.active {
+            Side::Left => &mut self.panel_history_left,
+            Side::Right => &mut self.panel_history_right,
         }
     }
 
@@ -1733,10 +1724,18 @@ impl App {
     /// no longer exists on disk (mirrors each caller's own direction).
     fn land_on_history_path(
         &mut self,
-        side: Side,
-        path: String,
+        commit: impl FnOnce(&mut crate::panel_history::PanelHistory) -> Option<String> ,
         rollback: impl FnOnce(&mut crate::panel_history::PanelHistory),
     ) {
+        if matches!(self.active_panel().content, PanelContent::Matches(_)) {
+            return;
+        }
+        let side = self.active;
+        let Some(path) = commit(self.panel_history_mut(side)) else { return; };
+        if !matches!(self.active_panel().content, PanelContent::Dir) {
+            self.close_search();
+        }
+
         if let Some(cache) = self.panel_history(side).current_cache().cloned() {
             if !std::path::Path::new(&cache.root.0).exists() {
                 rollback(self.panel_history_mut(side));
@@ -1861,6 +1860,34 @@ impl App {
         }
     }
 
+    fn cache_search_to_history(&mut self) {
+        let side = self.active;
+        let root = self.active_panel().path.clone();
+        let cache = match &self.active_panel().content {
+            PanelContent::SearchResults(sr) => {
+                let panel = self.active_panel();
+                let selected = panel.current_entry().map(|e| e.name.clone());
+                Some(Box::new(crate::panel_history::CachedSearch {
+                    root: root.clone(),
+                    query: sr.query.clone(),
+                    entries: panel.entries.clone(),
+                    matches: sr.matches.clone(),
+                    selected,
+                    complete: sr.complete,
+                    index: 1,
+                }))
+            }
+            _ => None,
+        };
+        if let Some(cache) = cache {
+            // At most one cached search per side: drop whatever was cached
+            // before attaching this one, so jumping again from an
+            // already-restored cache can't leave two resident at once.
+            self.panel_history_mut(side).clear_caches();
+            self.panel_history_mut(side).set_search_cache(Some(cache));
+        }
+    }
+
     /// Enter on a search hit, mc-style: a directory hit becomes the panel's
     /// directory; a file hit shows its parent directory with the file selected.
     fn activate_search_hit(&mut self) {
@@ -1873,27 +1900,8 @@ impl App {
             let panel = self.active_panel();
             panel.provider.join(&panel.path, &rel).0
         };
-        let side = self.active;
-        let root = self.active_panel().path.clone();
-        let cache = match &self.active_panel().content {
-            PanelContent::SearchResults(sr) => Some(Box::new(crate::panel_history::CachedSearch {
-                root: root.clone(),
-                query: sr.query.clone(),
-                entries: self.active_panel().entries.clone(),
-                matches: sr.matches.clone(),
-                selected: Some(rel.clone()),
-                complete: sr.complete,
-            })),
-            _ => None,
-        };
         self.end_search_companions();
-        if let Some(cache) = cache {
-            // At most one cached search per side: drop whatever was cached
-            // before attaching this one, so jumping again from an
-            // already-restored cache can't leave two resident at once.
-            self.panel_history_mut(side).clear_caches();
-            self.panel_history_mut(side).push_with_cache(&root.0, Some(cache));
-        }
+        self.cache_search_to_history();
         let panel = self.active_panel_mut();
         panel.content = PanelContent::Dir;
         panel.tagged.clear();
@@ -1909,11 +1917,13 @@ impl App {
                 .parent()
                 .map(|d| d.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "/".to_string());
+            let new_path = NodePath(parent.clone());
+            let is_in_root = new_path == panel.path;
             let file = p
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            panel.path = NodePath(parent.clone());
+            panel.path = new_path;
             panel.refresh();
             if let Some(idx) = panel.entries.iter().position(|e| e.name == file) {
                 panel.cursor = idx;
@@ -1923,7 +1933,11 @@ impl App {
             if panel.cursor >= panel.scroll + vh {
                 panel.scroll = panel.cursor + 1 - vh;
             }
-            self.push_path_history(&parent);
+            if is_in_root {
+                self.active_panel_history().push_same_path_on_search_cache();
+            } else {
+                self.push_path_history(&parent);
+            }
         }
     }
 
@@ -3545,6 +3559,11 @@ impl App {
                     let new_cwd = link.to_string_lossy().to_string();
                     let panel_cwd = self.active_panel().path.0.clone();
                     if new_cwd != panel_cwd {
+                        if matches!(self.active_panel().content, PanelContent::SearchResults(_)) {
+                            self.cache_search_to_history();
+                            let panel = self.active_panel_mut();
+                            panel.content = PanelContent::Dir;
+                        }
                         self.navigate_to_path(&new_cwd);
                     }
                 }

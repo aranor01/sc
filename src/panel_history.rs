@@ -22,6 +22,14 @@ pub struct CachedSearch {
     /// Whether the search had already reached `Done` when it was cached, as
     /// opposed to being interrupted mid-scan by the jump away.
     pub complete: bool,
+    /// sub-index for history navigation (0: root, 1: search, 2: hit in the root)
+    pub index: usize,
+}
+
+impl CachedSearch {
+    pub fn push_dir(&mut self) {
+        self.index = 2;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -56,21 +64,41 @@ impl PanelHistory {
         }
     }
 
-    /// The only insertion point. `cache` attaches a replayable search to this
-    /// slot; ordinary navigation passes `None`.
+    /// Combine push and set_search_cache. At the moment used only by tests
     pub fn push_with_cache(&mut self, path: &str, cache: Option<Box<CachedSearch>>) {
+        self.push(path);
+        self.set_search_cache(cache);
+    }
+
+    /// The only insertion point.
+    pub fn push(&mut self, path: &str) {
         self.drop_forward();
         self.entries.insert(0, path.to_string());
-        self.caches.insert(0, cache);
+        self.caches.insert(0, None);
         self.entries.truncate(MAX_HISTORY);
         self.caches.truncate(MAX_HISTORY);
     }
 
-    pub fn push(&mut self, path: &str) {
-        self.push_with_cache(path, None);
+    // Attaches a replayable search at the current slot,
+    pub fn set_search_cache(&mut self, new_top: Option<Box<CachedSearch>>)  {
+        if let Some(slot) = self.caches.get_mut(self.index) {
+            *slot = new_top;
+        }
     }
 
+    pub fn push_same_path_on_search_cache(&mut self) {
+        if let Some(curr_cache) = self.current_cache_mut() {
+            curr_cache.push_dir();
+        }
+    }
+    
     pub fn go_back(&mut self) -> Option<String> {
+        if let Some(curr_cache) = self.current_cache_mut() {
+            if curr_cache.index > 0 {
+                curr_cache.index -= 1;
+                return Some(self.entries[self.index].clone());
+            }
+        }
         if self.index + 1 < self.entries.len() {
             self.index += 1;
             Some(self.entries[self.index].clone())
@@ -80,6 +108,12 @@ impl PanelHistory {
     }
 
     pub fn go_forward(&mut self) -> Option<String> {
+        if let Some(curr_cache) = self.current_cache_mut() {
+            if curr_cache.index == 0 {
+                curr_cache.index = 1;
+                return Some(self.entries[self.index].clone())    
+            }
+        }
         if self.index > 0 {
             self.index -= 1;
             Some(self.entries[self.index].clone())
@@ -95,7 +129,17 @@ impl PanelHistory {
     /// The cached search attached to the slot the cursor currently points at,
     /// if any. Checked after `go_back()`/`go_forward()` move the cursor.
     pub fn current_cache(&self) -> Option<&CachedSearch> {
-        self.caches.get(self.index).and_then(|c| c.as_deref())
+        let w = self.caches.get(self.index).and_then(|c| c.as_deref());
+        if let Some(c) = w {
+            if c.index == 1 {
+                w
+            } else {
+                None
+            }
+        }
+        else {
+            None
+        }
     }
 
     /// Mutable access to the cached search at the current slot, if any —
@@ -199,6 +243,7 @@ mod tests {
             matches: HashMap::new(),
             selected: Some("hit.txt".into()),
             complete: true,
+            index: 1,
         })
     }
 
@@ -236,9 +281,13 @@ mod tests {
         // back: /b (cached), back: /a (plain)
         assert_eq!(h.go_back().unwrap(), "/b");
         assert!(h.current_cache().is_some());
+        assert_eq!(h.go_back().unwrap(), "/b");
+        assert!(h.current_cache().is_none());
         assert_eq!(h.go_back().unwrap(), "/a");
         assert!(h.current_cache().is_none());
         // forward: /b (cached again), forward: /x (plain)
+        assert_eq!(h.go_forward().unwrap(), "/b");
+        assert!(h.current_cache().is_none());
         assert_eq!(h.go_forward().unwrap(), "/b");
         assert!(h.current_cache().is_some());
         assert_eq!(h.go_forward().unwrap(), "/x");
