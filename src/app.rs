@@ -1022,7 +1022,7 @@ impl App {
                     if let Some(msg) = warn {
                         self.set_status(&msg, true);
                     }
-                    let word_start = last_word_start(&self.cmdline.text);
+                    let word_start = self.cmdline.find_word_start();
                     match candidates.len() {
                         0 => {}
                         1 => {
@@ -2108,7 +2108,7 @@ impl App {
         };
         match std::process::Command::new("bash")
             .arg(&script)
-            .arg(&self.cmdline.text)
+            .arg(self.cmdline.get_text_before_cursor())
             .current_dir(&self.active_panel().path.0)
             .output()
         {
@@ -2131,12 +2131,47 @@ impl App {
 
     /// Replace the last word in the cmdline with `candidate`.
     fn apply_word_replacement(&mut self, word_start: usize, candidate: &str) {
+        // Find the boundary where the target word ends (the next space after word_start)
+        let rest_start = self.cmdline.text[word_start..]
+            .find(' ')
+            .map(|relative_idx| word_start + relative_idx)
+            .unwrap_or(self.cmdline.text.len());
+
+        // Preserve the suffix after the replaced word
+        let mut rest_of_text = self.cmdline.text[rest_start..].to_string();
+
+        // Determine candidate space characteristics
+        let candidate_ends_with_space = candidate.ends_with(' ') && !candidate.ends_with("\\ ");
+
+        // Handle space duplication: if candidate ends with a space and rest_of_text 
+        // starts with a space, strip the leading space from rest_of_text.
+        if candidate_ends_with_space && rest_of_text.starts_with(' ') {
+            rest_of_text.remove(0);
+        }
+
+        // Truncate to the word start
         self.cmdline.text.truncate(word_start);
         self.cmdline.cursor = word_start;
+
+        // Insert the replacement candidate
         self.cmdline.insert_str(candidate);
-        if !candidate.ends_with(' ') || candidate.ends_with("\\ ") {
+
+        // Add a trailing space only if candidate doesn't end with a space AND rest_of_text doesn't start with one
+        let candidate_needs_space = !candidate_ends_with_space;
+        let space_already_follows = rest_of_text.starts_with(' ');
+
+        if candidate_needs_space && !space_already_follows {
             self.cmdline.insert_str(" ");
         }
+
+        // Save cursor: It is now right after the replaced word (and its trailing space)
+        let target_cursor = self.cmdline.cursor;
+
+        // Append the preserved suffix
+        self.cmdline.insert_str(&rest_of_text);
+
+        // Restore cursor: Put it back directly after the replacement
+        self.cmdline.cursor = target_cursor;
     }
 
     /// Apply the currently selected popup candidate and close the popup.
@@ -2161,7 +2196,7 @@ impl App {
             self.completion = None;
             return;
         }
-        let word_start = last_word_start(&self.cmdline.text);
+        let word_start = self.cmdline.find_word_start();
         match candidates.len() {
             0 => {
                 self.completion = None;
@@ -2655,7 +2690,7 @@ impl App {
                     if last_was_space || self.cmdline.text.trim().is_empty() {
                         self.completion = None;
                     } else {
-                        let ws = last_word_start(&self.cmdline.text);
+                        let ws = self.cmdline.find_word_start();
                         if ws >= self.cmdline.text.len() {
                             self.completion = None;
                         } else {
@@ -3721,7 +3756,7 @@ impl App {
                 if let Some(session) = self.completion.as_ref() {
                     if width > 0 {
                         let prompt_len = prompt.chars().count();
-                        let anchor_byte = word_anchor_byte(&self.cmdline.text);
+                        let anchor_byte = self.cmdline.find_word_start();
                         let anchor_chars = self.cmdline.text[..anchor_byte].chars().count();
                         let total_col = prompt_len + anchor_chars;
                         let anchor_x = cmdline_area.x + (total_col % width) as u16;
@@ -4187,19 +4222,6 @@ fn last_word_start(text: &str) -> usize {
         text.len()
     } else {
         text.rfind(' ').map(|i| i + 1).unwrap_or(0)
-    }
-}
-
-/// Byte offset used to anchor the completion popup:
-/// - Start of the last word when text ends with a non-space character.
-/// - Position of the last character (the space) when text ends with a space.
-fn word_anchor_byte(text: &str) -> usize {
-    if text.is_empty() {
-        0
-    } else if text.ends_with(' ') {
-        text.len() - 1 // ' '.len_utf8() == 1
-    } else {
-        last_word_start(text)
     }
 }
 

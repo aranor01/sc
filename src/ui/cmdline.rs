@@ -305,6 +305,24 @@ impl CmdLineState {
     pub fn display_cursor_col(&self) -> u16 {
         self.text[..self.cursor].chars().count() as u16
     }
+
+    /// Returns the text slice before the cursor.
+    /// Falls back to the entire string slice if the cursor index is invalid.
+    pub fn get_text_before_cursor(&self) -> &str {
+        self.text.get(..self.cursor).unwrap_or(&self.text)
+    }
+
+    /// Calculates `word_start` based on the current cursor position, searching backward
+    /// for the start of the word under or directly before the cursor.
+    pub fn find_word_start(&self) -> usize {
+        let cursor = self.cursor.min(self.text.len());
+        
+        // Search backward from cursor for the previous space boundary
+        self.text[..cursor]
+            .rfind(' ')
+            .map(|idx| idx + 1)
+            .unwrap_or(0)
+    }
 }
 
 use super::to_color;
