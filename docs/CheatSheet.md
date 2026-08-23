@@ -44,7 +44,7 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 | Page Down | Scroll cursor down one full page | `Page Down` |
 | Jump to First | Jump to the first entry | `Home` |
 | Jump to Last | Jump to the last entry | `End` |
-| Open / Execute | Enter the selected directory; or run the command line if it contains text | `Enter` |
+| Open / Execute | Enter the selected directory or trigger the default action on the selected file or run the command line if it contains text | `Enter` |
 | Cancel / Focus Panel | Dismiss dialogs and prompts; or give panels temporary focus when command line has text | `Esc` |
 
 ## Bookmarks

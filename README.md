@@ -11,6 +11,7 @@ A two-panel visual shell for Linux terminals, in the spirit of Midnight Commande
 - Quick file operations: copy or move between the two panels, delete etc.
 - Sort panel contents by different criteria.
 - Directory bookmarks and per-panel navigation history.
+- Asynchronous file search.
 - Quicksearch and filtering within a panel.
 - A command line below the panels, with popups for command history search and bash-style completion,
   and quick ways to inject names and paths.
