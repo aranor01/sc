@@ -40,6 +40,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 - Enter and double-click on a file now trigger the "default action", that can be
   configured using the `panels.default_action_*` configuaration parameters or their
   fallback `panels.default_action`.
+- You can now use `Space` in the key binding configuration.
 
 ### Changed
 

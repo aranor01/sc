@@ -97,6 +97,7 @@ fn parse_key_event(s: &str) -> Result<KeyEvent> {
             let n: u8 = s[1..].parse().with_context(|| format!("invalid function key {:?}", s))?;
             KeyCode::F(n)
         }
+        "Space" => KeyCode::Char(' '),
         s if s.chars().count() == 1 => KeyCode::Char(s.chars().next().unwrap()),
         s => bail!("unknown key code {:?}", s),
     };
@@ -155,6 +156,7 @@ fn format_key_with(event: &KeyEvent, ctrl: &str, alt: &str, shift: &str) -> Stri
     if event.modifiers.contains(KeyModifiers::SHIFT)   { s.push_str(shift); }
     let code = match event.code {
         KeyCode::F(n) => format!("F{n}"),
+        KeyCode::Char(' ') => "Space".to_string(),
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Enter => "Enter".to_string(),
         KeyCode::Tab => "Tab".to_string(),
