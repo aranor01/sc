@@ -437,6 +437,28 @@ fn truncate_str(s: &str, max: usize) -> String {
     }
 }
 
+fn truncate_path(s: &str, max: usize) -> String {
+    let char_count = s.chars().count();
+
+    if char_count <= max {
+        return format!("{:<width$}", s, width = max)
+    }
+
+    // Determine how many characters to keep on each side
+    let keep_total = max - 1; // reserve 1 spot for '~'
+    let keep_left = keep_total / 2;
+    let keep_right = keep_total - keep_left;
+
+    // Find byte indices safely without breaking UTF-8 characters
+    let left_end_byte = s.char_indices().nth(keep_left).map_or(0, |(idx, _)| idx);
+    let right_start_byte = s
+        .char_indices()
+        .nth(char_count - keep_right)
+        .map_or(s.len(), |(idx, _)| idx);
+
+    format!("{left}~{right}", left = &s[..left_end_byte], right = &s[right_start_byte..])
+}
+
 /// Byte offset of the `n`th char in `s` (or `s.len()` if `s` has fewer than `n` chars).
 fn byte_of_char(s: &str, n: usize) -> usize {
     s.char_indices().nth(n).map(|(b, _)| b).unwrap_or(s.len())
@@ -657,6 +679,7 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
             PanelContent::SearchResults(sr) if sr.content_search() => Some(&sr.matches),
             _ => None,
         };
+        let showing_search_result = matches!(&state.content, PanelContent::SearchResults(_));
         let count_w = if match_counts.is_some() { 6 } else { 0 };
         // columns: tag(1) + space(1) + name + space(1) + [count(5) + space(1)] + size(8) + space(1) + date(time_length)
         let fixed = 1 + 1 + 1 + 8 + 1 + time_length + count_w;
@@ -714,7 +737,11 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
                 let is_cursor = abs_idx == state.cursor;
 
                 let tag_ch = if is_tagged { '*' } else { ' ' };
-                let name_part = truncate_str(&entry.name, name_width);
+                let name_part = if showing_search_result {
+                    truncate_path(&entry.name, name_width)
+                } else {
+                    truncate_str(&entry.name, name_width)
+                };
                 let count_part = match match_counts {
                     Some(counts) => format!(
                         "{:>5} ",
