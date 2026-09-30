@@ -41,6 +41,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   configured using the `panels.default_action_*` configuaration parameters or their
   fallback `panels.default_action`.
 - You can now use `Space` in the key binding configuration.
+- Going up to a parent directory now selects the directory you came from.
 - Command palette (`F1`, action `action_palette`): fuzzy-search every command with its
   shortcut shown alongside, with categories and recent actions.
 

@@ -1275,11 +1275,12 @@ impl App {
                 let Some(parent_path) = parent_opt else { return; };
                 let dest = parent_path.0.clone();
                 let panel = self.active_panel_mut();
-                panel.path = parent_path;
+                let old = std::mem::replace(&mut panel.path, parent_path);
                 panel.cursor = 0;
                 panel.scroll = 0;
                 panel.tagged.clear();
                 panel.refresh();
+                panel.select_child_toward(&old.0);
                 self.push_path_history(&dest);
             }
             Action::GoBack => {
@@ -1410,11 +1411,12 @@ impl App {
             return;
         }
         let panel = self.active_panel_mut();
-        panel.path = crate::provider::NodePath(path.clone());
+        let old = std::mem::replace(&mut panel.path, crate::provider::NodePath(path.clone()));
         panel.cursor = 0;
         panel.scroll = 0;
         panel.tagged.clear();
         panel.refresh();
+        panel.select_child_toward(&old.0);
         self.push_path_history(&path);
     }
 
@@ -1437,11 +1439,12 @@ impl App {
             return;
         }
         let panel = self.active_panel_mut();
-        panel.path = crate::provider::NodePath(path.clone());
+        let old = std::mem::replace(&mut panel.path, crate::provider::NodePath(path.clone()));
         panel.cursor = 0;
         panel.scroll = 0;
         panel.tagged.clear();
         panel.refresh();
+        panel.select_child_toward(&old.0);
         self.push_path_history(&path);
     }
 
@@ -1825,11 +1828,12 @@ impl App {
             return;
         }
         let panel = self.panel_mut(side);
-        panel.path = crate::provider::NodePath(abs);
+        let old = std::mem::replace(&mut panel.path, crate::provider::NodePath(abs));
         panel.cursor = 0;
         panel.scroll = 0;
         panel.tagged.clear();
         panel.refresh();
+        panel.select_child_toward(&old.0);
     }
 
     /// Reconstruct a finished/interrupted search from its cache, replaying it
@@ -5561,7 +5565,7 @@ mod tests {
         assert!(s.list.items[0].starts_with("Panels: Sort Panel \u{2013} Open sort popup"), "{:?}", s.list.items[0]);
         assert_eq!(s.list.hints[0], "Alt-z");
         type_str(&mut app, "qqqq");
-        assert_eq!(palette_items(&app), vec!["No matching commands"]);
+        assert_eq!(palette_items(&app), vec!["No matching actions"]);
         tap(&mut app, KeyCode::Enter);
         assert!(app.palette.is_some(), "Enter on the placeholder row does nothing");
         let _ = std::fs::remove_dir_all(&base);
@@ -5616,6 +5620,35 @@ mod tests {
         app.open_palette(PaletteView::Root);
         assert_eq!(palette_items(&app)[0], "\u{21ba} Toggle Button Bar \u{2013} Toggle button bar visibility");
         assert_eq!(app.palette.as_ref().unwrap().list.hints[0], "Alt-b");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ── Selecting the directory we came from ──────────────────────────────────
+
+    #[test]
+    fn go_to_parent_and_history_back_select_the_directory_we_left() {
+        let base = make_search_base("select_left_dir");
+        std::fs::create_dir_all(base.join("aaa")).unwrap();
+        std::fs::create_dir_all(base.join("zzz").join("inner")).unwrap();
+        let mut app = test_app(&base);
+
+        app.navigate_to_path(&base.join("zzz").to_string_lossy());
+        app.handle_action(Action::GoToParent);
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+        assert_eq!(app.left.current_name(), "zzz");
+
+        // Alt-Left to the parent selects it too, including across several levels.
+        app.navigate_to_path(&base.join("zzz").join("inner").to_string_lossy());
+        app.navigate_to_path(&base.to_string_lossy()); // unrelated-history jump to an ancestor
+        assert_eq!(app.left.current_name(), "zzz");
+        app.handle_action(Action::GoBack); // -> zzz/inner
+        app.handle_action(Action::GoBack); // -> the earlier `base`, an ancestor of inner
+        assert_eq!(app.left.path.0, base.to_string_lossy());
+        assert_eq!(app.left.current_name(), "zzz");
+
+        // Not a parent/child move: cursor starts at the top.
+        app.navigate_to_path(&base.join("dest").to_string_lossy());
+        assert_eq!(app.left.cursor, 0);
         let _ = std::fs::remove_dir_all(&base);
     }
 }

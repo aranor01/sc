@@ -270,6 +270,21 @@ impl PanelState {
             .unwrap_or_default()
     }
 
+    /// After landing on `self.path` from `old`: if `self.path` is a proper ancestor of `old`,
+    /// puts the cursor on the entry leading towards it (the directory we came from).
+    /// Leaves the cursor alone otherwise, or when that entry isn't listed (hidden/filtered).
+    pub fn select_child_toward(&mut self, old: &str) {
+        if !matches!(self.content, PanelContent::Dir) {
+            return;
+        }
+        let Ok(rest) = std::path::Path::new(old).strip_prefix(&self.path.0) else { return };
+        let Some(first) = rest.components().next() else { return };
+        let name = first.as_os_str().to_string_lossy();
+        if let Some(idx) = self.entries.iter().position(|e| e.name == name) {
+            self.cursor = idx;
+        }
+    }
+
     pub fn enter_dir(&mut self) -> Option<String> {
         if !matches!(self.content, PanelContent::Dir) {
             return None; // hit activation is handled at the App level
@@ -277,11 +292,12 @@ impl PanelState {
         let entry = self.entries.get(self.cursor)?;
         if entry.name == ".." {
             let parent = self.provider.parent(&self.path)?;
-            self.path = parent;
+            let old = std::mem::replace(&mut self.path, parent);
             self.cursor = 0;
             self.scroll = 0;
             self.tagged.clear();
             self.refresh();
+            self.select_child_toward(&old.0);
             return None;
         }
         if entry.kind != NodeKind::Dir {
@@ -1059,6 +1075,44 @@ mod tests {
         assert_eq!(panel.enter_dir(), None);
         assert_eq!(panel.path.0, base.join("d0").to_string_lossy());
         assert!(panel.error.is_none());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn enter_dir_on_dotdot_selects_the_directory_we_came_from() {
+        let base = make_dirs("up_selects", 2); // base/d0/d1
+        std::fs::create_dir_all(base.join("a_sibling")).unwrap();
+        let leaf = NodePath(base.join("d0").join("d1").to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), leaf);
+
+        panel.cursor = 0; // ".."
+        assert_eq!(panel.enter_dir(), None);
+        assert_eq!(panel.current_name(), "d1");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn select_child_toward_handles_multi_level_hidden_and_unrelated() {
+        let base = make_dirs("select_toward", 2); // base/d0/d1
+        std::fs::create_dir_all(base.join(".hid").join("x")).unwrap();
+        let root = NodePath(base.to_string_lossy().into_owned());
+        let mut panel = PanelState::new(Box::new(FilesystemProvider), root);
+
+        let deep = base.join("d0").join("d1").to_string_lossy().into_owned();
+        panel.select_child_toward(&deep);
+        assert_eq!(panel.current_name(), "d0");
+
+        // Hidden entries are not listed, so the cursor is left alone.
+        panel.cursor = 0;
+        panel.select_child_toward(&base.join(".hid").join("x").to_string_lossy());
+        assert_eq!(panel.cursor, 0);
+
+        // Unrelated, same-path and sibling-prefix paths do nothing.
+        panel.select_child_toward("/somewhere/else");
+        panel.select_child_toward(&base.to_string_lossy());
+        panel.select_child_toward(&format!("{}_other/d0", base.to_string_lossy()));
+        assert_eq!(panel.cursor, 0);
 
         let _ = std::fs::remove_dir_all(&base);
     }
