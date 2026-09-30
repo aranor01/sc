@@ -1,7 +1,6 @@
 use anyhow::{bail, Result};
-use std::{io, time::Duration};
+use std::io;
 use std::os::unix::io::RawFd;
-use crossterm::event::{ self, Event } ;
 
 pub struct Subshell {
     pub master_fd: RawFd,
@@ -146,6 +145,7 @@ impl Subshell {
         let stdout_fd = libc::STDOUT_FILENO;
         let mut buf = [0u8; 4096];
         let mut pending: Vec<String> = Vec::new();
+        let mut last_size = crossterm::terminal::size().unwrap_or((0, 0));
 
         loop {
             let mut fds = [
@@ -157,12 +157,16 @@ impl Subshell {
             let r = unsafe { libc::poll(fds.as_mut_ptr(), nfds, -1) };
             if r < 0 {
                 let err = std::io::Error::last_os_error();
-                if err.raw_os_error() == Some(libc::EINTR)
-                    && event::poll(Duration::from_millis(50))? {
-                    if let Event::Resize(cols, rows) = event::read()? {
-                        self.resize(cols, rows);
-                        continue;
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    // Most likely SIGWINCH: re-read the real size instead of going through
+                    // crossterm's event reader, which would compete for stdin bytes.
+                    if let Ok(size) = crossterm::terminal::size() {
+                        if size != last_size {
+                            last_size = size;
+                            self.resize(size.0, size.1);
+                        }
                     }
+                    continue;
                 }
                 break;
             }
