@@ -68,6 +68,7 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 
 | Action | Description | Config key: default |
 |---|---|---|
+| View | Open the internal full-screen text viewer on the selected file | `view`: `F3` |
 | Copy | Copy tagged files (or the selected file) to the inactive panel's directory | `copy`: `F5` |
 | Move | Move tagged files (or the selected file) to the inactive panel's directory | `move`: `F6` |
 | Delete | Delete the tagged files (or the selected file) in the active panel | `delete`: `F8` |
@@ -108,5 +109,6 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 
 | Action | Description | Config key: default |
 |---|---|---|
-| User Menu | Open the user menu | `user_menu`: `F2` |
+| Command Palette | Open the searchable command palette: categories and recent actions, fuzzy search over every command, each shown with its shortcut | `action_palette`: `F1` |
+| User Menu | Open the command palette pre-filtered to the user-configured menu commands | `user_menu`: `F2` |
 | Exit | Exit the application | `exit`: `F10`, `Ctrl-q` |

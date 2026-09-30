@@ -63,6 +63,7 @@ impl<'a> ButtonBarWidget<'a> {
 
         // Built-in bindings
         let pairs: &[(&ActionBindings, &str)] = &[
+            (&kb.action_palette, "Actions"),
             (&kb.user_menu,   "Menu"),
             (&kb.copy,        "Copy"),
             (&kb.move_entry,  "Move"),

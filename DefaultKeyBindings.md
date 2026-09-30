@@ -25,8 +25,13 @@
 - Tab
        switch focus to the other panel
 
+- F1
+       open the command palette: a searchable list of every command with its shortcut.
+       Shows the command categories and the most recent palette actions; typing fuzzy-searches
+       all commands. Up/Down move, Enter runs (or opens a category), Esc goes back/closes
+
 - F2
-       open the user menu
+       open the command palette pre-filtered to the user-configured menu commands
 
 - F10
        exit the application

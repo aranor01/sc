@@ -32,9 +32,22 @@ fn main() {
         }
     }
 
+    // Same for docs/, so the binary finds CheatSheet.md next to itself without installation.
+    let docs_dst = profile_dir.join("docs");
+    let docs_src = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("docs");
+    if let Ok(entries) = std::fs::read_dir(&docs_src) {
+        let _ = std::fs::create_dir_all(&docs_dst);
+        for entry in entries.flatten() {
+            if entry.path().extension().is_some_and(|e| e == "md") {
+                let _ = std::fs::copy(entry.path(), docs_dst.join(entry.file_name()));
+            }
+        }
+    }
+
     let install_prefix = std::env::var("SC_INSTALL_PREFIX").unwrap_or_else(|_| "/usr/local".to_string());
 
     println!("cargo:rerun-if-changed=scripts/");
+    println!("cargo:rerun-if-changed=docs/");
     println!("cargo:rerun-if-env-changed=SC_INSTALL_PREFIX");
     println!("cargo:rustc-env=SC_INSTALL_PREFIX={install_prefix}");
 

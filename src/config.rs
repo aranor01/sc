@@ -240,6 +240,7 @@ pub struct KeyBindings {
     pub go_forward: ActionBindings,
     pub toggle_matches_panel: ActionBindings,
     pub view: ActionBindings,
+    pub action_palette: ActionBindings,
 }
 
 impl Default for KeyBindings {
@@ -316,6 +317,7 @@ impl Default for KeyBindings {
             go_forward: vec![KeyBinding::Single(ke(Right, a))],
             toggle_matches_panel: vec![KeyBinding::Single(ke(Char('m'), a))],
             view: vec![KeyBinding::Single(ke(F(3), n))],
+            action_palette: vec![KeyBinding::Single(ke(F(1), n))],
         }
     }
 }
@@ -479,6 +481,20 @@ pub fn find_scripts_dir() -> Option<std::path::PathBuf> {
     None
 }
 
+/// Locate `CheatSheet.md` at runtime: `<SC_INSTALL_PREFIX>/share/doc/sc/`, then a `docs/`
+/// directory alongside the running binary. `None` means the caller should use its
+/// embedded copy.
+pub fn find_cheatsheet() -> Option<std::path::PathBuf> {
+    let installed = std::path::PathBuf::from(env!("SC_INSTALL_PREFIX"))
+        .join("share").join("doc").join("sc").join("CheatSheet.md");
+    if installed.exists() {
+        return Some(installed);
+    }
+    let exe = std::env::current_exe().ok()?;
+    let beside = exe.parent()?.join("docs").join("CheatSheet.md");
+    beside.exists().then_some(beside)
+}
+
 fn generate_default_config(scripts_dir: &std::path::Path) -> String {
     let s = scripts_dir.to_string_lossy();
     format!(
@@ -579,6 +595,7 @@ impl Config {
                     "go_forward" => cfg.keybindings.go_forward = bindings,
                     "toggle_matches_panel" => cfg.keybindings.toggle_matches_panel = bindings,
                     "view" => cfg.keybindings.view = bindings,
+                    "action_palette" => cfg.keybindings.action_palette = bindings,
                     _ => {} // unknown keys silently ignored
                 }
             }
@@ -859,6 +876,12 @@ mod tests {
         let ke = KeyEvent::new(Char('m'), M::ALT);
         assert_eq!(format_key(&ke), "A-m");
         assert_eq!(format_key_spelled(&ke), "Alt-m");
+    }
+
+    #[test]
+    fn action_palette_default_binding_is_f1() {
+        let cfg = Config::load_from_str("{}").unwrap();
+        assert_eq!(cfg.keybindings.action_palette, vec![single(F(1), M::NONE)]);
     }
 
     #[test]

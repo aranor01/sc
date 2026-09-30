@@ -15,11 +15,14 @@ use super::to_color;
 pub struct PopupListState {
     pub items: Vec<String>,
     pub selected: usize,
+    /// Optional right-aligned hint column (e.g. a keyboard shortcut), drawn dimmer than
+    /// the item text. Either empty (no column) or parallel to `items`.
+    pub hints: Vec<String>,
 }
 
 impl PopupListState {
     pub fn new(items: Vec<String>) -> Self {
-        PopupListState { items, selected: 0 }
+        PopupListState { items, selected: 0, hints: Vec::new() }
     }
 
     pub fn move_up(&mut self) {
@@ -61,6 +64,9 @@ impl PopupListState {
     pub fn remove_selected(&mut self) -> Option<String> {
         if self.items.is_empty() {
             return None;
+        }
+        if self.selected < self.hints.len() {
+            self.hints.remove(self.selected);
         }
         let removed = self.items.remove(self.selected);
         if self.selected >= self.items.len() && self.selected > 0 {
@@ -113,6 +119,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn remove_selected_drops_matching_hint() {
+        let mut s = PopupListState::new(vec!["a".into(), "b".into()]);
+        s.hints = vec!["x".into(), "y".into()];
+        s.selected = 0;
+        s.remove_selected();
+        assert_eq!(s.hints, vec!["y"]);
+    }
+
+    #[test]
+    fn hint_is_right_aligned_in_its_own_style() {
+        let cs = ColorScheme::default();
+        let mut state = PopupListState::new(vec!["Copy".into(), "Quit".into()]);
+        state.hints = vec!["F5".into(), "F10".into()];
+        state.selected = 1;
+        let area = Rect::new(0, 0, 40, 10);
+        let mut buf = Buffer::empty(area);
+        let w = PopupListWidget { cs: &cs, state: &state, title: None, direction: PopupDirection::Below, fixed_width: None, title_left: false };
+        let (r, _) = w.render_at(area, &mut buf, 0, 0, 0);
+        let row = |y: u16| -> String { (r.x..r.x + r.width).map(|x| buf[(x, y)].symbol().to_string()).collect() };
+        let first = row(r.y + 1);
+        assert!(first.contains("Copy") && first.trim_end_matches('│').trim_end().ends_with("F5"), "{first:?}");
+        assert!(buf[(r.x + r.width - 2, r.y + 1)].modifier.contains(Modifier::DIM));
+        assert!(!buf[(r.x + r.width - 2, r.y + 2)].modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
     fn remove_selected_on_empty_list_is_noop() {
         let mut s = PopupListState::new(vec![]);
         assert_eq!(s.remove_selected(), None);
@@ -163,6 +195,11 @@ pub struct PopupListWidget<'a> {
     pub state: &'a PopupListState,
     pub title: Option<&'a str>,
     pub direction: PopupDirection,
+    /// When set, the popup is always this wide (capped at the terminal width) instead of
+    /// fitting its content.
+    pub fixed_width: Option<u16>,
+    /// Left-align the title instead of centring it.
+    pub title_left: bool,
 }
 
 impl<'a> PopupListWidget<'a> {
@@ -184,8 +221,15 @@ impl<'a> PopupListWidget<'a> {
         }
 
         let max_len = self.state.items.iter().map(|s| s.chars().count()).max().unwrap_or(0);
+        let max_hint = self.state.hints.iter().map(|s| s.chars().count()).max().unwrap_or(0);
+        // Two spaces separate the text column from the hint column.
+        let content_len = if max_hint > 0 { max_len + 2 + max_hint } else { max_len };
+        let title_len = self.title.map_or(0, |t| t.chars().count() + 4);
         // +2 for left/right border
-        let popup_width = ((max_len + 2) as u16).max(10).min(area.width);
+        let popup_width = match self.fixed_width {
+            Some(w) => w.min(area.width),
+            None => ((content_len.max(title_len) + 2) as u16).max(10).min(area.width),
+        };
         // +2 for top/bottom border; cap at 15 rows
         let desired_height = (n as u16 + 2).min(15);
 
@@ -219,9 +263,8 @@ impl<'a> PopupListWidget<'a> {
             .border_style(Style::default().fg(to_color(self.cs.dialog_border_fg)))
             .style(Style::default().bg(to_color(self.cs.dialog_bg)));
         if let Some(t) = self.title {
-            block = block.title_top(
-                Line::from(format!(" {t} ")).centered(),
-            );
+            let line = Line::from(format!(" {t} "));
+            block = block.title_top(if self.title_left { line.left_aligned() } else { line.centered() });
         }
 
         let inner = block.inner(popup_area);
@@ -235,15 +278,8 @@ impl<'a> PopupListWidget<'a> {
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                // Truncate long entries: replace the last visible char with '…'
-                let display = if s.chars().count() > inner_w && inner_w > 1 {
-                    let truncated: String = s.chars().take(inner_w - 1).collect();
-                    format!("{truncated}\u{2026}")
-                } else {
-                    s.clone()
-                };
-
-                let style = if i == self.state.selected {
+                let selected = i == self.state.selected;
+                let style = if selected {
                     Style::default()
                         .fg(to_color(self.cs.selected_fg))
                         .bg(to_color(self.cs.selected_bg))
@@ -253,7 +289,32 @@ impl<'a> PopupListWidget<'a> {
                         .fg(to_color(self.cs.dialog_fg))
                         .bg(to_color(self.cs.dialog_bg))
                 };
-                ListItem::new(Line::from(Span::styled(display, style)))
+                let hint = self.state.hints.get(i).map(String::as_str).unwrap_or("");
+                let hint_len = hint.chars().count();
+                // The hint keeps its full width; the text is truncated to make room.
+                let text_room = if hint_len > 0 { inner_w.saturating_sub(hint_len + 2) } else { inner_w };
+                let text_len = s.chars().count();
+                let display = if text_len > text_room && text_room > 1 {
+                    let truncated: String = s.chars().take(text_room - 1).collect();
+                    format!("{truncated}\u{2026}")
+                } else {
+                    s.clone()
+                };
+                if hint_len == 0 {
+                    return ListItem::new(Line::from(Span::styled(display, style)));
+                }
+                let used = display.chars().count();
+                let pad = " ".repeat(inner_w.saturating_sub(used + hint_len));
+                let hint_style = if selected {
+                    style.remove_modifier(Modifier::BOLD)
+                } else {
+                    style.add_modifier(Modifier::DIM)
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(display, style),
+                    Span::styled(pad, style),
+                    Span::styled(hint.to_string(), hint_style),
+                ]))
             })
             .collect();
 

@@ -5,6 +5,7 @@ mod bookmarks;
 mod cli;
 mod config;
 mod ipc;
+mod palette;
 mod panel_history;
 mod subshell;
 mod history;

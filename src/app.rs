@@ -38,7 +38,6 @@ use crate::ui::status_bar::{StatusBarState, StatusBarWidget};
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupDirection, PopupListState, PopupListWidget};
 use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, render_search_dialog, CheckboxOptions, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState, SearchDialogAreas, SearchDialogState, SEARCH_CB_FOCUS, SEARCH_INPUT_FOCUS};
-use crate::ui::menu::{UserMenuAreas, UserMenuState, UserMenuWidget};
 use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
 use crate::ui::modal_event::{CmdlineOutcome, ModalOutcome, OverlayOutcome, PanelOutcome, PopupOutcome};
 use crate::pattern::ContentMatcher;
@@ -209,6 +208,7 @@ enum Action {
     GoForward,
     ToggleMatchesPanel,
     View,
+    ActionPalette,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -220,12 +220,12 @@ enum KeyMatch {
 }
 
 fn match_key(
-    bindings_list: &[(&ActionBindings, Action)],
+    bindings_list: &[(&'static str, &ActionBindings, Action)],
     event: &KeyEvent,
     pending: Option<&KeyEvent>,
 ) -> KeyMatch {
     if let Some(first) = pending {
-        for (bindings, action) in bindings_list {
+        for (_, bindings, action) in bindings_list {
             for b in *bindings {
                 if let KeyBinding::Chord(f, s) = b {
                     if f == first && s == event {
@@ -236,7 +236,7 @@ fn match_key(
         }
         return KeyMatch::None;
     }
-    for (bindings, action) in bindings_list {
+    for (_, bindings, action) in bindings_list {
         for b in *bindings {
             match b {
                 KeyBinding::Single(ke) if ke == event => return KeyMatch::Act(*action),
@@ -261,12 +261,77 @@ struct ReverseSearchSession {
     list: PopupListState,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+enum PaletteView {
+    /// Recent actions and the category list; typing searches every command.
+    Root,
+    /// The commands of one category.
+    Category(String),
+    /// Only the user-configured menu commands (F2).
+    UserOnly,
+}
+
+#[derive(Clone)]
+enum PaletteTarget {
+    /// Placeholder row ("No matching actions").
+    Nothing,
+    Category(String),
+    Builtin(Action),
+    Menu(String),
+}
+
+struct PaletteRow {
+    /// Recent-list id: the config key of a built-in, or `user:<label>` for a menu entry.
+    id: String,
+    target: PaletteTarget,
+}
+
+struct PaletteSession {
+    list: PopupListState,
+    rows: Vec<PaletteRow>,
+    query: String,
+    view: PaletteView,
+}
+
+
+struct PaletteEntry {
+    id: String,
+    category: String,
+    label: String,
+    description: String,
+    /// Shown after the label: the description cut at its first `(`, `;` or `.`.
+    summary: String,
+    hint: String,
+    target: PaletteTarget,
+}
+
+/// The first binding of an action as shown in the palette's shortcut column.
+impl PaletteEntry {
+    /// Label followed by its short description, as listed in the palette.
+    fn display(&self) -> String {
+        if self.summary.is_empty() {
+            self.label.clone()
+        } else {
+            format!("{} \u{2013} {}", self.label, self.summary)
+        }
+    }
+}
+
+fn binding_hint(bindings: &ActionBindings) -> String {
+    match bindings.first() {
+        Some(KeyBinding::Single(k)) => format_key_spelled(k),
+        Some(KeyBinding::Chord(a, b)) => format!("{} {}", format_key_spelled(a), format_key_spelled(b)),
+        None => String::new(),
+    }
+}
+
+/// Width of the command palette: the terminal width, capped at this many columns.
+const PALETTE_MAX_WIDTH: u16 = 100;
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
 
 enum Modal {
     None,
-    UserMenu(UserMenuState),
     Confirm(ConfirmState),
     Error(String),
     InputDialog(InputDialogState),
@@ -281,7 +346,6 @@ enum Modal {
 enum ModalAreas {
     None,
     Confirm(ConfirmButtonAreas),
-    UserMenu(UserMenuAreas),
     Error(ErrorButtonArea),
     InputDialog(InputDialogAreas, Option<Position>),
     SearchDialog(SearchDialogAreas, Option<Position>),
@@ -398,14 +462,11 @@ pub struct App {
     confirm_yes_btn: Cell<Button>,
     confirm_no_btn: Cell<Button>,
     error_ok_btn: Cell<Button>,
-    menu_close_btn: Cell<Button>,
     input_ok_btn: Cell<Button>,
     input_cancel_btn: Cell<Button>,
     input_cb_files_only: Cell<Option<Rect>>,
     input_cb_case_sensitive: Cell<Option<Rect>>,
     input_cb_regexp: Cell<Option<Rect>>,
-    menu_list_area: Cell<Rect>,
-    menu_list_offset: Cell<usize>,
     // Popup list hit-test areas and scroll offsets (reset each frame when not visible)
     completion_popup_area: Cell<Rect>,
     completion_popup_offset: Cell<usize>,
@@ -429,6 +490,11 @@ pub struct App {
     explicit_action_mode: bool,
     completion: Option<CompletionSession>,
     reverse_search: Option<ReverseSearchSession>,
+    palette: Option<PaletteSession>,
+    palette_popup_area: Cell<Rect>,
+    palette_popup_offset: Cell<usize>,
+    palette_commands: Vec<crate::palette::Command>,
+    recent_actions: Vec<String>,
     quicksearch: Option<String>,
     shell_mode: ShellMode,
     needs_full_redraw: bool,
@@ -594,14 +660,11 @@ impl App {
             confirm_yes_btn: Cell::new(Button::default()),
             confirm_no_btn: Cell::new(Button::default()),
             error_ok_btn: Cell::new(Button::default()),
-            menu_close_btn: Cell::new(Button::default()),
             input_ok_btn: Cell::new(Button::default()),
             input_cancel_btn: Cell::new(Button::default()),
             input_cb_files_only: Cell::new(None),
             input_cb_case_sensitive: Cell::new(None),
             input_cb_regexp: Cell::new(None),
-            menu_list_area: Cell::new(Rect::default()),
-            menu_list_offset: Cell::new(0),
             completion_popup_area: Cell::new(Rect::default()),
             completion_popup_offset: Cell::new(0),
             rev_search_popup_area: Cell::new(Rect::default()),
@@ -621,6 +684,11 @@ impl App {
             explicit_action_mode: false,
             completion: None,
             reverse_search: None,
+            palette: None,
+            palette_popup_area: Cell::new(Rect::default()),
+            palette_popup_offset: Cell::new(0),
+            palette_commands: crate::palette::load_builtin_commands(),
+            recent_actions: state.recent_actions.clone(),
             quicksearch: None,
             shell_mode: ShellMode::Stateless,
             needs_full_redraw: false,
@@ -751,51 +819,52 @@ impl App {
         self.panel_visible_height(self.active)
     }
 
-    fn bindings_list(&self) -> Vec<(&ActionBindings, Action)> {
+    fn bindings_list(&self) -> Vec<(&'static str, &ActionBindings, Action)> {
         let kb = &self.config.keybindings;
         vec![
-            (&kb.switch_panel, Action::SwitchPanel),
-            (&kb.toggle_layout, Action::ToggleLayout),
-            (&kb.tag_file, Action::TagFile),
-            (&kb.invert_tags, Action::InvertTags),
-            (&kb.copy, Action::Copy),
-            (&kb.move_entry, Action::Move),
-            (&kb.delete, Action::Delete),
-            (&kb.user_menu, Action::UserMenu),
-            (&kb.exit, Action::Exit),
-            (&kb.cmdline_insert_filename, Action::CmdlineInsertFilename),
-            (&kb.cmdline_insert_fullpath, Action::CmdlineInsertFullpath),
-            (&kb.cmdline_complete, Action::CmdlineComplete),
-            (&kb.cmdline_insert_tagged, Action::CmdlineInsertTagged),
-            (&kb.cmdline_insert_tagged_other, Action::CmdlineInsertTaggedOther),
-            (&kb.cmdline_insert_path, Action::CmdlineInsertPath),
-            (&kb.cmdline_insert_path_other, Action::CmdlineInsertPathOther),
-            (&kb.toggle_shell, Action::ToggleShell),
-            (&kb.toggle_shell_and_sync_command_line, Action::ToggleShellAndSyncCommandLine),
-            (&kb.toggle_cmdline, Action::ToggleCmdline),
-            (&kb.toggle_button_bar, Action::ToggleButtonBar),
-            (&kb.cmdline_history_prev, Action::CmdlineHistoryPrev),
-            (&kb.cmdline_history_next, Action::CmdlineHistoryNext),
-            (&kb.reverse_search, Action::ReverseSearch),
-            (&kb.sync_panels, Action::SyncPanels),
-            (&kb.rename, Action::Rename),
-            (&kb.sort_panel, Action::SortPanel),
-            (&kb.quicksearch, Action::Quicksearch),
-            (&kb.toggle_hidden, Action::ToggleHidden),
-            (&kb.bookmark_open, Action::BookmarkOpen),
-            (&kb.bookmark_add, Action::BookmarkAdd),
-            (&kb.mkdir, Action::Mkdir),
-            (&kb.path_history, Action::PathHistory),
-            (&kb.filter, Action::Filter),
-            (&kb.search, Action::Search),
-            (&kb.select_group, Action::SelectGroup),
-            (&kb.unselect_group, Action::UnselectGroup),
-            (&kb.refresh_panel, Action::RefreshPanel),
-            (&kb.go_to_parent, Action::GoToParent),
-            (&kb.go_back, Action::GoBack),
-            (&kb.go_forward, Action::GoForward),
-            (&kb.toggle_matches_panel, Action::ToggleMatchesPanel),
-            (&kb.view, Action::View),
+            ("switch_panel", &kb.switch_panel, Action::SwitchPanel),
+            ("toggle_layout", &kb.toggle_layout, Action::ToggleLayout),
+            ("tag_file", &kb.tag_file, Action::TagFile),
+            ("invert_tags", &kb.invert_tags, Action::InvertTags),
+            ("copy", &kb.copy, Action::Copy),
+            ("move", &kb.move_entry, Action::Move),
+            ("delete", &kb.delete, Action::Delete),
+            ("user_menu", &kb.user_menu, Action::UserMenu),
+            ("exit", &kb.exit, Action::Exit),
+            ("cmdline_insert_filename", &kb.cmdline_insert_filename, Action::CmdlineInsertFilename),
+            ("cmdline_insert_fullpath", &kb.cmdline_insert_fullpath, Action::CmdlineInsertFullpath),
+            ("cmdline_complete", &kb.cmdline_complete, Action::CmdlineComplete),
+            ("cmdline_insert_tagged", &kb.cmdline_insert_tagged, Action::CmdlineInsertTagged),
+            ("cmdline_insert_tagged_other", &kb.cmdline_insert_tagged_other, Action::CmdlineInsertTaggedOther),
+            ("cmdline_insert_path", &kb.cmdline_insert_path, Action::CmdlineInsertPath),
+            ("cmdline_insert_path_other", &kb.cmdline_insert_path_other, Action::CmdlineInsertPathOther),
+            ("toggle_shell", &kb.toggle_shell, Action::ToggleShell),
+            ("toggle_shell_and_sync_command_line", &kb.toggle_shell_and_sync_command_line, Action::ToggleShellAndSyncCommandLine),
+            ("toggle_cmdline", &kb.toggle_cmdline, Action::ToggleCmdline),
+            ("toggle_button_bar", &kb.toggle_button_bar, Action::ToggleButtonBar),
+            ("cmdline_history_prev", &kb.cmdline_history_prev, Action::CmdlineHistoryPrev),
+            ("cmdline_history_next", &kb.cmdline_history_next, Action::CmdlineHistoryNext),
+            ("reverse_search", &kb.reverse_search, Action::ReverseSearch),
+            ("sync_panels", &kb.sync_panels, Action::SyncPanels),
+            ("rename", &kb.rename, Action::Rename),
+            ("sort_panel", &kb.sort_panel, Action::SortPanel),
+            ("quicksearch", &kb.quicksearch, Action::Quicksearch),
+            ("toggle_hidden", &kb.toggle_hidden, Action::ToggleHidden),
+            ("bookmark_open", &kb.bookmark_open, Action::BookmarkOpen),
+            ("bookmark_add", &kb.bookmark_add, Action::BookmarkAdd),
+            ("mkdir", &kb.mkdir, Action::Mkdir),
+            ("path_history", &kb.path_history, Action::PathHistory),
+            ("filter", &kb.filter, Action::Filter),
+            ("search", &kb.search, Action::Search),
+            ("select_group", &kb.select_group, Action::SelectGroup),
+            ("unselect_group", &kb.unselect_group, Action::UnselectGroup),
+            ("refresh_panel", &kb.refresh_panel, Action::RefreshPanel),
+            ("go_to_parent", &kb.go_to_parent, Action::GoToParent),
+            ("go_back", &kb.go_back, Action::GoBack),
+            ("go_forward", &kb.go_forward, Action::GoForward),
+            ("toggle_matches_panel", &kb.toggle_matches_panel, Action::ToggleMatchesPanel),
+            ("view", &kb.view, Action::View),
+            ("action_palette", &kb.action_palette, Action::ActionPalette),
         ]
     }
 
@@ -886,8 +955,9 @@ impl App {
                     self.set_status("No user menu entries configured.", true);
                     return;
                 }
-                self.modal = Modal::UserMenu(UserMenuState::new(self.config.menu.clone()));
+                self.open_palette(PaletteView::UserOnly);
             }
+            Action::ActionPalette => self.open_palette(PaletteView::Root),
             Action::TagFile => {
                 let vh = self.active_vh();
                 self.active_panel_mut().tag_toggle(vh, true);
@@ -1042,7 +1112,7 @@ impl App {
                 let items = history_matches(&self.history, &self.cmdline.text);
                 let selected = items.len().saturating_sub(1);
                 self.reverse_search = Some(ReverseSearchSession {
-                    list: PopupListState { items, selected },
+                    list: PopupListState { items, selected, hints: Vec::new() },
                 });
             }
             Action::SyncPanels => {
@@ -1075,7 +1145,7 @@ impl App {
             Action::SortPanel => {
                 let panel = self.active_panel();
                 let selected = Self::sort_item_index(panel.sort_key, panel.sort_asc);
-                let popup = PopupListState { items: Self::sort_popup_items(), selected };
+                let popup = PopupListState { items: Self::sort_popup_items(), selected, hints: Vec::new() };
                 self.modal = Modal::SortPopup(popup, self.active);
             }
             Action::Quicksearch => {
@@ -2225,6 +2295,207 @@ impl App {
         self.rev_search_popup_offset.set(0);
     }
 
+    // ── Command palette ───────────────────────────────────────────────────────
+
+    /// Every command the palette can run: built-ins from the parsed CheatSheet (only those
+    /// whose config key this build knows), then the user's menu entries.
+    fn palette_entries(&self) -> Vec<PaletteEntry> {
+        let bl = self.bindings_list();
+        let mut out = Vec::new();
+        for c in &self.palette_commands {
+            let Some((_, bindings, action)) = bl.iter().find(|(n, _, _)| *n == c.config_key) else { continue };
+            out.push(PaletteEntry {
+                id: c.config_key.clone(),
+                category: c.category.clone(),
+                label: c.label.clone(),
+                description: c.description.clone(),
+                summary: crate::palette::short_description(&c.description).to_string(),
+                hint: binding_hint(bindings),
+                target: PaletteTarget::Builtin(*action),
+            });
+        }
+        for item in &self.config.menu {
+            out.push(PaletteEntry {
+                id: format!("user:{}", item.label),
+                category: crate::palette::USER_CATEGORY.to_string(),
+                label: item.label.clone(),
+                description: item.command.clone(),
+                summary: String::new(),
+                hint: item.keys.clone().unwrap_or_default(),
+                target: PaletteTarget::Menu(item.command.clone()),
+            });
+        }
+        out
+    }
+
+    fn open_palette(&mut self, view: PaletteView) {
+        self.completion = None;
+        self.reverse_search = None;
+        self.quicksearch = None;
+        self.palette = Some(PaletteSession {
+            list: PopupListState::new(Vec::new()),
+            rows: Vec::new(),
+            query: String::new(),
+            view,
+        });
+        self.rebuild_palette();
+    }
+
+    /// Recomputes the palette list from its current view and query.
+    fn rebuild_palette(&mut self) {
+        let entries = self.palette_entries();
+        let Some(session) = self.palette.as_mut() else { return };
+        let user_cat = crate::palette::USER_CATEGORY;
+        let mut shown: Vec<(String, String, PaletteRow)> = Vec::new();
+        let row_of = |e: &PaletteEntry| PaletteRow { id: e.id.clone(), target: e.target.clone() };
+
+        if session.query.trim().is_empty() {
+            match &session.view {
+                PaletteView::Root => {
+                    for id in &self.recent_actions {
+                        if let Some(e) = entries.iter().find(|e| &e.id == id) {
+                            shown.push((format!("\u{21ba} {}", e.display()), e.hint.clone(), row_of(e)));
+                        }
+                    }
+                    let mut cats: Vec<&str> = Vec::new();
+                    for e in &entries {
+                        if !cats.contains(&e.category.as_str()) {
+                            cats.push(&e.category);
+                        }
+                    }
+                    for c in cats {
+                        shown.push((format!("\u{25b8} {c}"), String::new(),
+                            PaletteRow { id: String::new(), target: PaletteTarget::Category(c.to_string()) }));
+                    }
+                }
+                PaletteView::Category(c) => {
+                    for e in entries.iter().filter(|e| &e.category == c) {
+                        shown.push((e.display(), e.hint.clone(), row_of(e)));
+                    }
+                }
+                PaletteView::UserOnly => {
+                    for e in entries.iter().filter(|e| e.category == user_cat) {
+                        shown.push((e.display(), e.hint.clone(), row_of(e)));
+                    }
+                }
+            }
+        } else {
+            let mut scored: Vec<(i32, &PaletteEntry)> = entries
+                .iter()
+                .filter(|e| match &session.view {
+                    PaletteView::Root => true,
+                    PaletteView::Category(c) => &e.category == c,
+                    PaletteView::UserOnly => e.category == user_cat,
+                })
+                .filter_map(|e| {
+                    let q = &session.query;
+                    crate::palette::fuzzy_score(q, &e.label).map(|s| s + 100).or_else(|| {
+                        let hay = format!("{} {} {}", e.category, e.label, e.description);
+                        crate::palette::fuzzy_score(q, &hay)
+                    }).map(|s| (s, e))
+                })
+                .collect();
+            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            for (_, e) in scored {
+                let text = if session.view == PaletteView::Root && e.category != user_cat {
+                    format!("{}: {}", e.category, e.display())
+                } else {
+                    e.display()
+                };
+                shown.push((text, e.hint.clone(), row_of(e)));
+            }
+        }
+
+        if shown.is_empty() {
+            shown.push(("No matching actions".to_string(), String::new(),
+                PaletteRow { id: String::new(), target: PaletteTarget::Nothing }));
+        }
+        session.list.items = shown.iter().map(|r| r.0.clone()).collect();
+        session.list.hints = shown.iter().map(|r| r.1.clone()).collect();
+        session.rows = shown.into_iter().map(|r| r.2).collect();
+        session.list.selected = 0;
+        self.palette_popup_offset.set(0);
+    }
+
+    /// Runs the highlighted palette row (Enter / click). A category row drills into it.
+    fn palette_accept(&mut self) {
+        let Some(session) = self.palette.as_ref() else { return };
+        let Some(row) = session.rows.get(session.list.selected) else { return };
+        let (id, target) = (row.id.clone(), row.target.clone());
+        match target {
+            PaletteTarget::Nothing => {}
+            PaletteTarget::Category(c) => {
+                if let Some(s) = self.palette.as_mut() {
+                    s.view = PaletteView::Category(c);
+                    s.query.clear();
+                }
+                self.rebuild_palette();
+            }
+            PaletteTarget::Builtin(action) => {
+                self.palette = None;
+                self.record_recent_action(&id);
+                self.handle_action(action);
+            }
+            PaletteTarget::Menu(cmd) => {
+                self.palette = None;
+                self.record_recent_action(&id);
+                self.execute_menu_item(cmd);
+            }
+        }
+    }
+
+    fn record_recent_action(&mut self, id: &str) {
+        // Opening the palette itself from the palette is noise in the recent list.
+        if id != "action_palette" && id != "user_menu" {
+            crate::palette::push_recent(&mut self.recent_actions, id);
+        }
+    }
+
+    /// Back from a category to the Root view, with that category highlighted.
+    fn palette_leave_category(&mut self) {
+        let Some(session) = self.palette.as_mut() else { return };
+        let PaletteView::Category(name) = std::mem::replace(&mut session.view, PaletteView::Root) else { return };
+        session.query.clear();
+        self.rebuild_palette();
+        if let Some(session) = self.palette.as_mut() {
+            if let Some(i) = session.rows.iter().position(|r| matches!(&r.target, PaletteTarget::Category(c) if *c == name)) {
+                session.list.selected = i;
+            }
+        }
+    }
+
+    /// Key handling while the palette is open. Always consumes the key.
+    fn handle_palette_key(&mut self, event: &KeyEvent) {
+        let vh = self.palette_popup_area.get().height.saturating_sub(2) as usize;
+        let Some(session) = self.palette.as_mut() else { return };
+        let plain = event.modifiers == KeyModifiers::NONE;
+        let in_category = matches!(session.view, PaletteView::Category(_));
+        match event.code {
+            KeyCode::Esc if plain => {
+                if in_category {
+                    self.palette_leave_category();
+                } else {
+                    self.palette = None;
+                }
+            }
+            KeyCode::Enter if plain => self.palette_accept(),
+            KeyCode::Backspace if plain => {
+                if session.query.pop().is_some() {
+                    self.rebuild_palette();
+                } else if in_category {
+                    self.palette_leave_category();
+                }
+            }
+            KeyCode::Tab => {}
+            _ => {
+                if let PopupOutcome::InsertChar(c) = session.list.handle_key(event, vh) {
+                    session.query.push(c);
+                    self.rebuild_palette();
+                }
+            }
+        }
+    }
+
     fn execute_menu_item(&mut self, cmd_template: String) {
         if !matches!(self.inactive_panel().content, PanelContent::Dir)
             && template_references_inactive(&cmd_template)
@@ -2547,21 +2818,6 @@ impl App {
                 }
                 return;
             }
-            Modal::UserMenu(_) => {
-                let vh = self.menu_list_area.get().height as usize;
-                let outcome = if let Modal::UserMenu(ref mut s) = self.modal {
-                    s.handle_key(&event, vh)
-                } else { ModalOutcome::Consumed };
-                match outcome {
-                    ModalOutcome::Execute(cmd) => {
-                        self.modal = Modal::None;
-                        self.execute_menu_item(cmd);
-                    }
-                    ModalOutcome::Dismissed => self.modal = Modal::None,
-                    _ => {}
-                }
-                return;
-            }
             Modal::InputDialog(_) => {
                 let outcome = if let Modal::InputDialog(ref mut s) = self.modal {
                     s.handle_key(&event)
@@ -2670,6 +2926,12 @@ impl App {
                 }
                 return;
             }
+        }
+
+        // Command palette: owns the keyboard while open.
+        if self.palette.is_some() {
+            self.handle_palette_key(&event);
+            return;
         }
 
         // Completion popup: intercept keys while a candidate list is visible.
@@ -2943,44 +3205,13 @@ impl App {
         crate::macros::expand(template, &ctx)
     }
 
-    // Called on left-button Down inside a modal: only visual updates (no actions).
-    fn handle_modal_down(&mut self, col: u16, row: u16) {
-        let list_area = self.menu_list_area.get();
-        let list_offset = self.menu_list_offset.get();
-        let pos = Position { x: col, y: row };
-        if list_area.contains(pos) {
-            let item_idx = (row - list_area.y) as usize + list_offset;
-            if let Modal::UserMenu(ref mut s) = self.modal {
-                if item_idx < s.items.len() {
-                    s.cursor = item_idx;
-                }
-            }
-        }
-    }
-
     // Called on every Left-button Up inside a modal; fires actions only when
     // `up` matches the stored Down position AND lands on a button (via Button::clicked).
     fn handle_modal_click(&mut self, up: Position) {
         let yes_btn = self.confirm_yes_btn.get();
         let no_btn = self.confirm_no_btn.get();
         let ok_btn = self.error_ok_btn.get();
-        let close_btn = self.menu_close_btn.get();
-        let list_area = self.menu_list_area.get();
-        let list_offset = self.menu_list_offset.get();
         let down = self.mouse_pressed;
-
-        // Pre-extract menu item command to avoid nested borrows.
-        let menu_item_cmd: Option<String> =
-            if down == Some(up) && list_area.contains(up) && !close_btn.contains(up) {
-                let item_idx = (up.y - list_area.y) as usize + list_offset;
-                if let Modal::UserMenu(ref s) = self.modal {
-                    s.items.get(item_idx).map(|i| i.command.clone())
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
 
         let input_ok = self.input_ok_btn.get();
         let input_cancel = self.input_cancel_btn.get();
@@ -3142,14 +3373,6 @@ impl App {
                     } else if !area.contains(up) {
                         self.modal = Modal::None;
                     }
-                }
-            }
-            Modal::UserMenu(_) => {
-                if close_btn.clicked(down, up) {
-                    self.modal = Modal::None;
-                } else if let Some(cmd_template) = menu_item_cmd {
-                    self.modal = Modal::None;
-                    self.execute_menu_item(cmd_template);
                 }
             }
         }
@@ -3343,7 +3566,6 @@ impl App {
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
                     match &mut self.modal {
-                        Modal::UserMenu(s) => s.move_up(),
                         Modal::SortPopup(s, _) => s.move_up(),
                         Modal::BookmarkList(s) => s.move_up(),
                         Modal::PathHistoryList(s) => s.move_up(),
@@ -3352,7 +3574,6 @@ impl App {
                 }
                 MouseEventKind::ScrollDown => {
                     match &mut self.modal {
-                        Modal::UserMenu(s) => s.move_down(),
                         Modal::SortPopup(s, _) => s.move_down(),
                         Modal::BookmarkList(s) => s.move_down(),
                         Modal::PathHistoryList(s) => s.move_down(),
@@ -3361,7 +3582,6 @@ impl App {
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
                     self.mouse_pressed = Some(pos);
-                    self.handle_modal_down(col, row);
                 }
                 MouseEventKind::Up(MouseButton::Left) => {
                     self.handle_modal_click(pos);
@@ -3377,9 +3597,26 @@ impl App {
         {
             let completion_area = self.completion_popup_area.get();
             let rev_search_area = self.rev_search_popup_area.get();
+            let palette_area = self.palette_popup_area.get();
 
             match mouse.kind {
                 MouseEventKind::Down(_) => {
+                    if self.palette.is_some() && palette_area.width > 0 {
+                        if palette_area.contains(pos) {
+                            let inner_y = palette_area.y + 1;
+                            let inner_bottom = palette_area.y + palette_area.height.saturating_sub(1);
+                            if pos.y >= inner_y && pos.y < inner_bottom {
+                                let idx = self.palette_popup_offset.get() + (pos.y - inner_y) as usize;
+                                if let Some(s) = self.palette.as_mut() {
+                                    if idx < s.list.items.len() { s.list.selected = idx; }
+                                }
+                                self.mouse_pressed = Some(pos);
+                            }
+                        } else {
+                            self.palette = None;
+                        }
+                        return;
+                    }
                     if self.completion.is_some() && completion_area.width > 0 {
                         if completion_area.contains(pos) {
                             let inner_y = completion_area.y + 1;
@@ -3416,6 +3653,14 @@ impl App {
                     }
                 }
                 MouseEventKind::Up(_) => {
+                    if self.palette.is_some() && palette_area.width > 0 {
+                        let was_click = self.mouse_pressed == Some(pos);
+                        self.mouse_pressed = None;
+                        if was_click && palette_area.contains(pos) {
+                            self.palette_accept();
+                        }
+                        return;
+                    }
                     if self.completion.is_some() && completion_area.width > 0 {
                         let was_click = self.mouse_pressed == Some(pos);
                         self.mouse_pressed = None;
@@ -3442,6 +3687,12 @@ impl App {
                 }
                 MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                     let is_up = matches!(mouse.kind, MouseEventKind::ScrollUp);
+                    if let Some(session) = self.palette.as_mut() {
+                        if palette_area.width > 0 && palette_area.contains(pos) {
+                            if is_up { session.list.move_up() } else { session.list.move_down() }
+                            return;
+                        }
+                    }
                     if let Some(session) = self.completion.as_mut() {
                         if completion_area.width > 0 && completion_area.contains(pos) {
                             if is_up { session.list.move_up() } else { session.list.move_down() }
@@ -3635,6 +3886,7 @@ impl App {
             right_sort_key: self.right.sort_key,
             right_sort_asc: self.right.sort_asc,
             right_show_hidden: self.right.show_hidden,
+            recent_actions: self.recent_actions.clone(),
         };
         let _ = state.save();
         let _ = self.history.save(&crate::state::history_path());
@@ -3761,7 +4013,7 @@ impl App {
                         let total_col = prompt_len + anchor_chars;
                         let anchor_x = cmdline_area.x + (total_col % width) as u16;
                         let anchor_y = cmdline_area.y + (total_col / width) as u16;
-                        let (r, offset) = PopupListWidget { cs: &cs, state: &session.list, title: None, direction: PopupDirection::Above }
+                        let (r, offset) = PopupListWidget { cs: &cs, state: &session.list, title: None, direction: PopupDirection::Above, fixed_width: None, title_left: false }
                             .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, self.completion_popup_offset.get());
                         self.completion_popup_area.set(r);
                         self.completion_popup_offset.set(offset);
@@ -3772,7 +4024,7 @@ impl App {
                 }
 
                 if let Some(session) = self.reverse_search.as_ref() {
-                    let (r, offset) = PopupListWidget { cs: &cs, state: &session.list, title: None, direction: PopupDirection::Above }
+                    let (r, offset) = PopupListWidget { cs: &cs, state: &session.list, title: None, direction: PopupDirection::Above, fixed_width: None, title_left: false }
                         .render_at(area, frame.buffer_mut(), cmdline_area.x, cmdline_area.y, self.rev_search_popup_offset.get());
                     self.rev_search_popup_area.set(r);
                     self.rev_search_popup_offset.set(offset);
@@ -3781,6 +4033,34 @@ impl App {
                     self.rev_search_popup_offset.set(0);
                 }
             }
+        }
+
+        // Command palette: centred horizontally from the second row down, with the
+        // `> query` prompt as a left-aligned header.
+        if let Some(session) = self.palette.as_ref().filter(|_| matches!(self.modal, Modal::None) && !self.show_output) {
+            let width = PALETTE_MAX_WIDTH.min(area.width);
+            // Borders (2) + title padding (2) + "> " (2) + cursor block (1) are not query room;
+            // a longer query shows its tail behind a leading '…' so the cursor stays visible.
+            let room = (width as usize).saturating_sub(7).max(1);
+            let qlen = session.query.chars().count();
+            let shown = if qlen > room {
+                let tail: String = session.query.chars().skip(qlen - (room - 1)).collect();
+                format!("\u{2026}{tail}")
+            } else {
+                session.query.clone()
+            };
+            let title = format!("> {shown}\u{2588}");
+            let anchor_x = area.x + area.width.saturating_sub(width) / 2;
+            let (r, offset) = PopupListWidget {
+                cs: &cs, state: &session.list, title: Some(&title), direction: PopupDirection::Below,
+                fixed_width: Some(PALETTE_MAX_WIDTH), title_left: true,
+            }
+            .render_at(area, frame.buffer_mut(), anchor_x, area.y, self.palette_popup_offset.get());
+            self.palette_popup_area.set(r);
+            self.palette_popup_offset.set(offset);
+        } else {
+            self.palette_popup_area.set(Rect::default());
+            self.palette_popup_offset.set(0);
         }
 
         // Button bar / status bar
@@ -3827,10 +4107,6 @@ impl App {
         // Modals (drawn last, on top) — capture returned hit-test areas
         let modal_areas = match &mut self.modal {
             Modal::None => ModalAreas::None,
-            Modal::UserMenu(state) => {
-                let a = UserMenuWidget { cs: &cs }.render_in(area, frame.buffer_mut(), state, press);
-                ModalAreas::UserMenu(a)
-            }
             Modal::Confirm(state) => {
                 let a = render_confirm(area, frame.buffer_mut(), &cs, state, press);
                 ModalAreas::Confirm(a)
@@ -3856,7 +4132,7 @@ impl App {
                 let anchor_x = panel_area.x + 2;
                 let anchor_y = panel_area.y + 1;
                 let offset = self.sort_popup_offset.get();
-                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Sort by"), direction: PopupDirection::Below }
+                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Sort by"), direction: PopupDirection::Below, fixed_width: None, title_left: false }
                     .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
                 ModalAreas::SortPopup(r, new_offset)
             }
@@ -3868,7 +4144,7 @@ impl App {
                 let anchor_x = panel_area.x + 2;
                 let anchor_y = panel_area.y;
                 let offset = self.path_history_popup_offset.get();
-                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Path History"), direction: PopupDirection::Below }
+                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Path History"), direction: PopupDirection::Below, fixed_width: None, title_left: false }
                     .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
                 ModalAreas::PathHistoryList(r, new_offset)
             }
@@ -3880,7 +4156,7 @@ impl App {
                 let anchor_x = panel_area.x + 2;
                 let anchor_y = panel_area.y;
                 let offset = self.bookmark_popup_offset.get();
-                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Directory Bookmarks"), direction: PopupDirection::Below }
+                let (r, new_offset) = PopupListWidget { cs: &cs, state, title: Some("Directory Bookmarks"), direction: PopupDirection::Below, fixed_width: None, title_left: false }
                     .render_at(area, frame.buffer_mut(), anchor_x, anchor_y, offset);
                 ModalAreas::BookmarkList(r, new_offset)
             }
@@ -3891,11 +4167,6 @@ impl App {
             ModalAreas::Confirm(a) => {
                 self.confirm_yes_btn.set(a.yes);
                 self.confirm_no_btn.set(a.no);
-            }
-            ModalAreas::UserMenu(a) => {
-                self.menu_list_area.set(a.list_area);
-                self.menu_list_offset.set(a.list_offset);
-                self.menu_close_btn.set(a.close);
             }
             ModalAreas::Error(a) => {
                 self.error_ok_btn.set(a.ok);
@@ -5224,6 +5495,127 @@ mod tests {
         app.open_current_entry_default_action();
         assert!(app.viewer.is_none(), "default_action_executable is empty and falls back to an empty default_action");
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ── Command palette ───────────────────────────────────────────────────────
+
+    fn tap(app: &mut App, code: KeyCode) {
+        app.handle_key_event(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    fn type_str(app: &mut App, text: &str) {
+        for c in text.chars() {
+            tap(app, KeyCode::Char(c));
+        }
+    }
+
+    fn palette_items(app: &App) -> Vec<String> {
+        app.palette.as_ref().unwrap().list.items.clone()
+    }
+
+    #[test]
+    fn every_keybinding_action_is_documented_in_the_cheatsheet_and_vice_versa() {
+        let base = make_search_base("palette_docs");
+        let app = test_app(&base);
+        let known: Vec<&str> = app.bindings_list().iter().map(|(n, _, _)| *n).collect();
+        let documented: Vec<String> = crate::palette::parse_cheatsheet(include_str!("../docs/CheatSheet.md"))
+            .into_iter().map(|c| c.config_key).collect();
+        for d in &documented {
+            assert!(known.contains(&d.as_str()), "CheatSheet lists unknown config key {d}");
+        }
+        for k in &known {
+            assert!(documented.iter().any(|d| d == k), "config key {k} is missing from CheatSheet.md");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn f1_opens_root_with_categories_and_f2_only_user_commands() {
+        let base = make_search_base("palette_open");
+        let mut app = test_app(&base);
+        app.config.menu = vec![crate::config::MenuItem {
+            label: "Say hi".into(), command: "echo hi".into(), keys: Some("F11".into()), add_to_bar: false,
+        }];
+        tap(&mut app, KeyCode::F(1));
+        let items = palette_items(&app);
+        assert!(items.iter().any(|i| i == "\u{25b8} File Operations"), "{items:?}");
+        assert!(items.iter().any(|i| i == "\u{25b8} User Commands"));
+        tap(&mut app, KeyCode::Esc);
+        assert!(app.palette.is_none());
+
+        app.open_palette(PaletteView::UserOnly);
+        assert_eq!(palette_items(&app), vec!["Say hi"]);
+        assert_eq!(app.palette.as_ref().unwrap().list.hints, vec!["F11"]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn typing_fuzzy_filters_and_shows_the_live_shortcut() {
+        let base = make_search_base("palette_search");
+        let mut app = test_app(&base);
+        app.config.keybindings.sort_panel = vec![KeyBinding::Single(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT))];
+        app.open_palette(PaletteView::Root);
+        type_str(&mut app, "sortpan");
+        let s = app.palette.as_ref().unwrap();
+        assert!(s.list.items[0].starts_with("Panels: Sort Panel \u{2013} Open sort popup"), "{:?}", s.list.items[0]);
+        assert_eq!(s.list.hints[0], "Alt-z");
+        type_str(&mut app, "qqqq");
+        assert_eq!(palette_items(&app), vec!["No matching commands"]);
+        tap(&mut app, KeyCode::Enter);
+        assert!(app.palette.is_some(), "Enter on the placeholder row does nothing");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn category_drill_down_and_back() {
+        let base = make_search_base("palette_category");
+        let mut app = test_app(&base);
+        app.open_palette(PaletteView::Root);
+        let idx = palette_items(&app).iter().position(|i| i == "\u{25b8} Bookmarks").unwrap();
+        app.palette.as_mut().unwrap().list.selected = idx;
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(palette_items(&app), vec![
+            "Open Bookmarks \u{2013} Open bookmarks popup to navigate the active panel to a bookmarked directory",
+            "Add Bookmark \u{2013} Add the active panel's current directory to bookmarks",
+        ]);
+        tap(&mut app, KeyCode::Esc);
+        assert!(app.palette.as_ref().is_some_and(|s| s.view == PaletteView::Root));
+        assert_eq!(palette_items(&app)[app.palette.as_ref().unwrap().list.selected], "\u{25b8} Bookmarks");
+
+        // Backspace on an empty query leaves the category the same way.
+        tap(&mut app, KeyCode::Enter);
+        tap(&mut app, KeyCode::Backspace);
+        assert_eq!(palette_items(&app)[app.palette.as_ref().unwrap().list.selected], "\u{25b8} Bookmarks");
+
+        // So does Esc after typing a query inside the category.
+        tap(&mut app, KeyCode::Enter);
+        type_str(&mut app, "add");
+        tap(&mut app, KeyCode::Esc);
+        let s = app.palette.as_ref().unwrap();
+        assert!(s.query.is_empty() && s.view == PaletteView::Root);
+        assert_eq!(s.list.items[s.list.selected], "\u{25b8} Bookmarks");
+        tap(&mut app, KeyCode::Esc);
+        assert!(app.palette.is_none());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn enter_runs_the_action_and_records_it_as_recent() {
+        let base = make_search_base("palette_run");
+        let mut app = test_app(&base);
+        let before = app.show_button_bar;
+        app.open_palette(PaletteView::Root);
+        type_str(&mut app, "togglebuttonbar");
+        assert_eq!(palette_items(&app)[0], "Layout: Toggle Button Bar \u{2013} Toggle button bar visibility");
+        tap(&mut app, KeyCode::Enter);
+        assert!(app.palette.is_none());
+        assert_ne!(app.show_button_bar, before);
+        assert_eq!(app.recent_actions, vec!["toggle_button_bar"]);
+
+        app.open_palette(PaletteView::Root);
+        assert_eq!(palette_items(&app)[0], "\u{21ba} Toggle Button Bar \u{2013} Toggle button bar visibility");
+        assert_eq!(app.palette.as_ref().unwrap().list.hints[0], "Alt-b");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

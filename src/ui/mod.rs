@@ -5,7 +5,6 @@ pub mod dialog;
 pub mod focus;
 pub mod modal_event;
 pub mod popup_list;
-pub mod menu;
 pub mod output_overlay;
 pub mod panel;
 pub mod status_bar;

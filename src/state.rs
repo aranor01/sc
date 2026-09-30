@@ -31,6 +31,9 @@ pub struct AppState {
     pub left_show_hidden: bool,
     #[serde(default)]
     pub right_show_hidden: bool,
+    /// Most recent command-palette picks, newest first (palette ids).
+    #[serde(default)]
+    pub recent_actions: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -49,6 +52,7 @@ impl Default for AppState {
             right_sort_asc: true,
             left_show_hidden: false,
             right_show_hidden: false,
+            recent_actions: Vec::new(),
         }
     }
 }

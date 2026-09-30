@@ -85,6 +85,7 @@ triggers the action):
 | `toggle_shell_and_sync_command_line` | `Alt-o` |
 | `toggle_cmdline` | `Ctrl-Alt-b` |
 | `toggle_button_bar` | `Alt-b` |
+| `action_palette` | `F1` |
 | `user_menu` | `F2` |
 | `exit` | `F10`, `Ctrl-q` |
 | `path_history` | `Alt-H`, `Alt-Down` |
@@ -122,9 +123,16 @@ Notes:
 All three can be overridden per-launch on the command line; see
 [`CommandLineArgs.md`](CommandLineArgs.md).
 
+## Command palette
+
+`action_palette` (`F1`) opens a searchable palette of every built-in command, each shown with
+its current shortcut. The list is read from `CheatSheet.md` (installed in
+`<prefix>/share/doc/sc/`, with a built-in copy as fallback). Recent picks are remembered in
+`state.json`. `user_menu` (`F2`) opens the same palette limited to the commands below.
+
 ## User menu
 
-`menu` is a list of commands shown when `user_menu` (`F2`) is pressed:
+`menu` is a list of commands shown in the palette when `user_menu` (`F2`) is pressed:
 
 ```jsonc
 {

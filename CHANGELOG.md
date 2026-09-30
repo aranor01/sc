@@ -41,9 +41,13 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   configured using the `panels.default_action_*` configuaration parameters or their
   fallback `panels.default_action`.
 - You can now use `Space` in the key binding configuration.
+- Command palette (`F1`, action `action_palette`): fuzzy-search every command with its
+  shortcut shown alongside, with categories and recent actions.
 
 ### Changed
 
+- `F2` (`user_menu`) now opens the command palette filtered to the user-configured menu
+  commands instead of a separate menu dialog.
 - The filter dialog's default binding moved from `Ctrl-f` to `Alt-f` (`Ctrl-f` now
   opens the search dialog).
 

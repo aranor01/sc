@@ -141,6 +141,8 @@ If `~/.config/sc/config.json` doesn't exist yet, sc creates one the first time i
 already wired up with `View` / `Edit` / `Edit config` entries — so you're extending
 a working file, not starting from a blank one.
 
+Press F1 for the command palette — fuzzy-search any command and see its shortcut.
+
 Menu edits take effect the next time you press F2 — no need to restart sc. Direct `keys`
 shortcuts and `add_to_bar` buttons pick up the change too, but only once F2 has been
 pressed at least once after saving (they aren't reloaded independently).
