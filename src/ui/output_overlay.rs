@@ -26,7 +26,7 @@ fn build_matcher(highlight: Option<(&str, bool, bool, bool)>) -> Option<ContentM
 }
 
 pub struct OutputOverlayState {
-    pub scroll: u16,
+    pub scroll: u64,
     pending_line: Option<u64>,
     pending_cap_scroll: bool,
     /// Wrap width `row_cache` was last built at. Checked against the render
@@ -175,7 +175,7 @@ impl OutputOverlayState {
                 rows_before += (wrapped_row_count(&line_text[..m_start], width as usize) - 1) as u64;
             }
         }
-        self.scroll = rows_before.saturating_sub(2).min(u16::MAX as u64) as u16;
+        self.scroll = rows_before.saturating_sub(2);
         self.pending_cap_scroll = true;
     }
 
@@ -193,14 +193,14 @@ impl OutputOverlayState {
         } else {
             text.lines().count()
         };
-        let scroll_limit = line_count.saturating_sub(viewport_height as usize).min(u16::MAX as usize) as u16;
+        let scroll_limit = line_count.saturating_sub(viewport_height as usize) as u64;
         if self.scroll <= scroll_limit {
             return;
         }
 
         self.ensure_row_cache_complete(text, width);
         let total_rows = *self.row_cache.last().unwrap();
-        let scroll_limit = total_rows.saturating_sub(viewport_height as u64).min(u16::MAX as u64) as u16;
+        let scroll_limit = total_rows.saturating_sub(viewport_height as u64);
         if self.scroll > scroll_limit {
             self.scroll = scroll_limit;
         }
@@ -215,27 +215,27 @@ impl OutputOverlayState {
             KeyCode::Down => { self.scroll = self.scroll.saturating_add(1); self.pending_cap_scroll = true; OverlayOutcome::Consumed }
             KeyCode::PageUp => { self.scroll = self.scroll.saturating_sub(20); OverlayOutcome::Consumed }
             KeyCode::PageDown => { self.scroll = self.scroll.saturating_add(20); self.pending_cap_scroll = true; OverlayOutcome::Consumed }
-            KeyCode::Home => { self.scroll = 0u16; OverlayOutcome::Consumed }
-            KeyCode::End => { self.scroll = u16::MAX; self.pending_cap_scroll = true; OverlayOutcome::Consumed }
+            KeyCode::Home => { self.scroll = 0; OverlayOutcome::Consumed }
+            KeyCode::End => { self.scroll = u64::MAX; self.pending_cap_scroll = true; OverlayOutcome::Consumed }
             _ => OverlayOutcome::Passthrough,
         }
     }
 
     pub fn scroll_by(&mut self, delta: i16) {
         if delta < 0 {
-            self.scroll = self.scroll.saturating_sub((-delta) as u16);
+            self.scroll = self.scroll.saturating_sub((-delta) as u64);
         } else {
-            self.scroll = self.scroll.saturating_add(delta as u16);
+            self.scroll = self.scroll.saturating_add(delta as u64);
             self.pending_cap_scroll = true;
         }
     }
 
     pub fn scrollbar_click(&mut self, track_row: usize, inner_h: usize, total_lines: usize) {
         if let Some(pos) = (track_row * total_lines).checked_div(inner_h) {
-            if pos > (self.scroll as usize) {
+            if pos as u64 > self.scroll {
                 self.pending_cap_scroll = true;
             }
-            self.scroll = pos as u16;
+            self.scroll = pos as u64;
         }
     }
 
@@ -368,8 +368,8 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
         state.cap_scroll(self.text, width, inner.height);
         state.resolve_pending_jump(self.text, width, self.highlight);
 
-        state.ensure_row_cache_to_scroll(self.text, width, state.scroll as u64);
-        let start_idx = state.row_cache.partition_point(|&r| r <= state.scroll as u64) - 1;
+        state.ensure_row_cache_to_scroll(self.text, width, state.scroll);
+        let start_idx = state.row_cache.partition_point(|&r| r <= state.scroll) - 1;
         let rows_before = state.row_cache[start_idx];
         let take_n = inner.height as usize + 1; // slack for a row scrolled mid-way into
 
@@ -413,7 +413,7 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
         let para = Paragraph::new(lines)
             .style(style)
             .wrap(Wrap { trim: false })
-            .scroll(((state.scroll as u64 - rows_before) as u16, 0));
+            .scroll(((state.scroll - rows_before).min(u16::MAX as u64) as u16, 0));
         Widget::render(para, text_area, buf);
 
         let scrollbar_area = Rect {
@@ -580,6 +580,19 @@ mod tests {
 		"the match itself must be visible, not just the start of its (long) raw line"
 	    );
 	}
+
+    #[test]
+    fn resolve_pending_jump_handles_lines_beyond_u16_rows() {
+        let text: String = (1..=70_000).map(|i| format!("line-{i}\n")).collect();
+        let area = Rect::new(0, 0, 40, 10);
+        let mut state = OutputOverlayState::new();
+        state.jump_to_line(69_000);
+        let buf = render_to_buffer(&text, area, &mut state);
+        assert!(find_row_containing(&buf, area, "line-69000").is_some());
+        state.handle_key(&KeyEvent::from(KeyCode::End), &ActionBindings::default());
+        let buf = render_to_buffer(&text, area, &mut state);
+        assert!(find_row_containing(&buf, area, "line-70000").is_some());
+    }
 
     #[test]
     fn resolve_pending_jump_is_a_noop_without_a_pending_line() {
