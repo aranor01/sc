@@ -291,6 +291,7 @@ pub fn run_with_pty_capture(cmd: &str, cwd: &str) -> Vec<u8> {
 
         let mut capture: Vec<u8> = Vec::new();
         let mut buf = [0u8; 4096];
+        let mut last_size = crossterm::terminal::size().unwrap_or((0, 0));
 
         loop {
             let mut fds = [
@@ -298,17 +299,31 @@ pub fn run_with_pty_capture(cmd: &str, cwd: &str) -> Vec<u8> {
                 libc::pollfd { fd: master_fd,          events: libc::POLLIN, revents: 0 },
             ];
             if libc::poll(fds.as_mut_ptr(), 2, -1) < 0 {
+                if io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                    // Most likely SIGWINCH: propagate the new size to the PTY (the kernel
+                    // then signals the child's foreground process group).
+                    if let Ok(size) = crossterm::terminal::size() {
+                        if size != last_size {
+                            last_size = size;
+                            let ws = libc::winsize { ws_col: size.0, ws_row: size.1, ws_xpixel: 0, ws_ypixel: 0 };
+                            libc::ioctl(master_fd, libc::TIOCSWINSZ, &ws);
+                        }
+                    }
+                    continue;
+                }
                 break;
             }
 
             if fds[0].revents & libc::POLLIN != 0 {
                 let n = libc::read(libc::STDIN_FILENO, buf.as_mut_ptr() as *mut _, buf.len());
+                if n < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) { continue; }
                 if n <= 0 { break; }
                 libc::write(master_fd, buf.as_ptr() as *const _, n as usize);
             }
 
             if fds[1].revents & libc::POLLIN != 0 {
                 let n = libc::read(master_fd, buf.as_mut_ptr() as *mut _, buf.len());
+                if n < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) { continue; }
                 if n <= 0 { break; } // EIO when child exits and slave closes
                 libc::write(libc::STDOUT_FILENO, buf.as_ptr() as *const _, n as usize);
                 capture.extend_from_slice(&buf[..n as usize]);

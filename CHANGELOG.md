@@ -54,6 +54,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Fixed
 
+- Resizing the terminal while an interactive program (e.g. `less`) launched from the
+  command line or a menu command is running resizes that program.
 - File operation confirmation dialogs shorten long paths: the file name at the end,
   the destination in the middle.
 - sc now compiles and runs on aarch64-apple-darwin (macOS peer-credential retrieval in IPC,
