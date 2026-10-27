@@ -1,4 +1,5 @@
 use super::*;
+use super::commands::resolve_default_action_template;
 
 fn p(s: &str) -> PathBuf {
     PathBuf::from(s)
