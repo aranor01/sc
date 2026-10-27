@@ -54,6 +54,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Fixed
 
+- File operation confirmation dialogs shorten long paths: the file name at the end,
+  the destination in the middle.
 - sc now compiles and runs on aarch64-apple-darwin (macOS peer-credential retrieval in IPC,
   portable ioctl/winsize types) — no behavior change on Linux.
 - Pasting into the command line stopped working after the subshell was shown once via

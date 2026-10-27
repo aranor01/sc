@@ -443,7 +443,7 @@ fn format_date(t: SystemTime, fmt: &str, fallback_len: usize) -> String {
     buf
 }
 
-fn truncate_str(s: &str, max: usize) -> String {
+pub(crate) fn truncate_str(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         format!("{:<width$}", s, width = max)
     } else {
@@ -453,7 +453,7 @@ fn truncate_str(s: &str, max: usize) -> String {
     }
 }
 
-fn truncate_path(s: &str, max: usize) -> String {
+pub(crate) fn truncate_path(s: &str, max: usize) -> String {
     let char_count = s.chars().count();
 
     if char_count <= max {

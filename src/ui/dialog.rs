@@ -2,6 +2,7 @@ use crate::config::ColorScheme;
 use crate::ui::cmdline::CmdLineState;
 use crate::ui::focus::FocusRing;
 use crate::ui::modal_event::ModalOutcome;
+use crate::ui::panel::{truncate_path, truncate_str};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use unicode_width::UnicodeWidthStr;
 use ratatui::{
@@ -598,31 +599,30 @@ impl ConfirmState {
         }
     }
 
-    pub fn message(&self) -> String {
-        match &self.op {
-            ConfirmOp::Delete => {
-                if self.files.len() == 1 {
-                    format!("Delete '{}'?", self.files[0])
-                } else {
-                    format!("Delete {} files?", self.files.len())
-                }
-            }
-            ConfirmOp::Copy => {
-                let dst = self.dst.as_deref().unwrap_or("?");
-                if self.files.len() == 1 {
-                    format!("Copy '{}'\nto '{}'?", self.files[0], dst)
-                } else {
-                    format!("Copy {} files\nto '{}'?", self.files.len(), dst)
-                }
-            }
-            ConfirmOp::Move => {
-                let dst = self.dst.as_deref().unwrap_or("?");
-                if self.files.len() == 1 {
-                    format!("Move '{}'\nto '{}'?", self.files[0], dst)
-                } else {
-                    format!("Move {} files\nto '{}'?", self.files.len(), dst)
-                }
-            }
+    /// The dialog text, with the file name shortened at the end and the destination path
+    /// in the middle so that no line is wider than `width` columns.
+    pub fn message(&self, width: usize) -> String {
+        // `prefix` + path in quotes + `suffix`, the path shrunk to whatever room is left.
+        let quoted = |prefix: &str, path: &str, suffix: &str, truncate: fn(&str, usize) -> String| {
+            let fixed = prefix.chars().count() + suffix.chars().count() + 2;
+            let path = shorten(path, width.saturating_sub(fixed), truncate);
+            format!("{prefix}'{path}'{suffix}")
+        };
+        let verb = match self.op {
+            ConfirmOp::Delete => "Delete",
+            ConfirmOp::Copy => "Copy",
+            ConfirmOp::Move => "Move",
+        };
+        let what = if self.files.len() == 1 {
+            let suffix = if self.dst.is_none() { "?" } else { "" };
+            quoted(&format!("{verb} "), &self.files[0], suffix, truncate_str)
+        } else {
+            format!("{verb} {} files", self.files.len())
+        };
+        match &self.dst {
+            None if self.files.len() == 1 => what,
+            None => format!("{what}?"),
+            Some(dst) => format!("{what}\n{}", quoted("to ", dst, "?", truncate_path)),
         }
     }
 
@@ -647,6 +647,11 @@ impl ConfirmState {
         }
         ModalOutcome::Consumed
     }
+}
+
+/// Applies a panel truncation helper only when `s` doesn't fit (those helpers pad short text).
+fn shorten(s: &str, max: usize, truncate: fn(&str, usize) -> String) -> String {
+    if s.chars().count() <= max { s.to_string() } else { truncate(s, max) }
 }
 
 pub struct ConfirmButtonAreas {
@@ -676,11 +681,11 @@ pub fn render_confirm(
     state: &ConfirmState,
     press: Option<Position>,
 ) -> ConfirmButtonAreas {
-    let msg = state.message();
+    let width = 44u16.min(area.width.saturating_sub(2));
+    let msg = state.message(width.saturating_sub(2) as usize);
     let line_count = msg.lines().count() as u16;
     // border(2) + message lines + blank line + button line
     let height = line_count + 4;
-    let width = 44u16.min(area.width.saturating_sub(2));
     let dialog_area = centered_rect(width, height, area);
 
     Widget::render(Clear, dialog_area, buf);
@@ -803,6 +808,36 @@ pub fn render_error(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn confirm_message_keeps_short_text_unchanged() {
+        let c = ConfirmState::new(ConfirmOp::Copy, vec!["a.txt".into()], Some("/tmp/dst".into()));
+        assert_eq!(c.message(40), "Copy 'a.txt'\nto '/tmp/dst'?");
+        let d = ConfirmState::new(ConfirmOp::Delete, vec!["a.txt".into()], None);
+        assert_eq!(d.message(40), "Delete 'a.txt'?");
+        let m = ConfirmState::new(ConfirmOp::Move, vec!["a".into(), "b".into()], Some("/d".into()));
+        assert_eq!(m.message(40), "Move 2 files\nto '/d'?");
+        let n = ConfirmState::new(ConfirmOp::Delete, vec!["a".into(), "b".into()], None);
+        assert_eq!(n.message(40), "Delete 2 files?");
+    }
+
+    #[test]
+    fn confirm_message_shortens_file_at_end_and_destination_in_the_middle() {
+        let dst = "/home/someone/projects/a/very/deep/directory/tree/target";
+        let name = format!("{}.txt", "x".repeat(60));
+        let c = ConfirmState::new(ConfirmOp::Copy, vec![name], Some(dst.into()));
+        let msg = c.message(30);
+        for line in msg.lines() {
+            assert!(line.chars().count() <= 30, "{line:?}");
+        }
+        let (first, second) = msg.split_once('\n').unwrap();
+        assert_eq!(first, "Copy 'xxxxxxxxxxxxxxxxxxxxxx~'");
+        assert_eq!(second, "to '/home/someo~/tree/target'?");
+        let d = ConfirmState::new(ConfirmOp::Delete, vec![dst.into()], None);
+        let line = d.message(30);
+        assert_eq!(line.chars().count(), 30);
+        assert!(line.starts_with("Delete '/home/") && line.ends_with("'?"), "{line:?}");
+    }
+
     use super::*;
 
     fn key(code: KeyCode) -> KeyEvent {
