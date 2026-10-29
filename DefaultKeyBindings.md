@@ -63,6 +63,11 @@
        docs/Configuration.md's `panels.default_action*` settings for what Enter and
        double-click do by default)
 
+- A-n (Alt-n)
+       while the internal text viewer shows a file, toggle the line number gutter on or
+       off. Not available for command output. The setting is saved in the state file
+       under `viewer.show_line_numbers`
+
 - F5
        copy the tagged files (or if there are no tagged files, the selected file) in the active panel to the directory shown by the inactive panel
 

@@ -91,6 +91,7 @@ triggers the action):
 | `path_history` | `Alt-H`, `Alt-Down` |
 | `toggle_matches_panel` | `Alt-m` |
 | `view` | `F3` |
+| `toggle_line_numbers` | `Alt-n` |
 
 Notes:
 
@@ -204,7 +205,8 @@ All colors are `#rrggbb` hex strings:
     "status_warn_fg":      "#000000",
     "status_warn_bg":      "#ddaa00",
     "search_match_fg":     "#000000",
-    "search_match_bg":     "#ffcc00"
+    "search_match_bg":     "#ffcc00",
+    "line_number_fg":      "#808080"
   }
 }
 ```
@@ -258,7 +260,7 @@ Besides `config.json`, sc keeps a few other files under `~/.config/sc/` and
 |---|---|
 | `~/.config/sc/config.json` | This file. |
 | `~/.config/sc/bookmarks.json` | Bookmarked directories (`Ctrl-b` to add, `Ctrl-\` to browse). |
-| `~/.local/state/sc/state.json` | Panel layout, visibility toggles, and last-visited paths. |
+| `~/.local/state/sc/state.json` | Panel layout, visibility toggles, text viewer settings (line numbers), and last-visited paths. |
 | `~/.local/state/sc/command_history` | Command line history. |
 | `~/.local/state/sc/panel_history.json` | Per-panel directory navigation history. |
 

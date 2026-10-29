@@ -23,6 +23,12 @@ impl App {
     pub(super) fn handle_key_event_inner(&mut self, event: KeyEvent) {
         // Output overlay / text viewer active — block all input except scroll/dismiss keys
         if self.show_output || self.viewer.is_some() {
+            if self.viewer.is_some()
+                && crate::config::bindings_match_event(&self.config.keybindings.toggle_line_numbers, &event)
+            {
+                self.handle_action(Action::ToggleLineNumbers);
+                return;
+            }
             match self.overlay.handle_key(&event, &self.config.keybindings.toggle_shell) {
                 OverlayOutcome::Dismissed => {
                     self.show_output = false;
@@ -362,7 +368,10 @@ impl App {
         }
 
         let pending = self.pending_chord.take();
-        let bl = self.bindings_list();
+        // Text-viewer keys only act inside the viewer, never on the main screen.
+        let bl: Vec<_> = self.bindings_list().into_iter()
+            .filter(|(name, _, _)| !self.palette_commands.iter().any(|c| c.viewer && c.config_key == *name))
+            .collect();
         match match_key(&bl, &event, pending.as_ref()) {
             KeyMatch::Act(action) => {
                 self.handle_action(action);

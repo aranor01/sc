@@ -49,6 +49,9 @@ pub struct OutputOverlayState {
     row_cache_complete: bool,
     /// `TextBuffer::id` of the text `row_cache` describes.
     source_id: u64,
+    /// Digits reserved for line numbers in the gutter. Only ever grows while a
+    /// text is shown, so the wrap width doesn't change on every refined estimate.
+    gutter_digits: u16,
 }
 
 impl OutputOverlayState {
@@ -61,6 +64,7 @@ impl OutputOverlayState {
             row_cache: vec![0],
             row_cache_complete: false,
             source_id: 0,
+            gutter_digits: 0,
         }
     }
 
@@ -69,6 +73,7 @@ impl OutputOverlayState {
     fn sync_text(&mut self, buf: &TextBuffer) {
         if self.source_id != buf.id() {
             self.source_id = buf.id();
+            self.gutter_digits = 0;
             self.reset_row_cache();
         }
     }
@@ -77,6 +82,7 @@ impl OutputOverlayState {
         self.scroll = 0;
         self.pending_line = None;
         self.pending_cap_scroll = false;
+        self.gutter_digits = 0;
         self.reset_row_cache();
     }
 
@@ -263,6 +269,9 @@ impl OutputOverlayState {
 /// border columns and the 1 scrollbar column reserved by `render`. Exposed so
 /// callers can keep `resolve_pending_jump`'s wrap math in sync with what
 /// `render` will actually lay out.
+/// Narrowest text column the viewer will give up the line-number gutter for.
+const MIN_TEXT_WIDTH: u16 = 10;
+
 pub fn content_width(area: Rect) -> u16 {
     area.width.saturating_sub(3)
 }
@@ -347,6 +356,8 @@ pub struct OutputOverlayWidget<'a> {
     /// `(needle, case_sensitive, is_regex, whole_words)` — occurrences get the
     /// search-match colors.
     pub highlight: Option<(&'a str, bool, bool, bool)>,
+    /// Show the source line number next to the first row of each line.
+    pub line_numbers: bool,
 }
 
 impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
@@ -367,14 +378,26 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
             .fg(to_color(self.cs.panel_fg))
             .bg(to_color(self.cs.panel_bg));
 
-        let width = content_width(area);
-        let text_area = Rect { width, ..inner };
         let text: &mut TextBuffer = self.text;
         state.sync_text(text);
+        // Gutter: the line number plus one separating column, dropped when the
+        // terminal is too narrow to leave room for the text.
+        let gutter = if self.line_numbers {
+            let digits = (text.estimated_lines().max(1).ilog10() + 1) as u16;
+            state.gutter_digits = state.gutter_digits.max(digits);
+            state.gutter_digits + 1
+        } else {
+            0
+        };
+        let full_width = content_width(area);
+        let gutter = if full_width >= gutter + MIN_TEXT_WIDTH { gutter } else { 0 };
+        let width = full_width - gutter;
+        let text_area = Rect { x: inner.x + gutter, width, ..inner };
         state.cap_scroll(text, width, inner.height);
         state.resolve_pending_jump(text, width, self.highlight);
 
-        state.ensure_row_cache_to_scroll(text, width, state.scroll);
+        // Cover the whole viewport so every visible line's first row is known.
+        state.ensure_row_cache_to_scroll(text, width, state.scroll.saturating_add(inner.height as u64));
         let start_idx = state.row_cache.partition_point(|&r| r <= state.scroll) - 1;
         let rows_before = state.row_cache[start_idx];
         let take_n = inner.height as usize + 1; // slack for a row scrolled mid-way into
@@ -422,6 +445,25 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
             .scroll(((state.scroll - rows_before).min(u16::MAX as u64) as u16, 0));
         Widget::render(para, text_area, buf);
 
+        if gutter > 0 {
+            let number_style = Style::default()
+                .fg(to_color(self.cs.line_number_fg))
+                .bg(to_color(self.cs.panel_bg));
+            let digits = (gutter - 1) as usize;
+            let bottom = state.scroll.saturating_add(inner.height as u64);
+            for idx in start_idx..state.row_cache.len().min(text.known_lines()) {
+                let first_row = state.row_cache[idx];
+                if first_row >= bottom {
+                    break;
+                }
+                if first_row < state.scroll {
+                    continue; // this line's first row is scrolled off the top
+                }
+                let y = inner.y + (first_row - state.scroll) as u16;
+                buf.set_stringn(inner.x, y, format!("{:>digits$}", idx + 1), digits, number_style);
+            }
+        }
+
         let scrollbar_area = Rect {
             x: inner.x + inner.width.saturating_sub(1),
             width: 1,
@@ -445,7 +487,7 @@ mod tests {
     fn render_to_buffer(text: &str, area: Rect, state: &mut OutputOverlayState) -> Buffer {
         let cs = ColorScheme::default();
         let mut text = TextBuffer::from_string(text.to_string());
-        let widget = OutputOverlayWidget { cs: &cs, text: &mut text, title: "test", highlight: None };
+        let widget = OutputOverlayWidget { cs: &cs, text: &mut text, title: "test", highlight: None, line_numbers: false };
         let mut buf = Buffer::empty(area);
         StatefulWidget::render(widget, area, &mut buf, state);
         buf
@@ -632,7 +674,7 @@ mod tests {
 
     fn render_buf(text: &mut TextBuffer, area: Rect, state: &mut OutputOverlayState) -> Buffer {
         let cs = ColorScheme::default();
-        let widget = OutputOverlayWidget { cs: &cs, text, title: "test", highlight: None };
+        let widget = OutputOverlayWidget { cs: &cs, text, title: "test", highlight: None, line_numbers: false };
         let mut buf = Buffer::empty(area);
         StatefulWidget::render(widget, area, &mut buf, state);
         buf
@@ -683,6 +725,61 @@ mod tests {
         let buf = render_to_buffer("b-1\nb-2\n", area, &mut state);
         assert!(state.row_cache.len() <= 3);
         assert!(find_row_containing(&buf, area, "b-1").is_some());
+    }
+
+    fn render_numbered(text: &str, area: Rect, state: &mut OutputOverlayState) -> Buffer {
+        let cs = ColorScheme::default();
+        let mut text = TextBuffer::from_string(text.to_string());
+        let widget = OutputOverlayWidget { cs: &cs, text: &mut text, title: "test", highlight: None, line_numbers: true };
+        let mut buf = Buffer::empty(area);
+        StatefulWidget::render(widget, area, &mut buf, state);
+        buf
+    }
+
+    #[test]
+    fn line_numbers_label_only_the_first_row_of_a_wrapped_line() {
+        let area = Rect::new(0, 0, 24, 8);
+        let text = format!("short\n{}\nlast\n", "w".repeat(60));
+        let buf = render_numbered(&text, area, &mut OutputOverlayState::new());
+        // 1 digit + 1 separator; text column starts at x = 1 (border) + 2.
+        let rows: Vec<String> = (1..=6).map(|y| row_text(&buf, y, area)).collect();
+        assert!(rows[0].starts_with("│1 short"), "{rows:?}");
+        assert!(rows[1].starts_with("│2 www"), "{rows:?}");
+        assert!(rows[2].starts_with("│  www"), "continuation rows get no number: {rows:?}");
+        let last = rows.iter().find(|r| r.contains("last")).unwrap();
+        assert!(last.starts_with("│3 last"), "{rows:?}");
+    }
+
+    #[test]
+    fn line_numbers_follow_scrolling_and_hide_a_partly_scrolled_first_line() {
+        let area = Rect::new(0, 0, 24, 6);
+        let text = format!("{}\nsecond\nthird\n", "w".repeat(60));
+        let mut state = OutputOverlayState::new();
+        state.scroll = 1; // inside the wrapped first line
+        let buf = render_numbered(&text, area, &mut state);
+        let rows: Vec<String> = (1..=4).map(|y| row_text(&buf, y, area)).collect();
+        assert!(rows[0].starts_with("│  www"), "no number on a continuation row: {rows:?}");
+        assert!(rows.iter().any(|r| r.starts_with("│2 second")), "{rows:?}");
+        assert!(!rows.iter().any(|r| r.starts_with("│1")), "{rows:?}");
+    }
+
+    #[test]
+    fn line_numbers_are_right_aligned_to_the_widest_number() {
+        let text: String = (1..=120).map(|i| format!("l{i}\n")).collect();
+        let area = Rect::new(0, 0, 30, 6);
+        let buf = render_numbered(&text, area, &mut OutputOverlayState::new());
+        assert!(row_text(&buf, 1, area).starts_with("│  1 l1"));
+        assert!(row_text(&buf, 2, area).starts_with("│  2 l2"));
+    }
+
+    #[test]
+    fn no_gutter_when_line_numbers_are_off_or_the_terminal_is_too_narrow() {
+        let area = Rect::new(0, 0, 24, 6);
+        let buf = render_to_buffer("abc\n", area, &mut OutputOverlayState::new());
+        assert!(row_text(&buf, 1, area).starts_with("│abc"));
+        let narrow = Rect::new(0, 0, 12, 6);
+        let buf = render_numbered("abc\n", narrow, &mut OutputOverlayState::new());
+        assert!(row_text(&buf, 1, narrow).starts_with("│abc"), "gutter dropped when text would be cramped");
     }
 
     #[test]

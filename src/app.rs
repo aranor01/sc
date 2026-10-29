@@ -137,6 +137,7 @@ enum Action {
     GoForward,
     ToggleMatchesPanel,
     View,
+    ToggleLineNumbers,
     ActionPalette,
 }
 
@@ -370,6 +371,8 @@ pub struct App {
     orientation: Orientation,
     show_cmdline: bool,
     show_button_bar: bool,
+    /// Line-number gutter of the internal file viewer (never used for command output).
+    show_line_numbers: bool,
     left: PanelState,
     right: PanelState,
     active: Side,
@@ -473,6 +476,7 @@ impl App {
             orientation: state.orientation,
             show_cmdline: state.show_cmdline,
             show_button_bar: state.show_button_bar,
+            show_line_numbers: state.viewer.show_line_numbers,
             left: PanelState::new(Box::new(FilesystemProvider), left_node),
             right: PanelState::new(Box::new(FilesystemProvider), right_node),
             active: Side::Left,
@@ -696,6 +700,7 @@ impl App {
             ("go_forward", &kb.go_forward, Action::GoForward),
             ("toggle_matches_panel", &kb.toggle_matches_panel, Action::ToggleMatchesPanel),
             ("view", &kb.view, Action::View),
+            ("toggle_line_numbers", &kb.toggle_line_numbers, Action::ToggleLineNumbers),
             ("action_palette", &kb.action_palette, Action::ActionPalette),
         ]
     }

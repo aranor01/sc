@@ -240,6 +240,7 @@ pub struct KeyBindings {
     pub go_forward: ActionBindings,
     pub toggle_matches_panel: ActionBindings,
     pub view: ActionBindings,
+    pub toggle_line_numbers: ActionBindings,
     pub action_palette: ActionBindings,
 }
 
@@ -317,6 +318,7 @@ impl Default for KeyBindings {
             go_forward: vec![KeyBinding::Single(ke(Right, a))],
             toggle_matches_panel: vec![KeyBinding::Single(ke(Char('m'), a))],
             view: vec![KeyBinding::Single(ke(F(3), n))],
+            toggle_line_numbers: vec![KeyBinding::Single(ke(Char('n'), a))],
             action_palette: vec![KeyBinding::Single(ke(F(1), n))],
         }
     }
@@ -368,6 +370,7 @@ pub struct ColorScheme {
     pub status_warn_bg: Color,
     pub search_match_fg: Color,
     pub search_match_bg: Color,
+    pub line_number_fg: Color,
 }
 
 impl Default for ColorScheme {
@@ -403,6 +406,7 @@ impl Default for ColorScheme {
             status_warn_bg: rgb(0xddaa00),
             search_match_fg: rgb(0x000000),
             search_match_bg: rgb(0xffcc00),
+            line_number_fg: rgb(0x808080),
         }
     }
 }
@@ -595,6 +599,7 @@ impl Config {
                     "go_forward" => cfg.keybindings.go_forward = bindings,
                     "toggle_matches_panel" => cfg.keybindings.toggle_matches_panel = bindings,
                     "view" => cfg.keybindings.view = bindings,
+                    "toggle_line_numbers" => cfg.keybindings.toggle_line_numbers = bindings,
                     "action_palette" => cfg.keybindings.action_palette = bindings,
                     _ => {} // unknown keys silently ignored
                 }
@@ -647,6 +652,7 @@ impl Config {
                 status_warn_bg: pick("status_warn_bg", d.status_warn_bg)?,
                 search_match_fg: pick("search_match_fg", d.search_match_fg)?,
                 search_match_bg: pick("search_match_bg", d.search_match_bg)?,
+                line_number_fg: pick("line_number_fg", d.line_number_fg)?,
             };
         }
 
@@ -709,6 +715,19 @@ mod tests {
         // spot-check a keybinding
         assert!(cfg.keybindings.exit.contains(&single(F(10), M::NONE)));
         assert!(cfg.keybindings.toggle_matches_panel.contains(&single(Char('m'), M::ALT)));
+    }
+
+    #[test]
+    fn toggle_line_numbers_defaults_to_alt_n_and_can_be_overridden() {
+        let cfg = Config::load_from_str("{}").unwrap();
+        assert!(cfg.keybindings.toggle_line_numbers.contains(&single(Char('n'), M::ALT)));
+        assert_eq!(cfg.colorscheme.line_number_fg, rgb(0x808080));
+        let cfg = Config::load_from_str(
+            r##"{"keybindings":{"toggle_line_numbers":"Ctrl-l"},"colorscheme":{"line_number_fg":"#112233"}}"##,
+        )
+        .unwrap();
+        assert!(cfg.keybindings.toggle_line_numbers.contains(&single(Char('l'), M::CONTROL)));
+        assert_eq!(cfg.colorscheme.line_number_fg, rgb(0x112233));
     }
 
     #[test]

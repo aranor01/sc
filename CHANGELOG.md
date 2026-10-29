@@ -35,6 +35,9 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 - Running a command (from the command line or via `Ctrl-o`/subshell passthrough) while
   the matches panel is the active panel uses the directory of the file whose matches
   are shown as the working directory, since the matches panel isn't a directory browser.
+- `Alt-n` (action `toggle_line_numbers`): show/hide line numbers in the internal text
+  viewer when it shows a file (never for command output); on by default, saved in
+  `state.json`. New color-scheme key `line_number_fg`.
 - `F3` (action `view`): opens the internal full-screen text viewer on the active panel's
   current entry. The bundled default menu's external "View" entry moves to `Shift-F3`.
 - Enter and double-click on a file now trigger the "default action", that can be

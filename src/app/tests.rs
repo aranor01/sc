@@ -921,6 +921,37 @@ fn view_action_opens_current_entry_in_viewer() {
 }
 
 #[test]
+fn alt_n_toggles_line_numbers_only_while_the_file_viewer_is_open() {
+    let alt_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT);
+    let base = make_search_base("line_numbers_key");
+    std::fs::write(base.join("hello.txt"), "hello world\n").unwrap();
+    let mut app = test_app(&base);
+    assert!(app.show_line_numbers, "on by default");
+
+    // Main screen: the key is not an action there.
+    app.handle_key_event(alt_n);
+    assert!(app.show_line_numbers, "ignored on the main screen");
+
+    // Command output overlay: the key is ignored.
+    app.last_output = Some(crate::textbuf::TextBuffer::from_string("out\n".into()));
+    app.show_output = true;
+    app.handle_key_event(alt_n);
+    assert!(app.show_line_numbers, "never for command output");
+    app.show_output = false;
+
+    let idx = app.left.entries.iter().position(|e| e.name == "hello.txt").unwrap();
+    app.left.cursor = idx;
+    app.handle_action(Action::View);
+    app.handle_key_event(alt_n);
+    assert!(!app.show_line_numbers);
+    assert!(app.viewer.is_some(), "the key must not close the viewer");
+    app.handle_key_event(alt_n);
+    assert!(app.show_line_numbers);
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn view_action_resets_scroll_for_a_newly_opened_file() {
     let base = make_search_base("view_action_scroll_reset");
     std::fs::write(base.join("a.txt"), "a\n").unwrap();
@@ -1032,6 +1063,17 @@ fn type_str(app: &mut App, text: &str) {
 
 fn palette_items(app: &App) -> Vec<String> {
     app.palette.as_ref().unwrap().list.items.clone()
+}
+
+#[test]
+fn viewer_only_commands_are_not_offered_by_the_palette() {
+    let base = make_search_base("palette_viewer_only");
+    let app = test_app(&base);
+    let entries = app.palette_entries();
+    assert!(entries.iter().any(|e| e.id == "view"));
+    assert!(!entries.iter().any(|e| e.id == "toggle_line_numbers"));
+    assert!(!entries.iter().any(|e| e.category == "Text Viewer"));
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]

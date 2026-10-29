@@ -13,6 +13,7 @@ impl App {
             right_sort_asc: self.right.sort_asc,
             right_show_hidden: self.right.show_hidden,
             recent_actions: self.recent_actions.clone(),
+            viewer: crate::state::ViewerState { show_line_numbers: self.show_line_numbers },
         };
         let _ = state.save();
         let _ = self.history.save(&crate::state::history_path());
@@ -215,6 +216,7 @@ impl App {
                 text: &mut viewer.buf,
                 title: &viewer.title,
                 highlight,
+                line_numbers: self.show_line_numbers,
             };
             frame.render_stateful_widget(overlay, area, &mut self.overlay);
         } else if self.show_output {
@@ -225,6 +227,7 @@ impl App {
                     text,
                     title: " Command Output (Esc/C-o to close) ",
                     highlight: None,
+                    line_numbers: false,
                 };
                 frame.render_stateful_widget(overlay, area, &mut self.overlay);
             }
