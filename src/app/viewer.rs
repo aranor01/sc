@@ -1,4 +1,5 @@
 use super::*;
+use crate::textbuf::{looks_binary, ANSI_RE};
 
 impl App {
     pub(super) fn is_current_entry_text_file(&self) -> bool {
@@ -56,12 +57,25 @@ impl App {
         jump_line: Option<u64>,
         noop_because_it_is_binary: Option<&mut bool>,
     ) {
-        match try_open_text_file(abs, noop_because_it_is_binary) {
-            Ok(Some(bytes)) => {
+        if let Some(flag) = noop_because_it_is_binary {
+            match looks_binary(abs) {
+                Ok(true) => {
+                    *flag = true;
+                    return; // binary file, nothing to do
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    self.set_status(&format!("Cannot open {}: {}", abs, e), true);
+                    return;
+                }
+            }
+        }
+        match TextBuffer::open(abs) {
+            Ok(buf) => {
                 self.show_output = false;
                 self.viewer = Some(ViewerContent {
                     title: format!(" {} (Esc to close) ", display_path(abs)),
-                    text: normalize_text_file(bytes),
+                    buf,
                     highlight,
                 });
                 self.overlay.reset_scroll();
@@ -69,7 +83,6 @@ impl App {
                     self.overlay.jump_to_line(line);
                 }
             }
-            Ok(None) => {} // binary file detected, nothing to do
             Err(e) => self.set_status(&format!("Cannot open {}: {}", abs, e), true),
         }
     }
@@ -78,17 +91,6 @@ impl App {
 pub(super) fn shell_escape_path(s: &str) -> String {
     crate::macros::shell_escape(s)
 }
-
-// OSC alternative is first so \x1b] is consumed with its body;
-// otherwise the fallback 2-char match would consume just \x1b].
-// [0-?] adds DEC private sequences (\x1b=, \x1b>, \x1b7, \x1b8, etc.) missing from the
-// original [@-Z\\-_] range (0x40-0x5F).
-pub(super) static ANSI_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(
-        r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|[0-?@-Z\\-_]|\[[0-?]*[ -/]*[@-~])",
-    )
-    .unwrap()
-});
 
 pub(super) fn normalize_pty_output(bytes: &[u8]) -> String {
     let s = String::from_utf8_lossy(bytes);
@@ -120,100 +122,7 @@ pub(super) fn normalize_pty_output(bytes: &[u8]) -> String {
     out
 }
 
-pub(super) fn is_bidi_or_invisible(c: char) -> bool {
-    crate::ui::is_format_char(c)
-}
-
-/// Whether `c` has to be dropped or replaced when showing a file.
-fn needs_sanitizing(c: char) -> bool {
-    match c {
-        '\n' | '\t' => false,
-        c if c.is_control() => true,
-        c => is_bidi_or_invisible(c),
-    }
-}
-
-/// Cleans a file's bytes for display. Most files need no change at all, so each
-/// step only runs when its trigger is present, and a clean file is returned
-/// without being copied.
-pub(super) fn normalize_text_file(bytes: Vec<u8>) -> String {
-    let mut s = String::from_utf8(bytes)
-        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
-    if s.contains('\r') {
-        s.retain(|c| c != '\r');
-    }
-    if s.contains('\x1b') {
-        let replaced = match ANSI_RE.replace_all(&s, |caps: &regex::Captures| {
-            ".".repeat(caps.get(0).unwrap().as_str().chars().count())
-        }) {
-            std::borrow::Cow::Owned(r) => Some(r),
-            std::borrow::Cow::Borrowed(_) => None,
-        };
-        if let Some(r) = replaced {
-            s = r;
-        }
-    }
-    let clean = if s.is_ascii() {
-        !s.bytes().any(|b| (b < 0x20 && b != b'\n' && b != b'\t') || b == 0x7f)
-    } else {
-        !s.chars().any(needs_sanitizing)
-    };
-    if clean {
-        return s;
-    }
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '\n' | '\t' => out.push(ch),
-            c if c.is_control() => out.push('.'),
-            c if is_bidi_or_invisible(c) => {} // Unicode bidi/zero-width
-            _ => out.push(ch),
-        }
-    }
-    out
-}
-
-pub(super) fn try_open_text_file(
-    abs: &str,
-    noop_because_it_is_binary: Option<&mut bool>,
-) -> std::io::Result<Option<Vec<u8>>> {
-    use std::io::{BufRead, Read};
-
-    let mut reader = std::io::BufReader::new(std::fs::File::open(abs)?);
-
-    if let Some(flag) = noop_because_it_is_binary {
-        if reader.fill_buf()?.contains(&0u8) {
-            *flag = true;
-            return Ok(None);
-        }
-    }
-
-    let mut bytes = Vec::new();
-    reader.read_to_end(&mut bytes)?;
-    Ok(Some(bytes))
-}
-
 pub(super) fn is_text_file(abs: &str) -> bool {
-    let mut noop_because_it_is_binary:Option<&mut bool> = Some(&mut false);
-    _ = try_open_text_file(abs, noop_because_it_is_binary.as_deref_mut());
-    !*noop_because_it_is_binary.unwrap()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_text_file_leaves_clean_text_alone() {
-        assert_eq!(normalize_text_file("a\tb\nc ünï 日本\n".into()), "a\tb\nc ünï 日本\n");
-    }
-
-    #[test]
-    fn normalize_text_file_cleans_crlf_ansi_controls_and_format_chars() {
-        assert_eq!(normalize_text_file(b"a\r\nb\r\n".to_vec()), "a\nb\n");
-        assert_eq!(normalize_text_file(b"x\x1b[31mred\x1b[0m".to_vec()), "x.....red....");
-        assert_eq!(normalize_text_file(b"a\x01b\x7fc\x1b".to_vec()), "a.b.c.");
-        assert_eq!(normalize_text_file("a\u{202e}b".into()), "ab");
-        assert_eq!(normalize_text_file(b"ok\xffok".to_vec()), "ok\u{fffd}ok");
-    }
+    // An unreadable file counts as text, so opening it reports the error.
+    !matches!(looks_binary(abs), Ok(true))
 }

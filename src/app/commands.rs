@@ -146,7 +146,7 @@ impl App {
         let wrapped = format!(r#"{cmd}; {sc_action_path} "$SC_TOKEN" ShowPanels "$PWD""#);
         let raw = crate::subshell::run_with_pty_capture(&wrapped, &cwd);
         let text = normalize_pty_output(&raw);
-        self.last_output = if text.trim().is_empty() { None } else { Some(text) };
+        self.last_output = if text.trim().is_empty() { None } else { Some(TextBuffer::from_string(text)) };
         self.overlay.reset_scroll();
 
         let _ = enable_raw_mode();

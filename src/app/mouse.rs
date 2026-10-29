@@ -340,8 +340,8 @@ impl App {
                     let scrollbar_col = area.x + 1 + inner_w;
                     if col == scrollbar_col.saturating_sub(1) {
                         let total_lines = self.viewer.as_ref()
-                            .map(|v| v.text.lines().count())
-                            .or_else(|| self.last_output.as_deref().map(|t| t.lines().count()))
+                            .map(|v| v.buf.estimated_lines())
+                            .or_else(|| self.last_output.as_ref().map(|t| t.estimated_lines()))
                             .unwrap_or(0);
                         let track_row = row.saturating_sub(inner_y) as usize;
                         self.overlay.scrollbar_click(track_row, inner_h, total_lines);

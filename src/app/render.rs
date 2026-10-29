@@ -207,18 +207,18 @@ impl App {
 
         // Output overlay / text viewer — drawn after cmdline/button bar so it
         // covers the full terminal area
-        if let Some(viewer) = &self.viewer {
+        if let Some(viewer) = &mut self.viewer {
             self.overlay_area.set(area);
             let highlight = viewer.highlight.as_ref().map(|(n, c, r, w)| (n.as_str(), *c, *r, *w));
             let overlay = OutputOverlayWidget {
                 cs: &cs,
-                text: &viewer.text,
+                text: &mut viewer.buf,
                 title: &viewer.title,
                 highlight,
             };
             frame.render_stateful_widget(overlay, area, &mut self.overlay);
         } else if self.show_output {
-            if let Some(text) = &self.last_output {
+            if let Some(text) = &mut self.last_output {
                 self.overlay_area.set(area);
                 let overlay = OutputOverlayWidget {
                     cs: &cs,

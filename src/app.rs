@@ -1,7 +1,6 @@
 use std::cell::Cell;
 use std::io::stdout;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use unicode_width::UnicodeWidthChar;
@@ -73,6 +72,7 @@ use startup::{absolutize_str, display_path};
 use commands::{menu_item_is_chord_start, menu_item_matches_key};
 use completion::history_matches;
 use viewer::{normalize_pty_output, shell_escape_path};
+use crate::textbuf::TextBuffer;
 
 // ── Side ─────────────────────────────────────────────────────────────────────
 
@@ -287,7 +287,7 @@ enum ModalAreas {
 /// (as opposed to the last command's output).
 struct ViewerContent {
     title: String,
-    text: String,
+    buf: TextBuffer,
     highlight: Option<(String, bool, bool, bool)>, // needle, case_sensitive, is_regex, whole_words
 }
 
@@ -375,7 +375,7 @@ pub struct App {
     active: Side,
     cmdline: CmdLineState,
     history: CommandHistory,
-    last_output: Option<String>,
+    last_output: Option<TextBuffer>,
     show_output: bool,
     subshell_prompt_needed: bool,
     overlay: OutputOverlayState,

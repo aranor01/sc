@@ -1,5 +1,6 @@
 use crate::config::{ActionBindings, ColorScheme, bindings_match_event};
 use crate::pattern::ContentMatcher;
+use crate::textbuf::TextBuffer;
 use crate::ui::modal_event::OverlayOutcome;
 use crossterm::event::{KeyCode, KeyEvent};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -25,55 +26,6 @@ fn build_matcher(highlight: Option<(&str, bool, bool, bool)>) -> Option<ContentM
     ContentMatcher::build(needle, is_regex, case_sensitive, whole_words).ok()
 }
 
-/// Start offset of every line of the text last handed to the overlay, found
-/// with one `memchr` scan. Replaces `text.lines().skip(n)` / `.count()`, which
-/// rescan from the top of the text on every call. Same line semantics as
-/// `str::lines`.
-struct LineIndex {
-    /// `(ptr, len)` of the text `starts` was built for.
-    key: (usize, usize),
-    starts: Vec<usize>,
-}
-
-impl LineIndex {
-    fn new() -> Self {
-        Self { key: (0, 0), starts: Vec::new() }
-    }
-
-    /// Rebuilds the index if `text` is not the text it was built for.
-    /// Returns whether it did.
-    fn sync(&mut self, text: &str) -> bool {
-        let key = (text.as_ptr() as usize, text.len());
-        if self.key == key {
-            return false;
-        }
-        self.key = key;
-        self.starts.clear();
-        if !text.is_empty() {
-            self.starts.push(0);
-            self.starts.extend(
-                memchr::memchr_iter(b'\n', text.as_bytes())
-                    .map(|p| p + 1)
-                    .filter(|&next| next < text.len()),
-            );
-        }
-        true
-    }
-
-    fn len(&self) -> usize {
-        self.starts.len()
-    }
-
-    /// Line `idx` of `text` (which must be the text last passed to `sync`),
-    /// without its line terminator.
-    fn line<'t>(&self, text: &'t str, idx: usize) -> &'t str {
-        let end = self.starts.get(idx + 1).copied().unwrap_or(text.len());
-        let line = &text[self.starts[idx]..end];
-        let line = line.strip_suffix('\n').unwrap_or(line);
-        line.strip_suffix('\r').unwrap_or(line)
-    }
-}
-
 pub struct OutputOverlayState {
     pub scroll: u64,
     pending_line: Option<u64>,
@@ -95,7 +47,8 @@ pub struct OutputOverlayState {
     /// the true total wrapped-row count — both previously found by
     /// rescanning `text` directly.
     row_cache_complete: bool,
-    lines: LineIndex,
+    /// `TextBuffer::id` of the text `row_cache` describes.
+    source_id: u64,
 }
 
 impl OutputOverlayState {
@@ -107,14 +60,15 @@ impl OutputOverlayState {
             row_cache_width: 0,
             row_cache: vec![0],
             row_cache_complete: false,
-            lines: LineIndex::new(),
+            source_id: 0,
         }
     }
 
-    /// Points the line index at `text`; if that's a different text from last
-    /// time, the row cache described the old one and is dropped.
-    fn sync_text(&mut self, text: &str) {
-        if self.lines.sync(text) {
+    /// If `buf` is a different text from last time, the row cache described
+    /// the old one and is dropped.
+    fn sync_text(&mut self, buf: &TextBuffer) {
+        if self.source_id != buf.id() {
+            self.source_id = buf.id();
             self.reset_row_cache();
         }
     }
@@ -154,8 +108,8 @@ impl OutputOverlayState {
     /// an entry for raw line `line_idx` or the file runs out. Used by
     /// `resolve_pending_jump`, which needs the row offset of one specific
     /// line and is only called on an actual jump, not every frame.
-    fn ensure_row_cache_to_line(&mut self, text: &str, width: u16, line_idx: usize) {
-        self.sync_text(text);
+    fn ensure_row_cache_to_line(&mut self, buf: &mut TextBuffer, width: u16, line_idx: usize) {
+        self.sync_text(buf);
         self.sync_row_cache_width(width);
         if self.row_cache_complete || self.row_cache.len() - 1 > line_idx {
             return;
@@ -163,12 +117,14 @@ impl OutputOverlayState {
         let w = width.max(1) as usize;
         let already = self.row_cache.len() - 1;
         let mut rows = *self.row_cache.last().unwrap();
-        for idx in already..self.lines.len() {
-            rows += wrapped_row_count(&super::expand_tabs(self.lines.line(text, idx)), w) as u64;
+        let mut idx = already;
+        while buf.ensure_line(idx) {
+            rows += wrapped_row_count(&super::expand_tabs(&buf.line(idx).unwrap()), w) as u64;
             self.row_cache.push(rows);
             if self.row_cache.len() - 1 > line_idx {
                 return;
             }
+            idx += 1;
         }
         self.row_cache_complete = true;
     }
@@ -178,8 +134,8 @@ impl OutputOverlayState {
     /// This is the one `render` calls every frame — but since it only ever
     /// walks lines past what's already cached, a stationary or slowly
     /// moving scroll position costs nothing.
-    fn ensure_row_cache_to_scroll(&mut self, text: &str, width: u16, scroll: u64) {
-        self.sync_text(text);
+    fn ensure_row_cache_to_scroll(&mut self, buf: &mut TextBuffer, width: u16, scroll: u64) {
+        self.sync_text(buf);
         self.sync_row_cache_width(width);
         if self.row_cache_complete {
             return;
@@ -190,12 +146,14 @@ impl OutputOverlayState {
         if rows > scroll {
             return; // already covers it
         }
-        for idx in already..self.lines.len() {
-            rows += wrapped_row_count(&super::expand_tabs(self.lines.line(text, idx)), w) as u64;
+        let mut idx = already;
+        while buf.ensure_line(idx) {
+            rows += wrapped_row_count(&super::expand_tabs(&buf.line(idx).unwrap()), w) as u64;
             self.row_cache.push(rows);
             if rows > scroll {
                 return;
             }
+            idx += 1;
         }
         self.row_cache_complete = true;
     }
@@ -204,8 +162,8 @@ impl OutputOverlayState {
     /// becomes the true total wrapped-row count. Only called when that's
     /// actually needed (e.g. `End`, or a scroll target past what's been
     /// scanned so far) — not on every frame.
-    fn ensure_row_cache_complete(&mut self, text: &str, width: u16) {
-        self.sync_text(text);
+    fn ensure_row_cache_complete(&mut self, buf: &mut TextBuffer, width: u16) {
+        self.sync_text(buf);
         self.sync_row_cache_width(width);
         if self.row_cache_complete {
             return;
@@ -213,23 +171,25 @@ impl OutputOverlayState {
         let w = width.max(1) as usize;
         let already = self.row_cache.len() - 1;
         let mut rows = *self.row_cache.last().unwrap();
-        for idx in already..self.lines.len() {
-            rows += wrapped_row_count(&super::expand_tabs(self.lines.line(text, idx)), w) as u64;
+        let mut idx = already;
+        while buf.ensure_line(idx) {
+            rows += wrapped_row_count(&super::expand_tabs(&buf.line(idx).unwrap()), w) as u64;
             self.row_cache.push(rows);
+            idx += 1;
         }
         self.row_cache_complete = true;
     }
 
-    pub fn resolve_pending_jump(&mut self, text: &str, width: u16, highlight: Option<(&str, bool, bool, bool)>) {
+    pub fn resolve_pending_jump(&mut self, buf: &mut TextBuffer, width: u16, highlight: Option<(&str, bool, bool, bool)>) {
         let Some(line) = self.pending_line.take() else { return };
         let line_idx = (line - 1) as usize;
-        self.ensure_row_cache_to_line(text, width, line_idx);
+        self.ensure_row_cache_to_line(buf, width, line_idx);
         if line_idx >= self.row_cache.len() - 1 {
             return; // text no longer has that many lines
         }
         let mut rows_before = self.row_cache[line_idx];
-        {
-            let line_text = super::expand_tabs(self.lines.line(text, line_idx));
+        if let Some(raw_line) = buf.line(line_idx) {
+            let line_text = super::expand_tabs(&raw_line);
             let matcher = build_matcher(highlight);
             if let Some((m_start, _)) =
                 matcher.as_ref().and_then(|m| m.find_matches(&line_text).into_iter().next())
@@ -241,25 +201,23 @@ impl OutputOverlayState {
         self.pending_cap_scroll = true;
     }
 
-    pub fn cap_scroll(&mut self, text: &str, width: u16, viewport_height: u16) {
+    pub fn cap_scroll(&mut self, buf: &mut TextBuffer, width: u16, viewport_height: u16) {
         if !self.pending_cap_scroll {
             return;
         }
         self.pending_cap_scroll = false;
 
-        self.sync_text(text);
-        // Cheap bound: the line count, ignoring wrapping.
-        let line_count = self.lines.len();
-        let scroll_limit = line_count.saturating_sub(viewport_height as usize) as u64;
-        if self.scroll <= scroll_limit {
-            return;
-        }
-
-        self.ensure_row_cache_complete(text, width);
-        let total_rows = *self.row_cache.last().unwrap();
-        let scroll_limit = total_rows.saturating_sub(viewport_height as u64);
-        if self.scroll > scroll_limit {
-            self.scroll = scroll_limit;
+        // Only read as far as the view needs: if the text goes on past the
+        // rows the view would show, the scroll position is in range. Reaching
+        // the end of the text means the total row count is known to clamp to.
+        let wanted = self.scroll.saturating_add(viewport_height as u64);
+        self.ensure_row_cache_to_scroll(buf, width, wanted);
+        if self.row_cache_complete {
+            let total_rows = *self.row_cache.last().unwrap();
+            let scroll_limit = total_rows.saturating_sub(viewport_height as u64);
+            if self.scroll > scroll_limit {
+                self.scroll = scroll_limit;
+            }
         }
     }
 
@@ -314,26 +272,15 @@ pub fn content_width(area: Rect) -> u16 {
 /// whitespace runs entirely) — needed because ratatui's `Wrap{trim:false}`
 /// lays out whitespace verbatim rather than collapsing or trimming it. Each
 /// segment is paired with whether it's a whitespace run.
-fn whitespace_runs(line: &str) -> Vec<(bool, &str)> {
-    let mut segments = Vec::new();
-    let mut start = 0;
-    let mut current_is_ws: Option<bool> = None;
-    for (i, c) in line.char_indices() {
-        let is_ws = c.is_whitespace();
-        match current_is_ws {
-            None => current_is_ws = Some(is_ws),
-            Some(prev) if prev != is_ws => {
-                segments.push((prev, &line[start..i]));
-                start = i;
-                current_is_ws = Some(is_ws);
-            }
-            _ => {}
-        }
-    }
-    if let Some(is_ws) = current_is_ws {
-        segments.push((is_ws, &line[start..]));
-    }
-    segments
+fn whitespace_runs(line: &str) -> impl Iterator<Item = (bool, &str)> {
+    let mut rest = line;
+    std::iter::from_fn(move || {
+        let is_ws = rest.chars().next()?.is_whitespace();
+        let end = rest.find(|c: char| c.is_whitespace() != is_ws).unwrap_or(rest.len());
+        let (segment, tail) = rest.split_at(end);
+        rest = tail;
+        Some((is_ws, segment))
+    })
 }
 
 /// Number of display rows `line` occupies when wrapped to `width` columns:
@@ -395,7 +342,7 @@ fn wrapped_row_count(line: &str, width: usize) -> usize {
 /// from disk, optionally highlighting search matches.
 pub struct OutputOverlayWidget<'a> {
     pub cs: &'a ColorScheme,
-    pub text: &'a str,
+    pub text: &'a mut TextBuffer,
     pub title: &'a str,
     /// `(needle, case_sensitive, is_regex, whole_words)` — occurrences get the
     /// search-match colors.
@@ -422,11 +369,12 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
 
         let width = content_width(area);
         let text_area = Rect { width, ..inner };
-        state.sync_text(self.text);
-        state.cap_scroll(self.text, width, inner.height);
-        state.resolve_pending_jump(self.text, width, self.highlight);
+        let text: &mut TextBuffer = self.text;
+        state.sync_text(text);
+        state.cap_scroll(text, width, inner.height);
+        state.resolve_pending_jump(text, width, self.highlight);
 
-        state.ensure_row_cache_to_scroll(self.text, width, state.scroll);
+        state.ensure_row_cache_to_scroll(text, width, state.scroll);
         let start_idx = state.row_cache.partition_point(|&r| r <= state.scroll) - 1;
         let rows_before = state.row_cache[start_idx];
         let take_n = inner.height as usize + 1; // slack for a row scrolled mid-way into
@@ -434,7 +382,7 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
         let total_lines = if state.row_cache_complete {
             *state.row_cache.last().unwrap()
         } else {
-            *(state.row_cache.last().unwrap()).max(&(state.lines.len() as u64))
+            *(state.row_cache.last().unwrap()).max(&(text.estimated_lines() as u64))
         };
 
         let matcher = build_matcher(self.highlight);
@@ -442,10 +390,13 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
             .fg(to_color(self.cs.search_match_fg))
             .bg(to_color(self.cs.search_match_bg));
 
-        let end_idx = (start_idx + take_n).min(state.lines.len());
+        text.ensure_line(start_idx + take_n - 1);
+        let text: &TextBuffer = text;
+        let end_idx = (start_idx + take_n).min(text.known_lines());
         let lines: Vec<Line> = (start_idx..end_idx)
-            .map(|idx| {
-                let line = super::expand_tabs(state.lines.line(self.text, idx));
+            .filter_map(|idx| text.line(idx))
+            .map(|raw_line| {
+                let line = super::expand_tabs(&raw_line).into_owned();
                 let Some(m) = matcher.as_ref() else {
                     return Line::from(Span::styled(line, style));
                 };
@@ -493,7 +444,8 @@ mod tests {
 
     fn render_to_buffer(text: &str, area: Rect, state: &mut OutputOverlayState) -> Buffer {
         let cs = ColorScheme::default();
-        let widget = OutputOverlayWidget { cs: &cs, text, title: "test", highlight: None };
+        let mut text = TextBuffer::from_string(text.to_string());
+        let widget = OutputOverlayWidget { cs: &cs, text: &mut text, title: "test", highlight: None };
         let mut buf = Buffer::empty(area);
         StatefulWidget::render(widget, area, &mut buf, state);
         buf
@@ -511,26 +463,6 @@ mod tests {
 
     fn find_row_containing(buf: &Buffer, area: Rect, needle: &str) -> Option<u16> {
         (area.y..area.y + area.height).find(|&y| row_text(buf, y, area).contains(needle))
-    }
-
-    #[test]
-    fn line_index_matches_str_lines() {
-        for text in ["", "\n", "a", "a\n", "a\nb", "a\n\nb\n", "\n\na", "a\r\nb\r\n"] {
-            let mut idx = LineIndex::new();
-            idx.sync(text);
-            let got: Vec<&str> = (0..idx.len()).map(|i| idx.line(text, i)).collect();
-            let want: Vec<&str> = text.lines().collect();
-            assert_eq!(got, want, "text {text:?}");
-        }
-    }
-
-    #[test]
-    fn line_index_rebuilds_for_a_different_text() {
-        let mut idx = LineIndex::new();
-        assert!(idx.sync("a\nb"));
-        assert!(!idx.sync("a\nb"));
-        assert!(idx.sync("x\ny\nz"));
-        assert_eq!(idx.len(), 3);
     }
 
     #[test]
@@ -625,7 +557,7 @@ mod tests {
 
         let mut state = OutputOverlayState::new();
         state.jump_to_line(4);
-        state.resolve_pending_jump(&text, content_width(area), None);
+        state.resolve_pending_jump(&mut TextBuffer::from_string(text.clone()), content_width(area), None);
 
         let buf = render_to_buffer(&text, area, &mut state);
         assert!(
@@ -647,7 +579,7 @@ mod tests {
 
 	    let mut state = OutputOverlayState::new();
 	    state.jump_to_line(2);
-	    state.resolve_pending_jump(&text, content_width(area), Some(("needle-token", true, false, false)));
+	    state.resolve_pending_jump(&mut TextBuffer::from_string(text.clone()), content_width(area), Some(("needle-token", true, false, false)));
 
 	    let buf = render_to_buffer(&text, area, &mut state);
 	    assert!(
@@ -673,7 +605,7 @@ mod tests {
     fn resolve_pending_jump_is_a_noop_without_a_pending_line() {
         let mut state = OutputOverlayState::new();
         state.scroll = 5;
-        state.resolve_pending_jump("a\nb\nc\n", 40, None);
+        state.resolve_pending_jump(&mut TextBuffer::from_string("a\nb\nc\n".into()), 40, None);
         assert_eq!(state.scroll, 5);
     }
 
@@ -686,8 +618,71 @@ mod tests {
         let mut state = OutputOverlayState::new();
         state.scroll = 5;
         state.jump_to_line(100);
-        state.resolve_pending_jump("a\nb\nc\n", 40, None);
+        state.resolve_pending_jump(&mut TextBuffer::from_string("a\nb\nc\n".into()), 40, None);
         assert_eq!(state.scroll, 5);
+    }
+
+    /// A file of `n` numbered lines, read 4 KiB at a time.
+    fn chunked_file(name: &str, n: usize) -> (std::path::PathBuf, TextBuffer) {
+        let path = std::env::temp_dir().join(format!("sc-overlay-{}-{name}", std::process::id()));
+        std::fs::write(&path, (1..=n).map(|i| format!("line-{i}\n")).collect::<String>()).unwrap();
+        let buf = TextBuffer::open_with_chunk(path.to_str().unwrap(), 4096).unwrap();
+        (path, buf)
+    }
+
+    fn render_buf(text: &mut TextBuffer, area: Rect, state: &mut OutputOverlayState) -> Buffer {
+        let cs = ColorScheme::default();
+        let widget = OutputOverlayWidget { cs: &cs, text, title: "test", highlight: None };
+        let mut buf = Buffer::empty(area);
+        StatefulWidget::render(widget, area, &mut buf, state);
+        buf
+    }
+
+    #[test]
+    fn scrolling_down_reads_the_file_lazily() {
+        let (path, mut text) = chunked_file("lazy", 20_000);
+        let area = Rect::new(0, 0, 40, 10);
+        let mut state = OutputOverlayState::new();
+        render_buf(&mut text, area, &mut state);
+        for _ in 0..30 {
+            state.handle_key(&KeyEvent::from(KeyCode::PageDown), &ActionBindings::default());
+            render_buf(&mut text, area, &mut state);
+        }
+        assert!(!text.fully_read(), "paging a little must not read the whole file");
+        let buf = render_buf(&mut text, area, &mut state);
+        assert!(find_row_containing(&buf, area, "line-601").is_some());
+        state.handle_key(&KeyEvent::from(KeyCode::End), &ActionBindings::default());
+        let buf = render_buf(&mut text, area, &mut state);
+        assert!(text.fully_read());
+        assert!(find_row_containing(&buf, area, "line-20000").is_some());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn jump_to_a_line_deep_in_a_multi_chunk_file() {
+        let (path, mut text) = chunked_file("jump", 20_000);
+        let area = Rect::new(0, 0, 40, 10);
+        let mut state = OutputOverlayState::new();
+        state.jump_to_line(15_000);
+        let buf = render_buf(&mut text, area, &mut state);
+        assert!(find_row_containing(&buf, area, "line-15000").is_some());
+        assert!(!text.fully_read());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn showing_a_different_text_drops_the_row_cache() {
+        let area = Rect::new(0, 0, 40, 10);
+        let mut state = OutputOverlayState::new();
+        let long: String = (1..=500).map(|i| format!("a-{i}\n")).collect();
+        render_to_buffer(&long, area, &mut state);
+        state.scroll = 300;
+        render_to_buffer(&long, area, &mut state);
+        assert!(state.row_cache.len() > 300);
+        state.scroll = 0;
+        let buf = render_to_buffer("b-1\nb-2\n", area, &mut state);
+        assert!(state.row_cache.len() <= 3);
+        assert!(find_row_containing(&buf, area, "b-1").is_some());
     }
 
     #[test]

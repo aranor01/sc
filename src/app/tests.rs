@@ -914,8 +914,8 @@ fn view_action_opens_current_entry_in_viewer() {
     let idx = app.left.entries.iter().position(|e| e.name == "hello.txt").unwrap();
     app.left.cursor = idx;
     app.handle_action(Action::View);
-    let viewer = app.viewer.as_ref().expect("Action::View should open the viewer");
-    assert!(viewer.text.contains("hello world"));
+    let viewer = app.viewer.as_mut().expect("Action::View should open the viewer");
+    assert!(viewer.buf.full_text().contains("hello world"));
 
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -960,8 +960,8 @@ fn enter_on_non_executable_file_opens_viewer_via_default_text_action() {
     let idx = app.left.entries.iter().position(|e| e.name == "notes.txt").unwrap();
     app.left.cursor = idx;
     app.open_current_entry_default_action();
-    let viewer = app.viewer.as_ref().expect("default_action_text=:view should open the viewer");
-    assert!(viewer.text.contains("some notes"));
+    let viewer = app.viewer.as_mut().expect("default_action_text=:view should open the viewer");
+    assert!(viewer.buf.full_text().contains("some notes"));
 
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -979,8 +979,8 @@ fn enter_while_quicksearch_active_also_opens_viewer_via_default_text_action() {
     app.quicksearch = Some("notes.txt".to_string());
     app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.quicksearch.is_none(), "Enter should always close the quicksearch prompt");
-    let viewer = app.viewer.as_ref().expect("Enter on a file during quicksearch should open the viewer");
-    assert!(viewer.text.contains("some notes"));
+    let viewer = app.viewer.as_mut().expect("Enter on a file during quicksearch should open the viewer");
+    assert!(viewer.buf.full_text().contains("some notes"));
 
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -997,7 +997,7 @@ fn enter_on_executable_text_file_view_it_by_default() {
     let idx = app.left.entries.iter().position(|e| e.name == "run.sh").unwrap();
     app.left.cursor = idx;
     app.open_current_entry_default_action();
-    assert!(app.viewer.is_some_and(|v| v.text == executable_text_content), "default_action_executable is empty and falls back to default_action_text = \":view\"");
+    assert!(app.viewer.as_mut().is_some_and(|v| v.buf.full_text() == executable_text_content.trim_end()), "default_action_executable is empty and falls back to default_action_text = \":view\"");
 
     let _ = std::fs::remove_dir_all(&base);
 }

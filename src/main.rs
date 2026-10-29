@@ -13,6 +13,7 @@ mod macros;
 mod pattern;
 mod provider;
 mod state;
+mod textbuf;
 mod ui;
 
 use app::{resolve_startup_paths, App};
