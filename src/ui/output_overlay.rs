@@ -420,7 +420,7 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
         let mut block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(to_color(self.cs.dialog_border_fg)))
-            .title(Span::from(self.title))
+            .title(Span::from(super::sanitize_display(self.title)))
             .style(Style::default().bg(to_color(self.cs.panel_bg)));
         if let Some(message) = &state.message {
             block = block.title_bottom(Span::styled(
