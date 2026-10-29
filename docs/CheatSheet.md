@@ -51,7 +51,7 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Open Bookmarks | Open bookmarks popup to navigate the active panel to a bookmarked directory | `bookmark_open`: `Ctrl-\` |
+| Open Bookmarks | Open the bookmarks popup (navigate the active panel to a bookmarked directory) | `bookmark_open`: `Ctrl-\` |
 | Add Bookmark | Add the active panel's current directory to bookmarks | `bookmark_add`: `Ctrl-b` |
 | Remove Bookmark | While the bookmarks popup is open, remove the currently selected entry | `Del` |
 
@@ -94,12 +94,12 @@ Keys of the internal full-screen text viewer (opened with `view`). They only app
 | Insert Full Path | Copy the full path of the selected file to the command line | `cmdline_insert_fullpath`: `Ctrl-Shift-Enter`, `Ctrl-x f` |
 | Autocomplete | Autocomplete filenames, commands, variables, usernames, and hostnames | `cmdline_complete`: `Alt-Tab`, `Ctrl-Space` |
 | Insert Tagged (Active) | Copy tagged files of the active panel to the command line | `cmdline_insert_tagged`: `Ctrl-x t` |
-| Insert Tagged (Inactive) | Copy tagged files of the inactive panel to the command line | `cmdline_insert_tagged_other`: `Ctrl-x Ctrl-t` |
+| Insert Tagged (Inactive) | Copy the inactive panel's tagged files to the command line | `cmdline_insert_tagged_other`: `Ctrl-x Ctrl-t` |
 | Insert Path (Active) | Copy the active panel's directory path to the command line | `cmdline_insert_path`: `Ctrl-x p` |
-| Insert Path (Inactive) | Copy the inactive panel's directory path to the command line | `cmdline_insert_path_other`: `Ctrl-x Ctrl-p` |
+| Insert Path (Inactive) | Copy the inactive panel's path to the command line | `cmdline_insert_path_other`: `Ctrl-x Ctrl-p` |
 | History Previous | Go to the previous command in the history | `cmdline_history_prev`: `Ctrl-Up` |
 | History Next | Go to the next command in the history | `cmdline_history_next`: `Ctrl-Down` |
-| Reverse Search | Filter command history by the current command line text, showing matches above the command line (most recent highlighted, Backspace re-filters); Enter/Tab accepts the highlighted entry, Esc cancels | `reverse_search`: `Ctrl-r`, `Alt-h` |
+| Reverse Search | Filter the command history by the command line text (matches shown above the command line, most recent highlighted, Backspace re-filters); Enter/Tab accepts the highlighted entry, Esc cancels | `reverse_search`: `Ctrl-r`, `Alt-h` |
 
 ## Shell
 
@@ -120,6 +120,6 @@ Keys of the internal full-screen text viewer (opened with `view`). They only app
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Command Palette | Open the searchable command palette: categories and recent actions, fuzzy search over every command, each shown with its shortcut | `action_palette`: `F1` |
+| Command Palette | Open the command palette: fuzzy search over every command (shows categories, recent actions and each command's shortcut) | `action_palette`: `F1` |
 | User Menu | Open the command palette pre-filtered to the user-configured menu commands | `user_menu`: `F2` |
 | Exit | Exit the application | `exit`: `F10`, `Ctrl-q` |

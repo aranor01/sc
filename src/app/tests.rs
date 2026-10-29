@@ -1265,7 +1265,7 @@ fn category_drill_down_and_back() {
     app.palette.as_mut().unwrap().list.selected = idx;
     tap(&mut app, KeyCode::Enter);
     assert_eq!(palette_items(&app), vec![
-        "Open Bookmarks \u{2013} Open bookmarks popup to navigate the active panel to a bookmarked directory",
+        "Open Bookmarks \u{2013} Open the bookmarks popup",
         "Add Bookmark \u{2013} Add the active panel's current directory to bookmarks",
     ]);
     tap(&mut app, KeyCode::Esc);
