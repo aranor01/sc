@@ -56,11 +56,16 @@ impl App {
     /// Opens the text search dialog over the viewer, prefilled with the last query (or
     /// the highlight a content-search jump opened the viewer with).
     pub(super) fn viewer_open_search_dialog(&mut self) {
-        let Some(viewer) = &self.viewer else { return };
+        let Some((_, highlight)) =
+            text_view(&mut self.viewer, self.show_output, &mut self.last_output, &mut self.output_highlight)
+        else {
+            return;
+        };
+        let highlight = highlight.clone();
         self.overlay.clear_feedback();
         let mut state = SearchDialogState::new_viewer_text();
         if let Some((text, case_sensitive, is_regex, whole_words)) =
-            self.viewer_query.clone().or_else(|| viewer.highlight.clone())
+            self.viewer_query.clone().or(highlight)
         {
             state.content.cursor = text.len();
             state.content.text = text;
@@ -74,10 +79,14 @@ impl App {
     /// Confirms the viewer's search dialog: highlights the text and jumps to its first
     /// match at or after the top of the view. An empty text clears the highlight.
     pub(super) fn execute_viewer_search(&mut self, mut state: SearchDialogState) {
-        let Some(viewer) = self.viewer.as_mut() else { return };
+        let Some((_, highlight)) =
+            text_view(&mut self.viewer, self.show_output, &mut self.last_output, &mut self.output_highlight)
+        else {
+            return;
+        };
         let text = state.content.text.clone();
         if text.is_empty() {
-            viewer.highlight = None;
+            *highlight = None;
             self.viewer_query = None;
             return;
         }
@@ -92,7 +101,7 @@ impl App {
             self.modal = Modal::SearchDialog(state);
             return;
         }
-        viewer.highlight = Some(query.clone());
+        *highlight = Some(query.clone());
         self.viewer_query = Some(query);
         self.overlay.match_line = None; // a new search starts from the top of the view
         self.overlay.current_line = None;
@@ -103,8 +112,12 @@ impl App {
     /// highlight there is nothing to look for yet, so the search dialog opens. When the
     /// previous search ran out of matches in this direction, searching again wraps around.
     pub(super) fn viewer_find(&mut self, direction: SearchDirection, inclusive: bool) {
-        let Some(viewer) = self.viewer.as_mut() else { return };
-        let Some((needle, case_sensitive, is_regex, whole_words)) = viewer.highlight.clone() else {
+        let Some((buf, highlight)) =
+            text_view(&mut self.viewer, self.show_output, &mut self.last_output, &mut self.output_highlight)
+        else {
+            return;
+        };
+        let Some((needle, case_sensitive, is_regex, whole_words)) = highlight.clone() else {
             self.viewer_open_search_dialog();
             return;
         };
@@ -117,7 +130,7 @@ impl App {
 
         let forward = direction == SearchDirection::Forward;
         let start = if wrapping {
-            if forward { Some(0) } else { viewer.buf.total_lines().checked_sub(1) }
+            if forward { Some(0) } else { buf.total_lines().checked_sub(1) }
         } else {
             match (self.overlay.match_line, forward) {
                 (Some(line), true) => Some(line + 1),
@@ -127,7 +140,7 @@ impl App {
             }
         };
         let found = start.and_then(|from| {
-            viewer.buf.find_line(from, forward, |line| {
+            buf.find_line(from, forward, |line| {
                 !matcher.find_matches(&crate::ui::expand_tabs(line)).is_empty()
             })
         });
@@ -198,6 +211,24 @@ impl App {
             Err(e) => self.set_status(&format!("Cannot open {}: {}", abs, e), true),
         }
     }
+}
+
+/// The text the full-screen overlay currently shows (file viewer, else command output)
+/// with its search highlight. Takes the fields separately so callers can keep using
+/// `self.overlay` while holding the result.
+pub(super) fn text_view<'a>(
+    viewer: &'a mut Option<ViewerContent>,
+    show_output: bool,
+    last_output: &'a mut Option<TextBuffer>,
+    output_highlight: &'a mut Option<(String, bool, bool, bool)>,
+) -> Option<(&'a mut TextBuffer, &'a mut Option<(String, bool, bool, bool)>)> {
+    if let Some(v) = viewer {
+        return Some((&mut v.buf, &mut v.highlight));
+    }
+    if show_output {
+        return last_output.as_mut().map(|b| (b, output_highlight));
+    }
+    None
 }
 
 pub(super) fn shell_escape_path(s: &str) -> String {

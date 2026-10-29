@@ -37,7 +37,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   are shown as the working directory, since the matches panel isn't a directory browser.
 - `Alt-n` (`keybindings.viewer.toggle_line_numbers`): show/hide line numbers in the text
   viewer (files only, on by default). New color-scheme key `line_number_fg`.
-- Text viewer search: `Ctrl-f` opens a search dialog (RegExp/Case sensitive/Whole words),
+- Text viewer search (files and command output): `Ctrl-f` opens a search dialog (RegExp/Case sensitive/Whole words),
   `n`/`F3` and `Shift-N`/`Shift-F3` step through matches (again past the end wraps); the current
   match uses new color keys `search_current_fg`/`search_current_bg`.
 - `F3` (action `view`): opens the internal full-screen text viewer on the active panel's

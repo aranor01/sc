@@ -1048,6 +1048,23 @@ fn next_match_without_a_search_opens_the_dialog_and_f3_in_the_viewer_is_not_view
 }
 
 #[test]
+fn viewer_search_works_on_command_output_too() {
+    let base = make_search_base("output_search");
+    let mut app = test_app(&base);
+    app.last_output = Some(crate::textbuf::TextBuffer::from_string("a\nb\nneedle\nc\n".into()));
+    app.show_output = true;
+    app.handle_key_event(ctrl_f());
+    assert!(matches!(app.modal, Modal::SearchDialog(_)));
+    for c in "needle".chars() {
+        app.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.output_highlight.is_some());
+    assert_eq!(app.overlay.match_line, Some(2));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn viewer_search_keys_do_nothing_on_the_main_screen() {
     let base = make_search_base("viewer_find_main_screen");
     let mut app = test_app(&base);

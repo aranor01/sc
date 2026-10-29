@@ -23,7 +23,7 @@ impl App {
     pub(super) fn handle_key_event_inner(&mut self, event: KeyEvent) {
         // Output overlay / text viewer active — block all input except scroll/dismiss keys
         if (self.show_output || self.viewer.is_some()) && matches!(self.modal, Modal::None) {
-            if self.viewer.is_some() {
+            {
                 let pending = self.pending_chord.take();
                 let bl = self.viewer_bindings_list();
                 match match_key(&bl, &event, pending.as_ref()) {

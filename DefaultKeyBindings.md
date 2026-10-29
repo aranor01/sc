@@ -69,7 +69,7 @@
        under `viewer.show_line_numbers`
 
 - C-f (Ctrl-f), n, F3, N (Shift-n), S-F3 (Shift-F3)
-       while the internal text viewer shows a file: C-f opens the search dialog (text, with
+       while the internal text viewer shows a file or command output: C-f opens the search dialog (text, with
        RegExp, Case sensitive and Whole words options) and highlights every match; n or F3
        jumps to the next line with a match, N or S-F3 to the previous one. When there is
        no further match the viewer says so, and pressing the same key again wraps around.

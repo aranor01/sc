@@ -226,7 +226,7 @@ impl App {
                     cs: &cs,
                     text,
                     title: " Command Output (Esc/C-o to close) ",
-                    highlight: None,
+                    highlight: self.output_highlight.as_ref().map(|(n, c, r, w)| (n.as_str(), *c, *r, *w)),
                     line_numbers: false,
                 };
                 frame.render_stateful_widget(overlay, area, &mut self.overlay);
