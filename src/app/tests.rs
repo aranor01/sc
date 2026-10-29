@@ -1071,8 +1071,12 @@ fn viewer_only_commands_are_not_offered_by_the_palette() {
     let app = test_app(&base);
     let entries = app.palette_entries();
     assert!(entries.iter().any(|e| e.id == "view"));
-    assert!(!entries.iter().any(|e| e.id == "toggle_line_numbers"));
+    assert!(!entries.iter().any(|e| e.id.contains("toggle_line_numbers")));
     assert!(!entries.iter().any(|e| e.category == "Text Viewer"));
+    assert!(
+        include_str!("../../docs/CheatSheet.md").contains("`viewer.toggle_line_numbers`"),
+        "viewer keys are documented in the CheatSheet's Text Viewer section"
+    );
     let _ = std::fs::remove_dir_all(&base);
 }
 

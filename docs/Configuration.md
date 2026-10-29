@@ -91,6 +91,12 @@ triggers the action):
 | `path_history` | `Alt-H`, `Alt-Down` |
 | `toggle_matches_panel` | `Alt-m` |
 | `view` | `F3` |
+
+Keys that only act inside the internal text viewer go in a nested `viewer` object
+(`"keybindings": { "viewer": { "toggle_line_numbers": "Alt-n" } }`):
+
+| Action | Default |
+|---|---|
 | `toggle_line_numbers` | `Alt-n` |
 
 Notes:

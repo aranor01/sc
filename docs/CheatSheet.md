@@ -77,11 +77,11 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 
 ## Text Viewer
 
-Keys of the internal full-screen text viewer (opened with `view`). They only apply while it is open, so they are neither listed in the command palette nor active on the main screen.
+Keys of the internal full-screen text viewer (opened with `view`). They only apply while it is open, so they are not listed in the command palette nor active on the main screen. Configure them in the `viewer` object of `keybindings`.
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Toggle Line Numbers | Show/hide line numbers when the viewer shows a file (never for command output); remembered across sessions | `toggle_line_numbers`: `Alt-n` |
+| Toggle Line Numbers | Show/hide line numbers when the viewer shows a file (never for command output); remembered across sessions | `viewer.toggle_line_numbers`: `Alt-n` |
 
 ## Command Line
 

@@ -6,7 +6,7 @@ impl App {
     pub(super) fn palette_entries(&self) -> Vec<PaletteEntry> {
         let bl = self.bindings_list();
         let mut out = Vec::new();
-        for c in self.palette_commands.iter().filter(|c| !c.viewer) {
+        for c in &self.palette_commands {
             let Some((_, bindings, action)) = bl.iter().find(|(n, _, _)| *n == c.config_key) else { continue };
             out.push(PaletteEntry {
                 id: c.config_key.clone(),

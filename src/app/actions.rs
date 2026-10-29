@@ -443,9 +443,6 @@ impl App {
                 }
             }
             Action::View => self.view_current_entry(None),
-            Action::ToggleLineNumbers => {
-                self.show_line_numbers = !self.show_line_numbers;
-            }
         }
     }
 }

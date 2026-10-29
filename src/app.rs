@@ -137,7 +137,6 @@ enum Action {
     GoForward,
     ToggleMatchesPanel,
     View,
-    ToggleLineNumbers,
     ActionPalette,
 }
 
@@ -700,7 +699,6 @@ impl App {
             ("go_forward", &kb.go_forward, Action::GoForward),
             ("toggle_matches_panel", &kb.toggle_matches_panel, Action::ToggleMatchesPanel),
             ("view", &kb.view, Action::View),
-            ("toggle_line_numbers", &kb.toggle_line_numbers, Action::ToggleLineNumbers),
             ("action_palette", &kb.action_palette, Action::ActionPalette),
         ]
     }

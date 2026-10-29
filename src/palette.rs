@@ -7,10 +7,6 @@ pub const USER_CATEGORY: &str = "User Commands";
 
 const EMBEDDED_CHEATSHEET: &str = include_str!("../docs/CheatSheet.md");
 const MAX_RECENT: usize = 4;
-/// CheatSheet `## Heading` whose commands belong to the text viewer: they are
-/// documented and configurable, but only meaningful inside the viewer, so neither the
-/// palette offers them nor the main screen reacts to their keys.
-pub const VIEWER_CATEGORY: &str = "Text Viewer";
 
 /// One built-in command parsed from a configurable row of a CheatSheet table.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,8 +16,6 @@ pub struct Command {
     pub description: String,
     /// Name of the `keybindings` field in the config file (e.g. `sort_panel`).
     pub config_key: String,
-    /// Whether it is a text-viewer command (listed under `VIEWER_CATEGORY`).
-    pub viewer: bool,
 }
 
 /// Commands from the installed `CheatSheet.md`, or the copy embedded in the binary when
@@ -59,7 +53,6 @@ pub fn parse_cheatsheet(md: &str) -> Vec<Command> {
             label: cols[0].to_string(),
             description: cols[1].to_string(),
             config_key: key,
-            viewer: category == VIEWER_CATEGORY,
         });
     }
     out
@@ -135,7 +128,7 @@ mod tests {
 ## Text Viewer
 | Action | Description | Config key: default |
 |---|---|---|
-| Line Numbers | Show numbers | `toggle_line_numbers`: `Alt-n` |
+| Line Numbers | Show numbers | `viewer.toggle_line_numbers`: `Alt-n` |
 ## Keys (non-configurable)
 | Action | Description | Key(s) |
 |---|---|---|
@@ -146,24 +139,20 @@ mod tests {
     #[test]
     fn parses_only_configurable_rows_with_their_category() {
         let cmds = parse_cheatsheet(SAMPLE);
-        assert_eq!(cmds.len(), 3);
+        assert_eq!(cmds.len(), 2);
         assert_eq!(cmds[0], Command {
             category: "Panels".into(),
             label: "Sort Panel".into(),
             description: "Open sort popup".into(),
             config_key: "sort_panel".into(),
-            viewer: false,
         });
         assert_eq!(cmds[1].config_key, "refresh_panel");
     }
 
     #[test]
-    fn text_viewer_section_flags_its_commands() {
+    fn dotted_keys_of_nested_config_objects_are_not_palette_commands() {
         let cmds = parse_cheatsheet(SAMPLE);
-        let c = cmds.iter().find(|c| c.config_key == "toggle_line_numbers").unwrap();
-        assert_eq!(c.category, "Text Viewer");
-        assert!(c.viewer);
-        assert!(cmds.iter().filter(|c| c.config_key != "toggle_line_numbers").all(|c| !c.viewer));
+        assert!(!cmds.iter().any(|c| c.config_key.contains("toggle_line_numbers")));
     }
 
     #[test]
