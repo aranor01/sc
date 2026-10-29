@@ -35,8 +35,8 @@ use crate::ui::button_bar::{BarAction, ButtonBarWidget};
 use crate::ui::status_bar::{StatusBarState, StatusBarWidget};
 use crate::ui::cmdline::{CmdLineState, CmdLineWidget};
 use crate::ui::popup_list::{PopupDirection, PopupListState, PopupListWidget};
-use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, render_search_dialog, CheckboxOptions, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState, SearchDialogAreas, SearchDialogState, SEARCH_CB_FOCUS, SEARCH_INPUT_FOCUS};
-use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget};
+use crate::ui::dialog::{render_confirm, render_error, render_input_dialog, render_search_dialog, CheckboxOptions, ConfirmButtonAreas, ConfirmOp, ConfirmState, ErrorButtonArea, InputDialogAction, InputDialogAreas, InputDialogState, SearchDialogAreas, SearchDialogMode, SearchDialogState, SEARCH_CB_FOCUS, SEARCH_INPUT_FOCUS};
+use crate::ui::output_overlay::{OutputOverlayState, OutputOverlayWidget, SearchDirection};
 use crate::ui::modal_event::{CmdlineOutcome, ModalOutcome, OverlayOutcome, PanelOutcome, PopupOutcome};
 use crate::pattern::ContentMatcher;
 use crate::ui::panel::{build_filter_pattern, MatchesState, PanelContent, PanelState, PanelWidget, SearchResultsState, SortKey};
@@ -138,6 +138,11 @@ enum Action {
     ToggleMatchesPanel,
     View,
     ActionPalette,
+    // Text-viewer actions: only reachable through `viewer_bindings_list()`.
+    ViewerToggleLineNumbers,
+    ViewerSearchText,
+    ViewerNextMatch,
+    ViewerPrevMatch,
 }
 
 // ── KeyMatch ──────────────────────────────────────────────────────────────────
@@ -439,6 +444,9 @@ pub struct App {
     matches_panel_hidden: bool,
     // Full-screen text viewer content (file mode); None = viewer closed.
     viewer: Option<ViewerContent>,
+    /// Last text searched for in the viewer this session: (text, case_sensitive, is_regex,
+    /// whole_words). Prefills the next search dialog.
+    viewer_query: Option<(String, bool, bool, bool)>,
     // Search dialog hit-test areas (updated each render)
     search_cb_areas: Cell<[Option<Rect>; 7]>,
     search_input_areas: Cell<[Option<Rect>; 3]>,
@@ -532,6 +540,7 @@ impl App {
             search: None,
             matches_panel_hidden: false,
             viewer: None,
+            viewer_query: None,
             search_cb_areas: Cell::new([None; 7]),
             search_input_areas: Cell::new([None; 3]),
             config,
@@ -652,6 +661,18 @@ impl App {
 
     fn active_vh(&self) -> usize {
         self.panel_visible_height(self.active)
+    }
+
+    /// Keys that only act while the internal text viewer shows a file. Kept apart from
+    /// `bindings_list`, which the main screen, the palette and the docs test iterate.
+    fn viewer_bindings_list(&self) -> Vec<(&'static str, &ActionBindings, Action)> {
+        let kb = &self.config.keybindings.viewer;
+        vec![
+            ("viewer.toggle_line_numbers", &kb.toggle_line_numbers, Action::ViewerToggleLineNumbers),
+            ("viewer.search_text", &kb.search_text, Action::ViewerSearchText),
+            ("viewer.next_match", &kb.next_match, Action::ViewerNextMatch),
+            ("viewer.prev_match", &kb.prev_match, Action::ViewerPrevMatch),
+        ]
     }
 
     fn bindings_list(&self) -> Vec<(&'static str, &ActionBindings, Action)> {

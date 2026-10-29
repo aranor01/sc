@@ -93,11 +93,17 @@ triggers the action):
 | `view` | `F3` |
 
 Keys that only act inside the internal text viewer go in a nested `viewer` object
-(`"keybindings": { "viewer": { "toggle_line_numbers": "Alt-n" } }`):
+(`"keybindings": { "viewer": { "search_text": "Ctrl-f" } }`):
 
 | Action | Default |
 |---|---|
 | `toggle_line_numbers` | `Alt-n` |
+| `search_text` | `Ctrl-f` |
+| `next_match` | `n`, `F3` |
+| `prev_match` | `Shift-N`, `Shift-F3` |
+
+A typed capital letter is written `Shift-N` (not `N`). Some terminals and multiplexers do not
+deliver `Shift-F3`; `Shift-N` works everywhere.
 
 Notes:
 
@@ -212,7 +218,9 @@ All colors are `#rrggbb` hex strings:
     "status_warn_bg":      "#ddaa00",
     "search_match_fg":     "#000000",
     "search_match_bg":     "#ffcc00",
-    "line_number_fg":      "#808080"
+    "line_number_fg":      "#808080",
+    "search_current_fg":   "#000000",
+    "search_current_bg":   "#ff6e40"
   }
 }
 ```

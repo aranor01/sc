@@ -26,6 +26,13 @@ fn build_matcher(highlight: Option<(&str, bool, bool, bool)>) -> Option<ContentM
     ContentMatcher::build(needle, is_regex, case_sensitive, whole_words).ok()
 }
 
+/// Direction of a text-viewer search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchDirection {
+    Forward,
+    Backward,
+}
+
 pub struct OutputOverlayState {
     pub scroll: u64,
     pending_line: Option<u64>,
@@ -52,6 +59,19 @@ pub struct OutputOverlayState {
     /// Digits reserved for line numbers in the gutter. Only ever grows while a
     /// text is shown, so the wrap width doesn't change on every refined estimate.
     gutter_digits: u16,
+    /// Raw line (0-based) shown at the top, as of the last render.
+    pub top_line: usize,
+    /// Line the last search jump landed on; the next/previous match continues from it
+    /// until something moves the view.
+    pub match_line: Option<usize>,
+    /// Line holding the current search match, drawn with the `search_current_*` colors.
+    /// Unlike `match_line` it survives scrolling; a new search or file resets it.
+    pub current_line: Option<usize>,
+    /// Feedback for the user, shown in the bottom border until the next key.
+    pub message: Option<String>,
+    /// Set after a search ran out of matches in this direction: pressing the same
+    /// direction again wraps around.
+    pub wrap_armed: Option<SearchDirection>,
 }
 
 impl OutputOverlayState {
@@ -65,6 +85,11 @@ impl OutputOverlayState {
             row_cache_complete: false,
             source_id: 0,
             gutter_digits: 0,
+            top_line: 0,
+            match_line: None,
+            current_line: None,
+            message: None,
+            wrap_armed: None,
         }
     }
 
@@ -83,6 +108,8 @@ impl OutputOverlayState {
         self.pending_line = None;
         self.pending_cap_scroll = false;
         self.gutter_digits = 0;
+        self.current_line = None;
+        self.moved();
         self.reset_row_cache();
     }
 
@@ -227,11 +254,34 @@ impl OutputOverlayState {
         }
     }
 
-        pub fn handle_key(&mut self, event: &KeyEvent, dismiss_bindings: &ActionBindings) -> OverlayOutcome {
+        /// The view was moved by the user: the last search position no longer applies.
+    fn moved(&mut self) {
+        self.match_line = None;
+        self.clear_feedback();
+    }
+
+    /// Drops the bottom-border message and disarms the wrap-around.
+    pub fn clear_feedback(&mut self) {
+        self.message = None;
+        self.wrap_armed = None;
+    }
+
+    pub fn handle_key(&mut self, event: &KeyEvent, dismiss_bindings: &ActionBindings) -> OverlayOutcome {
+        self.clear_feedback();
         if event.code == KeyCode::Esc || bindings_match_event(dismiss_bindings, event) {
             return OverlayOutcome::Dismissed;
         }
         match event.code {
+            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End => {
+                self.moved();
+                self.scroll_key(event.code)
+            }
+            _ => OverlayOutcome::Passthrough,
+        }
+    }
+
+    fn scroll_key(&mut self, code: KeyCode) -> OverlayOutcome {
+        match code {
             KeyCode::Up => { self.scroll = self.scroll.saturating_sub(1); OverlayOutcome::Consumed }
             KeyCode::Down => { self.scroll = self.scroll.saturating_add(1); self.pending_cap_scroll = true; OverlayOutcome::Consumed }
             KeyCode::PageUp => { self.scroll = self.scroll.saturating_sub(20); OverlayOutcome::Consumed }
@@ -243,6 +293,7 @@ impl OutputOverlayState {
     }
 
     pub fn scroll_by(&mut self, delta: i16) {
+        self.moved();
         if delta < 0 {
             self.scroll = self.scroll.saturating_sub((-delta) as u64);
         } else {
@@ -252,6 +303,7 @@ impl OutputOverlayState {
     }
 
     pub fn scrollbar_click(&mut self, track_row: usize, inner_h: usize, total_lines: usize) {
+        self.moved();
         if let Some(pos) = (track_row * total_lines).checked_div(inner_h) {
             if pos as u64 > self.scroll {
                 self.pending_cap_scroll = true;
@@ -365,11 +417,17 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         Widget::render(Clear, area, buf);
 
-        let block = Block::default()
+        let mut block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(to_color(self.cs.dialog_border_fg)))
             .title(Span::from(self.title))
             .style(Style::default().bg(to_color(self.cs.panel_bg)));
+        if let Some(message) = &state.message {
+            block = block.title_bottom(Span::styled(
+                format!(" {message} "),
+                Style::default().fg(to_color(self.cs.status_warn_fg)).bg(to_color(self.cs.status_warn_bg)),
+            ));
+        }
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -393,13 +451,16 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
         let gutter = if full_width >= gutter + MIN_TEXT_WIDTH { gutter } else { 0 };
         let width = full_width - gutter;
         let text_area = Rect { x: inner.x + gutter, width, ..inner };
-        state.cap_scroll(text, width, inner.height);
+        // Resolve a pending jump first so the clamp below applies in the same frame;
+        // otherwise a jump near the end of the text shows one overscrolled frame.
         state.resolve_pending_jump(text, width, self.highlight);
+        state.cap_scroll(text, width, inner.height);
 
         // Cover the whole viewport so every visible line's first row is known.
         state.ensure_row_cache_to_scroll(text, width, state.scroll.saturating_add(inner.height as u64));
         let start_idx = state.row_cache.partition_point(|&r| r <= state.scroll) - 1;
         let rows_before = state.row_cache[start_idx];
+        state.top_line = start_idx;
         let take_n = inner.height as usize + 1; // slack for a row scrolled mid-way into
 
         let total_lines = if state.row_cache_complete {
@@ -412,24 +473,30 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
         let match_style = Style::default()
             .fg(to_color(self.cs.search_match_fg))
             .bg(to_color(self.cs.search_match_bg));
+        let current_style = Style::default()
+            .fg(to_color(self.cs.search_current_fg))
+            .bg(to_color(self.cs.search_current_bg));
+        let current_line = state.current_line;
 
         text.ensure_line(start_idx + take_n - 1);
         let text: &TextBuffer = text;
         let end_idx = (start_idx + take_n).min(text.known_lines());
         let lines: Vec<Line> = (start_idx..end_idx)
-            .filter_map(|idx| text.line(idx))
-            .map(|raw_line| {
+            .filter_map(|idx| text.line(idx).map(|line| (idx, line)))
+            .map(|(idx, raw_line)| {
                 let line = super::expand_tabs(&raw_line).into_owned();
                 let Some(m) = matcher.as_ref() else {
                     return Line::from(Span::styled(line, style));
                 };
                 let mut spans = Vec::new();
                 let mut pos = 0;
-                for (start, end) in m.find_matches(&line) {
+                for (n, (start, end)) in m.find_matches(&line).into_iter().enumerate() {
                     if start > pos {
                         spans.push(Span::styled(line[pos..start].to_string(), style));
                     }
-                    spans.push(Span::styled(line[start..end].to_string(), match_style));
+                    // The first match of the current line is the one jumped to.
+                    let this_style = if n == 0 && current_line == Some(idx) { current_style } else { match_style };
+                    spans.push(Span::styled(line[start..end].to_string(), this_style));
                     pos = end;
                 }
                 if pos < line.len() {
@@ -780,6 +847,55 @@ mod tests {
         let narrow = Rect::new(0, 0, 12, 6);
         let buf = render_numbered("abc\n", narrow, &mut OutputOverlayState::new());
         assert!(row_text(&buf, 1, narrow).starts_with("│abc"), "gutter dropped when text would be cramped");
+    }
+
+    #[test]
+    fn message_is_shown_in_the_bottom_border_and_top_line_tracks_the_scroll() {
+        let area = Rect::new(0, 0, 40, 6);
+        let text: String = (1..=30).map(|i| format!("line-{i}\n")).collect();
+        let mut state = OutputOverlayState::new();
+        state.message = Some("No more matches".to_string());
+        state.scroll = 7;
+        let buf = render_to_buffer(&text, area, &mut state);
+        assert!(row_text(&buf, area.height - 1, area).contains("No more matches"));
+        assert_eq!(state.top_line, 7);
+        state.message = None;
+        let buf = render_to_buffer(&text, area, &mut state);
+        assert!(!row_text(&buf, area.height - 1, area).contains("No more matches"));
+    }
+
+    #[test]
+    fn a_jump_near_the_end_is_clamped_in_the_same_frame() {
+        // Jumping to the last line of a long text scrolls "2 rows above it", which is past
+        // the maximum scroll. The first frame after the jump must already be clamped,
+        // otherwise one overscrolled frame flickers on screen.
+        let area = Rect::new(0, 0, 40, 6); // 4 text rows
+        let text: String = (1..=30).map(|i| format!("line-{i}\n")).collect();
+        let mut state = OutputOverlayState::new();
+        state.jump_to_line(30);
+        let buf = render_to_buffer(&text, area, &mut state);
+        assert_eq!(state.scroll, 26);
+        assert!(find_row_containing(&buf, area, "line-30").is_some());
+        assert!(find_row_containing(&buf, area, "line-27").is_some());
+    }
+
+    #[test]
+    fn the_current_match_has_its_own_colors() {
+        let area = Rect::new(0, 0, 40, 6);
+        let cs = ColorScheme::default();
+        let mut text = TextBuffer::from_string("alpha\nfoo foo\nfoo\n".to_string());
+        let mut state = OutputOverlayState::new();
+        state.current_line = Some(1);
+        let widget = OutputOverlayWidget {
+            cs: &cs, text: &mut text, title: "t", highlight: Some(("foo", true, false, false)), line_numbers: false,
+        };
+        let mut buf = Buffer::empty(area);
+        StatefulWidget::render(widget, area, &mut buf, &mut state);
+        let bg = |x: u16, y: u16| buf.cell((x, y)).unwrap().bg;
+        let (cur, other) = (to_color(cs.search_current_bg), to_color(cs.search_match_bg));
+        assert_eq!(bg(1, 2), cur, "first match of the current line");
+        assert_eq!(bg(5, 2), other, "second match on the same line is an ordinary match");
+        assert_eq!(bg(1, 3), other, "matches on other lines are ordinary");
     }
 
     #[test]

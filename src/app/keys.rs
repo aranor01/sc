@@ -22,12 +22,21 @@ impl App {
 
     pub(super) fn handle_key_event_inner(&mut self, event: KeyEvent) {
         // Output overlay / text viewer active — block all input except scroll/dismiss keys
-        if self.show_output || self.viewer.is_some() {
-            if self.viewer.is_some()
-                && crate::config::bindings_match_event(&self.config.keybindings.viewer.toggle_line_numbers, &event)
-            {
-                self.show_line_numbers = !self.show_line_numbers;
-                return;
+        if (self.show_output || self.viewer.is_some()) && matches!(self.modal, Modal::None) {
+            if self.viewer.is_some() {
+                let pending = self.pending_chord.take();
+                let bl = self.viewer_bindings_list();
+                match match_key(&bl, &event, pending.as_ref()) {
+                    KeyMatch::Act(action) => {
+                        self.handle_action(action);
+                        return;
+                    }
+                    KeyMatch::ChordStart => {
+                        self.pending_chord = Some(event);
+                        return;
+                    }
+                    KeyMatch::None => {}
+                }
             }
             match self.overlay.handle_key(&event, &self.config.keybindings.toggle_shell) {
                 OverlayOutcome::Dismissed => {

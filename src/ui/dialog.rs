@@ -338,8 +338,22 @@ pub const SEARCH_INPUT_FOCUS: [usize; 3] = [0, 3, 7];
 /// Focus indices of the checkboxes, in `SearchDialogAreas.checkboxes` order.
 pub const SEARCH_CB_FOCUS: [usize; 7] = [1, 2, 4, 5, 6, 8, 9];
 
+/// Which controls of the search dialog are in use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchDialogMode {
+    /// File search: every field.
+    Files,
+    /// Text search inside the viewer: only the "Containing text" block.
+    ViewerText,
+}
+
+/// Logical focus indices visited, in order, by the viewer text search: the content input,
+/// its three checkboxes, OK and Cancel.
+const VIEWER_FOCUS: [usize; 6] = [3, 4, 5, 6, SEARCH_FOCUS_OK, SEARCH_FOCUS_CANCEL];
+
 #[derive(Debug, Clone)]
 pub struct SearchDialogState {
+    pub mode: SearchDialogMode,
     pub pattern: CmdLineState,
     pub content: CmdLineState,
     pub depth: CmdLineState,
@@ -357,6 +371,7 @@ pub struct SearchDialogState {
 impl SearchDialogState {
     pub fn new(include_hidden: bool) -> Self {
         SearchDialogState {
+            mode: SearchDialogMode::Files,
             pattern: CmdLineState::new(),
             content: CmdLineState::new(),
             depth: CmdLineState::new(),
@@ -372,8 +387,40 @@ impl SearchDialogState {
         }
     }
 
+    /// The dialog for searching text inside the viewer.
+    pub fn new_viewer_text() -> Self {
+        let mut state = Self::new(false);
+        state.mode = SearchDialogMode::ViewerText;
+        state.focus = FocusRing::new(VIEWER_FOCUS.len());
+        state
+    }
+
+    /// Focused control as a logical index (see `SEARCH_INPUT_FOCUS` / `SEARCH_CB_FOCUS`).
+    fn focus_index(&self) -> usize {
+        match self.mode {
+            SearchDialogMode::Files => self.focus.current(),
+            SearchDialogMode::ViewerText => VIEWER_FOCUS[self.focus.current()],
+        }
+    }
+
+    pub fn is_focused(&self, logical: usize) -> bool {
+        self.focus_index() == logical
+    }
+
+    /// Focuses the control with the given logical index.
+    pub fn focus_logical(&mut self, logical: usize) {
+        match self.mode {
+            SearchDialogMode::Files => self.focus.set(logical),
+            SearchDialogMode::ViewerText => {
+                if let Some(pos) = VIEWER_FOCUS.iter().position(|&i| i == logical) {
+                    self.focus.set(pos);
+                }
+            }
+        }
+    }
+
     fn focused_input(&mut self) -> Option<&mut CmdLineState> {
-        match self.focus.current() {
+        match self.focus_index() {
             0 => Some(&mut self.pattern),
             3 => Some(&mut self.content),
             7 => Some(&mut self.depth),
@@ -407,13 +454,13 @@ impl SearchDialogState {
             return ModalOutcome::Dismissed;
         }
         if event.code == KeyCode::Enter && event.modifiers == KeyModifiers::NONE {
-            if self.focus.current() == SEARCH_FOCUS_CANCEL {
+            if self.focus_index() == SEARCH_FOCUS_CANCEL {
                 return ModalOutcome::Dismissed;
             }
             return ModalOutcome::Confirmed;
         }
         if event.code == KeyCode::Char(' ') && event.modifiers == KeyModifiers::NONE {
-            match self.focus.current() {
+            match self.focus_index() {
                 idx @ (1 | 2 | 4 | 5 | 6 | 8 | 9) => {
                     self.toggle_checkbox(idx);
                     return ModalOutcome::Consumed;
@@ -424,7 +471,7 @@ impl SearchDialogState {
             }
         }
         // The depth field accepts digits only.
-        if self.focus.current() == 7 {
+        if self.focus_index() == 7 {
             if let KeyCode::Char(c) = event.code {
                 if !c.is_ascii_digit() {
                     return ModalOutcome::Consumed;
@@ -457,6 +504,9 @@ pub fn render_search_dialog(
     state: &SearchDialogState,
     press: Option<Position>,
 ) -> (SearchDialogAreas, Option<Position>) {
+    if state.mode == SearchDialogMode::ViewerText {
+        return render_viewer_text_dialog(area, buf, cs, state, press);
+    }
     // height: 2 border + 10 inner rows (pattern input, pattern checkboxes,
     // content input, content checkboxes x2, depth input, hidden/symlinks
     // checkboxes, error, gap, buttons)
@@ -492,7 +542,7 @@ pub fn render_search_dialog(
     for (i, (label, input, focus_idx, row)) in rows.into_iter().enumerate() {
         let y = inner.y + row;
         buf.set_string(inner.x + 1, y, label, label_style);
-        let focused = state.focus.is_focused(focus_idx);
+        let focused = state.is_focused(focus_idx);
         let (fg, bg) = if focused {
             (to_color(cs.cmdline_fg), to_color(cs.cmdline_bg))
         } else {
@@ -515,19 +565,19 @@ pub fn render_search_dialog(
     let cb_x = inner.x + 1;
     let cb_x2 = inner.x + inner.width / 2;
     let cb_pat_re = render_checkbox(cb_x, inner.y + 1, buf, "RegExp",
-        state.is_regexp, state.focus.is_focused(1), cs);
+        state.is_regexp, state.is_focused(1), cs);
     let cb_pat_cs = render_checkbox(cb_x2, inner.y + 1, buf, "Case sensitive",
-        state.case_sensitive, state.focus.is_focused(2), cs);
+        state.case_sensitive, state.is_focused(2), cs);
     let cb_ct_re = render_checkbox(cb_x, inner.y + 3, buf, "RegExp",
-        state.content_is_regex, state.focus.is_focused(4), cs);
+        state.content_is_regex, state.is_focused(4), cs);
     let cb_ct_cs = render_checkbox(cb_x2, inner.y + 3, buf, "Case sensitive",
-        state.content_case_sensitive, state.focus.is_focused(5), cs);
+        state.content_case_sensitive, state.is_focused(5), cs);
     let cb_ct_ww = render_checkbox(cb_x, inner.y + 4, buf, "Whole words",
-        state.content_whole_words, state.focus.is_focused(6), cs);
+        state.content_whole_words, state.is_focused(6), cs);
     let cb_hid = render_checkbox(cb_x, inner.y + 6, buf, "Include hidden",
-        state.include_hidden, state.focus.is_focused(8), cs);
+        state.include_hidden, state.is_focused(8), cs);
     let cb_sym = render_checkbox(cb_x2, inner.y + 6, buf, "Follow symlinks",
-        state.follow_symlinks, state.focus.is_focused(9), cs);
+        state.follow_symlinks, state.is_focused(9), cs);
 
     // Error line
     if let Some(ref err) = state.error {
@@ -546,9 +596,9 @@ pub fn render_search_dialog(
         let ok_btn = Button::build(OK_LABEL, ok_x, button_row, cs);
         let cancel_btn = Button::build(CANCEL_LABEL, ok_x + OK_LABEL.len() as u16 + 2, button_row, cs);
         ok_btn.render_state(OK_LABEL, buf,
-            state.focus.is_focused(SEARCH_FOCUS_OK) || ok_btn.is_pressed(press));
+            state.is_focused(SEARCH_FOCUS_OK) || ok_btn.is_pressed(press));
         cancel_btn.render_state(CANCEL_LABEL, buf,
-            state.focus.is_focused(SEARCH_FOCUS_CANCEL) || cancel_btn.is_pressed(press));
+            state.is_focused(SEARCH_FOCUS_CANCEL) || cancel_btn.is_pressed(press));
         (SearchDialogAreas {
             ok: ok_btn,
             cancel: cancel_btn,
@@ -558,6 +608,93 @@ pub fn render_search_dialog(
                 Some(cb_hid), Some(cb_sym),
             ],
             inputs,
+        }, cursor_out)
+    } else {
+        (SearchDialogAreas {
+            ok: Button::default(),
+            cancel: Button::default(),
+            checkboxes: [None; 7],
+            inputs: [None; 3],
+        }, cursor_out)
+    }
+}
+
+/// The viewer's text search: the file search dialog reduced to its "Containing text"
+/// block (input, RegExp, Case sensitive, Whole words), with its own title and label.
+fn render_viewer_text_dialog(
+    area: Rect,
+    buf: &mut Buffer,
+    cs: &ColorScheme,
+    state: &SearchDialogState,
+    press: Option<Position>,
+) -> (SearchDialogAreas, Option<Position>) {
+    // 2 border + 6 inner rows: input, checkboxes x2, error, gap, buttons
+    let height = 8u16;
+    let width = 52u16.min(area.width.saturating_sub(2));
+    let dialog_area = centered_rect(width, height, area);
+
+    Widget::render(Clear, dialog_area, buf);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(to_color(cs.dialog_border_fg)))
+        .title(Span::styled(
+            " Find ",
+            Style::default().fg(to_color(cs.dialog_fg)).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(to_color(cs.dialog_bg)));
+    let inner = block.inner(dialog_area);
+    block.render(dialog_area, buf);
+
+    const LABEL_W: u16 = 14;
+    let label_style = Style::default().fg(to_color(cs.dialog_fg)).bg(to_color(cs.dialog_bg));
+    buf.set_string(inner.x + 1, inner.y, "Text to find:", label_style);
+    let focused = state.is_focused(3);
+    let (fg, bg) = if focused {
+        (to_color(cs.cmdline_fg), to_color(cs.cmdline_bg))
+    } else {
+        (to_color(cs.cmdline_inactive_fg), to_color(cs.cmdline_inactive_bg))
+    };
+    let input_area = Rect {
+        x: inner.x + 1 + LABEL_W,
+        y: inner.y,
+        width: inner.width.saturating_sub(2 + LABEL_W),
+        height: 1,
+    };
+    let pos = render_text_input(input_area, buf, &state.content, fg, bg);
+    let cursor_out = if focused { pos } else { None };
+
+    let cb_x = inner.x + 1;
+    let cb_x2 = inner.x + inner.width / 2;
+    let cb_re = render_checkbox(cb_x, inner.y + 1, buf, "RegExp",
+        state.content_is_regex, state.is_focused(4), cs);
+    let cb_cs = render_checkbox(cb_x2, inner.y + 1, buf, "Case sensitive",
+        state.content_case_sensitive, state.is_focused(5), cs);
+    let cb_ww = render_checkbox(cb_x, inner.y + 2, buf, "Whole words",
+        state.content_whole_words, state.is_focused(6), cs);
+
+    if let Some(ref err) = state.error {
+        let err_style = Style::default().fg(to_color(cs.dialog_error_fg)).bg(to_color(cs.dialog_bg));
+        let truncated: String = err.chars().take(inner.width as usize).collect();
+        buf.set_string(inner.x, inner.y + 3, &truncated, err_style);
+    }
+
+    const OK_LABEL: &str = "[ OK ]";
+    const CANCEL_LABEL: &str = "[Cancel]";
+    let button_row = inner.y + 5;
+    if button_row < dialog_area.y + dialog_area.height.saturating_sub(1) {
+        const BUTTONS_TOTAL: u16 = (OK_LABEL.len() + 2 + CANCEL_LABEL.len()) as u16;
+        let ok_x = inner.x + inner.width.saturating_sub(BUTTONS_TOTAL) / 2;
+        let ok_btn = Button::build(OK_LABEL, ok_x, button_row, cs);
+        let cancel_btn = Button::build(CANCEL_LABEL, ok_x + OK_LABEL.len() as u16 + 2, button_row, cs);
+        ok_btn.render_state(OK_LABEL, buf, state.is_focused(SEARCH_FOCUS_OK) || ok_btn.is_pressed(press));
+        cancel_btn.render_state(CANCEL_LABEL, buf,
+            state.is_focused(SEARCH_FOCUS_CANCEL) || cancel_btn.is_pressed(press));
+        (SearchDialogAreas {
+            ok: ok_btn,
+            cancel: cancel_btn,
+            checkboxes: [None, None, Some(cb_re), Some(cb_cs), Some(cb_ww), None, None],
+            inputs: [None, Some(input_area), None],
         }, cursor_out)
     } else {
         (SearchDialogAreas {
@@ -842,6 +979,57 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn viewer_text_dialog_visits_only_its_own_controls() {
+        let mut s = SearchDialogState::new_viewer_text();
+        let mut order = vec![s.focus_index()];
+        for _ in 0..VIEWER_FOCUS.len() {
+            s.handle_key(&key(KeyCode::Tab));
+            order.push(s.focus_index());
+        }
+        assert_eq!(order, vec![3, 4, 5, 6, SEARCH_FOCUS_OK, SEARCH_FOCUS_CANCEL, 3]);
+        s.focus_logical(5);
+        assert!(s.is_focused(5));
+        s.focus_logical(7); // not part of this dialog: ignored
+        assert!(s.is_focused(5));
+    }
+
+    #[test]
+    fn viewer_text_dialog_toggles_its_three_checkboxes_with_space() {
+        let mut s = SearchDialogState::new_viewer_text();
+        for (logical, read) in [
+            (4, (|s: &SearchDialogState| s.content_is_regex) as fn(&SearchDialogState) -> bool),
+            (5, |s| s.content_case_sensitive),
+            (6, |s| s.content_whole_words),
+        ] {
+            s.focus_logical(logical);
+            let before = read(&s);
+            s.handle_key(&key(KeyCode::Char(' ')));
+            assert_ne!(read(&s), before, "checkbox {logical}");
+        }
+    }
+
+    #[test]
+    fn viewer_text_dialog_draws_only_the_text_search_block() {
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        let state = SearchDialogState::new_viewer_text();
+        let (areas, _) = render_search_dialog(area, &mut buf, &ColorScheme::default(), &state, None);
+        let screen: String = (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buf.cell((x, y)).unwrap().symbol().to_string())
+            .collect();
+        for shown in ["Find", "Text to find:", "RegExp", "Case sensitive", "Whole words"] {
+            assert!(screen.contains(shown), "{shown}");
+        }
+        for hidden in ["File pattern", "Max depth", "Include hidden", "Follow symlinks", "Containing text"] {
+            assert!(!screen.contains(hidden), "{hidden}");
+        }
+        assert!(areas.checkboxes[2].is_some() && areas.checkboxes[3].is_some() && areas.checkboxes[4].is_some());
+        assert!(areas.checkboxes[0].is_none() && areas.checkboxes[5].is_none());
+        assert!(areas.inputs[1].is_some() && areas.inputs[0].is_none());
     }
 
     #[test]

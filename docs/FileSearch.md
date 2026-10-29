@@ -80,7 +80,8 @@ lifetime of the results panel:
 
 - It always shows the matching lines of the file currently selected in the results panel,
   re-syncing as the selection moves. Two columns: **line number** and **text**, with the
-  matched substring highlighted (`search_match_fg`/`search_match_bg` color-scheme keys).
+  matched substring highlighted (`search_match_fg`/`search_match_bg` color-scheme keys; the
+  current match of a viewer search uses `search_current_fg`/`search_current_bg`).
   Highlighting honors the content search's **RegExp**/**Case sensitive**/**Whole words**
   mode, so it always matches what the search itself matched. A line too long to fit is
   truncated around the *first* occurrence in that line instead of always keeping the
@@ -112,6 +113,10 @@ The output overlay (previously only used for command output in stateless shell m
 becomes a general full-screen text viewer. In addition to its current role it can display
 a file from disk, scroll with the usual keys, open jumped to a given line, and highlight
 the search matches. Esc closes it and returns to the search view unchanged.
+
+A file shown in it can be searched for text (`Ctrl-f`) and stepped through with next/previous
+match (`n`/`F3`, `Shift-N`/`Shift-F3`); when opened from the matches panel, those keys walk the
+matches of the content search that found the file.
 
 ## Provider API
 

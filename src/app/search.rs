@@ -38,6 +38,9 @@ impl App {
     }
 
     pub(super) fn execute_search_dialog(&mut self, mut state: SearchDialogState) {
+        if state.mode == SearchDialogMode::ViewerText {
+            return self.execute_viewer_search(state);
+        }
         let pattern_text = state.pattern.text.trim().to_string();
         let pattern = if pattern_text.is_empty() { "*".to_string() } else { pattern_text };
         if let Err(e) = build_filter_pattern(&pattern, false, state.case_sensitive, state.is_regexp) {

@@ -68,6 +68,13 @@
        off. Not available for command output. The setting is saved in the state file
        under `viewer.show_line_numbers`
 
+- C-f (Ctrl-f), n, F3, N (Shift-n), S-F3 (Shift-F3)
+       while the internal text viewer shows a file: C-f opens the search dialog (text, with
+       RegExp, Case sensitive and Whole words options) and highlights every match; n or F3
+       jumps to the next line with a match, N or S-F3 to the previous one. When there is
+       no further match the viewer says so, and pressing the same key again wraps around.
+       If no text has been searched for yet, n / F3 / N / S-F3 open the search dialog
+
 - F5
        copy the tagged files (or if there are no tagged files, the selected file) in the active panel to the directory shown by the inactive panel
 

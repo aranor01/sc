@@ -61,7 +61,7 @@ pub fn parse_cheatsheet(md: &str) -> Vec<Command> {
 fn config_key_of(cell: &str) -> Option<String> {
     let rest = cell.strip_prefix('`')?;
     let (name, after) = rest.split_once('`')?;
-    if !after.starts_with(':') || name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+    if !after.starts_with(':') || name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c == '.') {
         return None;
     }
     Some(name.to_string())
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn parses_only_configurable_rows_with_their_category() {
         let cmds = parse_cheatsheet(SAMPLE);
-        assert_eq!(cmds.len(), 2);
+        assert_eq!(cmds.len(), 3);
         assert_eq!(cmds[0], Command {
             category: "Panels".into(),
             label: "Sort Panel".into(),
@@ -150,9 +150,10 @@ mod tests {
     }
 
     #[test]
-    fn dotted_keys_of_nested_config_objects_are_not_palette_commands() {
+    fn dotted_keys_of_nested_config_objects_are_parsed_in_their_own_category() {
         let cmds = parse_cheatsheet(SAMPLE);
-        assert!(!cmds.iter().any(|c| c.config_key.contains("toggle_line_numbers")));
+        let c = cmds.iter().find(|c| c.config_key == "viewer.toggle_line_numbers").unwrap();
+        assert_eq!(c.category, "Text Viewer");
     }
 
     #[test]

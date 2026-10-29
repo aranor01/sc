@@ -248,12 +248,21 @@ pub struct KeyBindings {
 #[derive(Debug, Clone)]
 pub struct ViewerKeyBindings {
     pub toggle_line_numbers: ActionBindings,
+    pub search_text: ActionBindings,
+    pub next_match: ActionBindings,
+    pub prev_match: ActionBindings,
 }
 
 impl Default for ViewerKeyBindings {
     fn default() -> Self {
+        use KeyCode::*;
+        use KeyModifiers as M;
         ViewerKeyBindings {
-            toggle_line_numbers: vec![KeyBinding::Single(ke(KeyCode::Char('n'), KeyModifiers::ALT))],
+            toggle_line_numbers: vec![KeyBinding::Single(ke(Char('n'), M::ALT))],
+            search_text: vec![KeyBinding::Single(ke(Char('f'), M::CONTROL))],
+            next_match: vec![KeyBinding::Single(ke(Char('n'), M::NONE)), KeyBinding::Single(ke(F(3), M::NONE))],
+            // crossterm reports a typed capital letter as the uppercase char plus SHIFT.
+            prev_match: vec![KeyBinding::Single(ke(Char('N'), M::SHIFT)), KeyBinding::Single(ke(F(3), M::SHIFT))],
         }
     }
 }
@@ -385,6 +394,8 @@ pub struct ColorScheme {
     pub search_match_fg: Color,
     pub search_match_bg: Color,
     pub line_number_fg: Color,
+    pub search_current_fg: Color,
+    pub search_current_bg: Color,
 }
 
 impl Default for ColorScheme {
@@ -421,6 +432,8 @@ impl Default for ColorScheme {
             search_match_fg: rgb(0x000000),
             search_match_bg: rgb(0xffcc00),
             line_number_fg: rgb(0x808080),
+            search_current_fg: rgb(0x000000),
+            search_current_bg: rgb(0xff6e40),
         }
     }
 }
@@ -567,9 +580,14 @@ impl Config {
                     for (action, value) in viewer {
                         let bindings = parse_action_bindings(value)
                             .with_context(|| format!("keybindings.viewer.{}", action))?;
-                        if action == "toggle_line_numbers" {
-                            cfg.keybindings.viewer.toggle_line_numbers = bindings;
-                        } // unknown keys silently ignored
+                        let viewer_kb = &mut cfg.keybindings.viewer;
+                        match action.as_str() {
+                            "toggle_line_numbers" => viewer_kb.toggle_line_numbers = bindings,
+                            "search_text" => viewer_kb.search_text = bindings,
+                            "next_match" => viewer_kb.next_match = bindings,
+                            "prev_match" => viewer_kb.prev_match = bindings,
+                            _ => {} // unknown keys silently ignored
+                        }
                     }
                     continue;
                 }
@@ -677,6 +695,8 @@ impl Config {
                 search_match_fg: pick("search_match_fg", d.search_match_fg)?,
                 search_match_bg: pick("search_match_bg", d.search_match_bg)?,
                 line_number_fg: pick("line_number_fg", d.line_number_fg)?,
+                search_current_fg: pick("search_current_fg", d.search_current_fg)?,
+                search_current_bg: pick("search_current_bg", d.search_current_bg)?,
             };
         }
 
@@ -742,10 +762,33 @@ mod tests {
     }
 
     #[test]
+    fn viewer_search_keys_have_defaults_and_can_be_overridden_with_several_bindings() {
+        let cfg = Config::load_from_str("{}").unwrap();
+        let v = &cfg.keybindings.viewer;
+        assert!(v.search_text.contains(&single(Char('f'), M::CONTROL)));
+        assert!(v.next_match.contains(&single(Char('n'), M::NONE)));
+        assert!(v.next_match.contains(&single(F(3), M::NONE)));
+        assert!(v.prev_match.contains(&single(Char('N'), M::SHIFT)));
+        assert!(v.prev_match.contains(&single(F(3), M::SHIFT)));
+        let cfg = Config::load_from_str(
+            r#"{"keybindings":{"viewer":{"next_match":["Ctrl-g","F4"],"prev_match":"Shift-N"}}}"#,
+        )
+        .unwrap();
+        let v = &cfg.keybindings.viewer;
+        assert_eq!(v.next_match.len(), 2);
+        assert!(v.next_match.contains(&single(Char('g'), M::CONTROL)));
+        assert_eq!(v.prev_match, vec![single(Char('N'), M::SHIFT)]);
+        assert!(v.search_text.contains(&single(Char('f'), M::CONTROL)), "untouched keys keep defaults");
+    }
+
+    #[test]
     fn toggle_line_numbers_defaults_to_alt_n_and_can_be_overridden() {
         let cfg = Config::load_from_str("{}").unwrap();
         assert!(cfg.keybindings.viewer.toggle_line_numbers.contains(&single(Char('n'), M::ALT)));
         assert_eq!(cfg.colorscheme.line_number_fg, rgb(0x808080));
+        assert_eq!(cfg.colorscheme.search_current_bg, rgb(0xff6e40));
+        let cfg = Config::load_from_str(r##"{"colorscheme":{"search_current_fg":"#010203"}}"##).unwrap();
+        assert_eq!(cfg.colorscheme.search_current_fg, rgb(0x010203));
         let cfg = Config::load_from_str(
             r##"{"keybindings":{"viewer":{"toggle_line_numbers":"Ctrl-l"}},"colorscheme":{"line_number_fg":"#112233"}}"##,
         )

@@ -77,11 +77,14 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 
 ## Text Viewer
 
-Keys of the internal full-screen text viewer (opened with `view`). They only apply while it is open, so they are not listed in the command palette nor active on the main screen. Configure them in the `viewer` object of `keybindings`.
+Keys of the internal full-screen text viewer (opened with `view`). They only apply while it is open, so they are not listed in the command palette nor active on the main screen. Configure them in the `viewer` object of `keybindings`. If the terminal does not deliver `Shift-F3`, use `Shift-N`.
 
 | Action | Description | Config key: default |
 |---|---|---|
 | Toggle Line Numbers | Show/hide line numbers when the viewer shows a file (never for command output); remembered across sessions | `viewer.toggle_line_numbers`: `Alt-n` |
+| Search Text | Open a dialog to search the file for text (RegExp, Case sensitive and Whole words options); matches are highlighted and the view jumps to the first one | `viewer.search_text`: `Ctrl-f` |
+| Next Match | Jump to the next line with a match; at the last match it says so, and pressing it again wraps around to the first | `viewer.next_match`: `n`, `F3` |
+| Previous Match | Jump to the previous line with a match; at the first match it says so, and pressing it again wraps around to the last | `viewer.prev_match`: `Shift-N`, `Shift-F3` |
 
 ## Command Line
 

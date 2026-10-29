@@ -443,6 +443,10 @@ impl App {
                 }
             }
             Action::View => self.view_current_entry(None),
+            Action::ViewerToggleLineNumbers => self.viewer_toggle_line_numbers(),
+            Action::ViewerSearchText => self.viewer_open_search_dialog(),
+            Action::ViewerNextMatch => self.viewer_find(SearchDirection::Forward, false),
+            Action::ViewerPrevMatch => self.viewer_find(SearchDirection::Backward, false),
         }
     }
 }

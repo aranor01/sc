@@ -951,6 +951,112 @@ fn alt_n_toggles_line_numbers_only_while_the_file_viewer_is_open() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+fn viewer_app_with_lines(name: &str, lines: &[&str]) -> (App, PathBuf) {
+    let base = make_search_base(name);
+    std::fs::write(base.join("f.txt"), lines.join("\n") + "\n").unwrap();
+    let mut app = test_app(&base);
+    app.left.cursor = app.left.entries.iter().position(|e| e.name == "f.txt").unwrap();
+    app.handle_action(Action::View);
+    assert!(app.viewer.is_some());
+    (app, base)
+}
+
+fn ctrl_f() -> KeyEvent { KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL) }
+fn key_n() -> KeyEvent { KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE) }
+fn key_shift_n() -> KeyEvent { KeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT) }
+
+#[test]
+fn viewer_search_dialog_opens_over_the_viewer_and_esc_closes_only_the_dialog() {
+    let (mut app, base) = viewer_app_with_lines("viewer_find_dialog", &["a", "needle", "b"]);
+    app.handle_key_event(ctrl_f());
+    assert!(matches!(&app.modal, Modal::SearchDialog(s) if s.mode == SearchDialogMode::ViewerText));
+    tap(&mut app, KeyCode::Esc);
+    assert!(matches!(app.modal, Modal::None));
+    assert!(app.viewer.is_some(), "Esc closes the dialog, not the viewer");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn viewer_search_highlights_and_steps_through_matches_then_wraps_on_a_second_press() {
+    let lines = ["a", "needle", "b", "c", "needle", "d"];
+    let (mut app, base) = viewer_app_with_lines("viewer_find_steps", &lines);
+    app.handle_key_event(ctrl_f());
+    type_str(&mut app, "needle");
+    tap(&mut app, KeyCode::Enter);
+    assert!(matches!(app.modal, Modal::None));
+    assert_eq!(app.viewer.as_ref().unwrap().highlight.as_ref().map(|h| h.0.as_str()), Some("needle"));
+    assert_eq!(app.overlay.match_line, Some(1));
+
+    assert_eq!(app.overlay.current_line, Some(1));
+    app.handle_key_event(key_n());
+    assert_eq!(app.overlay.match_line, Some(4));
+    assert_eq!(app.overlay.current_line, Some(4));
+    app.handle_key_event(key_n());
+    assert_eq!(app.overlay.match_line, Some(4), "no further match: stays put");
+    assert!(app.overlay.message.as_deref().is_some_and(|m| m.contains("No more matches")));
+    app.handle_key_event(key_n());
+    assert_eq!(app.overlay.match_line, Some(1), "same key again wraps around");
+    assert!(app.overlay.message.as_deref().is_some_and(|m| m.contains("Wrapped")));
+
+    app.handle_key_event(key_shift_n());
+    assert!(app.overlay.message.as_deref().is_some_and(|m| m.contains("No more matches")));
+    app.handle_key_event(key_shift_n());
+    assert_eq!(app.overlay.match_line, Some(4), "previous wraps to the last match");
+    app.handle_key_event(key_shift_n());
+    assert_eq!(app.overlay.match_line, Some(1));
+    tap(&mut app, KeyCode::Down);
+    assert_eq!(app.overlay.match_line, None);
+    assert_eq!(app.overlay.current_line, Some(1), "scrolling keeps the current match marked");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn another_key_disarms_the_wrap_and_scrolling_forgets_the_anchor() {
+    let (mut app, base) = viewer_app_with_lines("viewer_find_disarm", &["needle", "x", "needle"]);
+    app.handle_key_event(ctrl_f());
+    type_str(&mut app, "needle");
+    tap(&mut app, KeyCode::Enter);
+    app.handle_key_event(key_n());
+    app.handle_key_event(key_n());
+    assert_eq!(app.overlay.wrap_armed, Some(SearchDirection::Forward));
+    tap(&mut app, KeyCode::Down);
+    assert_eq!(app.overlay.wrap_armed, None);
+    assert_eq!(app.overlay.match_line, None);
+    assert!(app.overlay.message.is_none());
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn invalid_regex_keeps_the_viewer_search_dialog_open_with_an_error() {
+    let (mut app, base) = viewer_app_with_lines("viewer_find_bad_regex", &["a(b"]);
+    app.handle_key_event(ctrl_f());
+    if let Modal::SearchDialog(s) = &mut app.modal {
+        s.content_is_regex = true;
+    }
+    type_str(&mut app, "a(");
+    tap(&mut app, KeyCode::Enter);
+    assert!(matches!(&app.modal, Modal::SearchDialog(s) if s.error.is_some()));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn next_match_without_a_search_opens_the_dialog_and_f3_in_the_viewer_is_not_view() {
+    let (mut app, base) = viewer_app_with_lines("viewer_find_no_query", &["a", "b"]);
+    tap(&mut app, KeyCode::F(3));
+    assert!(matches!(&app.modal, Modal::SearchDialog(s) if s.mode == SearchDialogMode::ViewerText));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn viewer_search_keys_do_nothing_on_the_main_screen() {
+    let base = make_search_base("viewer_find_main_screen");
+    let mut app = test_app(&base);
+    app.handle_key_event(ctrl_f());
+    assert!(!matches!(&app.modal, Modal::SearchDialog(s) if s.mode == SearchDialogMode::ViewerText));
+    assert!(app.viewer.is_none());
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn view_action_resets_scroll_for_a_newly_opened_file() {
     let base = make_search_base("view_action_scroll_reset");
@@ -1084,7 +1190,7 @@ fn viewer_only_commands_are_not_offered_by_the_palette() {
 fn every_keybinding_action_is_documented_in_the_cheatsheet_and_vice_versa() {
     let base = make_search_base("palette_docs");
     let app = test_app(&base);
-    let known: Vec<&str> = app.bindings_list().iter().map(|(n, _, _)| *n).collect();
+    let known: Vec<&str> = app.bindings_list().iter().chain(app.viewer_bindings_list().iter()).map(|(n, _, _)| *n).collect();
     let documented: Vec<String> = crate::palette::parse_cheatsheet(include_str!("../../docs/CheatSheet.md"))
         .into_iter().map(|c| c.config_key).collect();
     for d in &documented {

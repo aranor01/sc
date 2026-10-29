@@ -139,6 +139,34 @@ impl TextBuffer {
         Some(sanitize_line(raw))
     }
 
+    /// First line at or after `from` (or at or before it, when `forward` is false) for
+    /// which `pred` holds on the sanitized text. Reads the file lazily as it goes.
+    pub fn find_line(&mut self, from: usize, forward: bool, mut pred: impl FnMut(&str) -> bool) -> Option<usize> {
+        let mut idx = from;
+        while self.ensure_line(idx) {
+            if pred(&self.line(idx)?) {
+                return Some(idx);
+            }
+            if forward {
+                idx += 1;
+            } else if idx == 0 {
+                return None;
+            } else {
+                idx -= 1;
+            }
+        }
+        None
+    }
+
+    /// Number of lines in the text; reads it to the end.
+    pub fn total_lines(&mut self) -> usize {
+        let mut n = self.known_lines();
+        while self.ensure_line(n) {
+            n += 1;
+        }
+        n
+    }
+
     /// Number of lines whose extent is known so far: a lower bound until `eof`.
     pub fn known_lines(&self) -> usize {
         if self.eof {
@@ -292,6 +320,24 @@ mod tests {
         assert!(!buf.ensure_line(100));
         assert!(buf.eof);
         assert_eq!(buf.estimated_lines(), 100);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn find_line_walks_forward_and_backward_across_chunks() {
+        let dir = tempfile_dir();
+        let path = dir.join("f.txt");
+        let text: String = (0..50).map(|i| if i % 10 == 7 { "hit\n".to_string() } else { format!("l{i}\n") }).collect();
+        File::create(&path).unwrap().write_all(text.as_bytes()).unwrap();
+        let mut buf = TextBuffer::open_with_chunk(path.to_str().unwrap(), 16).unwrap();
+        let is_hit = |l: &str| l == "hit";
+        assert_eq!(buf.find_line(0, true, is_hit), Some(7));
+        assert_eq!(buf.find_line(8, true, is_hit), Some(17));
+        assert_eq!(buf.find_line(48, true, is_hit), None);
+        assert_eq!(buf.find_line(49, false, is_hit), Some(47));
+        assert_eq!(buf.find_line(6, false, is_hit), None);
+        assert_eq!(buf.find_line(7, false, is_hit), Some(7));
+        assert_eq!(buf.total_lines(), 50);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

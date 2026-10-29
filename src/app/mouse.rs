@@ -80,11 +80,11 @@ impl App {
                 if let Some(i) = clicked_cb {
                     if let Modal::SearchDialog(ref mut s) = self.modal {
                         s.toggle_checkbox(SEARCH_CB_FOCUS[i]);
-                        s.focus.set(SEARCH_CB_FOCUS[i]);
+                        s.focus_logical(SEARCH_CB_FOCUS[i]);
                     }
                 } else if let Some(i) = clicked_input {
                     if let Modal::SearchDialog(ref mut s) = self.modal {
-                        s.focus.set(SEARCH_INPUT_FOCUS[i]);
+                        s.focus_logical(SEARCH_INPUT_FOCUS[i]);
                     }
                 } else if input_ok.clicked(down, up) {
                     if let Modal::SearchDialog(state) =
@@ -324,7 +324,7 @@ impl App {
         let pos = Position { x: col, y: row };
 
         // Output overlay / text viewer — capture all mouse input; only scroll/scrollbar clicks are meaningful.
-        if self.show_output || self.viewer.is_some() {
+        if (self.show_output || self.viewer.is_some()) && matches!(self.modal, Modal::None) {
             let area = self.overlay_area.get();
             match mouse.kind {
                 MouseEventKind::ScrollUp => {

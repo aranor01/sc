@@ -45,6 +45,111 @@ impl App {
         self.open_file_in_viewer(&abs, highlight, Some(line), None);
     }
 
+    pub(super) fn viewer_toggle_line_numbers(&mut self) {
+        if self.viewer.is_none() {
+            return;
+        }
+        self.overlay.clear_feedback();
+        self.show_line_numbers = !self.show_line_numbers;
+    }
+
+    /// Opens the text search dialog over the viewer, prefilled with the last query (or
+    /// the highlight a content-search jump opened the viewer with).
+    pub(super) fn viewer_open_search_dialog(&mut self) {
+        let Some(viewer) = &self.viewer else { return };
+        self.overlay.clear_feedback();
+        let mut state = SearchDialogState::new_viewer_text();
+        if let Some((text, case_sensitive, is_regex, whole_words)) =
+            self.viewer_query.clone().or_else(|| viewer.highlight.clone())
+        {
+            state.content.cursor = text.len();
+            state.content.text = text;
+            state.content_case_sensitive = case_sensitive;
+            state.content_is_regex = is_regex;
+            state.content_whole_words = whole_words;
+        }
+        self.modal = Modal::SearchDialog(state);
+    }
+
+    /// Confirms the viewer's search dialog: highlights the text and jumps to its first
+    /// match at or after the top of the view. An empty text clears the highlight.
+    pub(super) fn execute_viewer_search(&mut self, mut state: SearchDialogState) {
+        let Some(viewer) = self.viewer.as_mut() else { return };
+        let text = state.content.text.clone();
+        if text.is_empty() {
+            viewer.highlight = None;
+            self.viewer_query = None;
+            return;
+        }
+        let query = (
+            text,
+            state.content_case_sensitive,
+            state.content_is_regex,
+            state.content_whole_words,
+        );
+        if let Err(e) = ContentMatcher::build(&query.0, query.2, query.1, query.3) {
+            state.error = Some(e);
+            self.modal = Modal::SearchDialog(state);
+            return;
+        }
+        viewer.highlight = Some(query.clone());
+        self.viewer_query = Some(query);
+        self.overlay.match_line = None; // a new search starts from the top of the view
+        self.overlay.current_line = None;
+        self.viewer_find(SearchDirection::Forward, true);
+    }
+
+    /// Next/previous line with a match of the viewer's highlighted text. Without a
+    /// highlight there is nothing to look for yet, so the search dialog opens. When the
+    /// previous search ran out of matches in this direction, searching again wraps around.
+    pub(super) fn viewer_find(&mut self, direction: SearchDirection, inclusive: bool) {
+        let Some(viewer) = self.viewer.as_mut() else { return };
+        let Some((needle, case_sensitive, is_regex, whole_words)) = viewer.highlight.clone() else {
+            self.viewer_open_search_dialog();
+            return;
+        };
+        let Ok(matcher) = ContentMatcher::build(&needle, is_regex, case_sensitive, whole_words) else {
+            self.viewer_open_search_dialog();
+            return;
+        };
+        let wrapping = self.overlay.wrap_armed == Some(direction);
+        self.overlay.clear_feedback();
+
+        let forward = direction == SearchDirection::Forward;
+        let start = if wrapping {
+            if forward { Some(0) } else { viewer.buf.total_lines().checked_sub(1) }
+        } else {
+            match (self.overlay.match_line, forward) {
+                (Some(line), true) => Some(line + 1),
+                (Some(line), false) => line.checked_sub(1),
+                (None, true) => Some(self.overlay.top_line + usize::from(!inclusive)),
+                (None, false) => self.overlay.top_line.checked_sub(1),
+            }
+        };
+        let found = start.and_then(|from| {
+            viewer.buf.find_line(from, forward, |line| {
+                !matcher.find_matches(&crate::ui::expand_tabs(line)).is_empty()
+            })
+        });
+        match found {
+            Some(line) => {
+                self.overlay.jump_to_line(line as u64 + 1);
+                self.overlay.match_line = Some(line);
+                self.overlay.current_line = Some(line);
+                if wrapping {
+                    self.overlay.message = Some("Wrapped around".to_string());
+                }
+            }
+            None if wrapping => {
+                self.overlay.message = Some(format!("Not found: {needle}"));
+            }
+            None => {
+                self.overlay.message = Some("No more matches (press again to wrap)".to_string());
+                self.overlay.wrap_armed = Some(direction);
+            }
+        }
+    }
+
     /// Reads `abs` and shows it in the internal viewer. `highlight`, if set, is the
     /// (needle, case_sensitive, is_regex, whole_words) tuple used to highlight matches
     /// (content-search jumps); `jump_line` scrolls to that 1-based line.
@@ -81,6 +186,13 @@ impl App {
                 self.overlay.reset_scroll();
                 if let Some(line) = jump_line {
                     self.overlay.jump_to_line(line);
+                    // Opened on a search hit: that line is the current match, and next/previous
+                    // continue from it.
+                    if self.viewer.as_ref().is_some_and(|v| v.highlight.is_some()) {
+                        let idx = (line as usize).saturating_sub(1);
+                        self.overlay.match_line = Some(idx);
+                        self.overlay.current_line = Some(idx);
+                    }
                 }
             }
             Err(e) => self.set_status(&format!("Cannot open {}: {}", abs, e), true),
