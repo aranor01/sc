@@ -61,7 +61,7 @@ impl App {
                 self.show_output = false;
                 self.viewer = Some(ViewerContent {
                     title: format!(" {} (Esc to close) ", display_path(abs)),
-                    text: normalize_text_file(&bytes),
+                    text: normalize_text_file(bytes),
                     highlight,
                 });
                 self.overlay.reset_scroll();
@@ -124,22 +124,53 @@ pub(super) fn is_bidi_or_invisible(c: char) -> bool {
     crate::ui::is_format_char(c)
 }
 
-pub(super) fn normalize_text_file(bytes: &[u8]) -> String {
-        let s = String::from_utf8_lossy(bytes);
-        let s = s.replace('\r', "");
-        let s = ANSI_RE.replace_all(&s, |caps: &regex::Captures| {
+/// Whether `c` has to be dropped or replaced when showing a file.
+fn needs_sanitizing(c: char) -> bool {
+    match c {
+        '\n' | '\t' => false,
+        c if c.is_control() => true,
+        c => is_bidi_or_invisible(c),
+    }
+}
+
+/// Cleans a file's bytes for display. Most files need no change at all, so each
+/// step only runs when its trigger is present, and a clean file is returned
+/// without being copied.
+pub(super) fn normalize_text_file(bytes: Vec<u8>) -> String {
+    let mut s = String::from_utf8(bytes)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+    if s.contains('\r') {
+        s.retain(|c| c != '\r');
+    }
+    if s.contains('\x1b') {
+        let replaced = match ANSI_RE.replace_all(&s, |caps: &regex::Captures| {
             ".".repeat(caps.get(0).unwrap().as_str().chars().count())
-        });
-        let mut out = String::with_capacity(s.len());
-        for ch in s.chars() {
-            match ch {
-                '\n' | '\t' => out.push(ch),
-                c if c.is_control() => out.push('.'),
-                c if is_bidi_or_invisible(c) => {}, // Unicode bidi/zero-width
-                _ => out.push(ch),
-            }
+        }) {
+            std::borrow::Cow::Owned(r) => Some(r),
+            std::borrow::Cow::Borrowed(_) => None,
+        };
+        if let Some(r) = replaced {
+            s = r;
         }
-        out
+    }
+    let clean = if s.is_ascii() {
+        !s.bytes().any(|b| (b < 0x20 && b != b'\n' && b != b'\t') || b == 0x7f)
+    } else {
+        !s.chars().any(needs_sanitizing)
+    };
+    if clean {
+        return s;
+    }
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\n' | '\t' => out.push(ch),
+            c if c.is_control() => out.push('.'),
+            c if is_bidi_or_invisible(c) => {} // Unicode bidi/zero-width
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 pub(super) fn try_open_text_file(
@@ -166,4 +197,23 @@ pub(super) fn is_text_file(abs: &str) -> bool {
     let mut noop_because_it_is_binary:Option<&mut bool> = Some(&mut false);
     _ = try_open_text_file(abs, noop_because_it_is_binary.as_deref_mut());
     !*noop_because_it_is_binary.unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_text_file_leaves_clean_text_alone() {
+        assert_eq!(normalize_text_file("a\tb\nc ünï 日本\n".into()), "a\tb\nc ünï 日本\n");
+    }
+
+    #[test]
+    fn normalize_text_file_cleans_crlf_ansi_controls_and_format_chars() {
+        assert_eq!(normalize_text_file(b"a\r\nb\r\n".to_vec()), "a\nb\n");
+        assert_eq!(normalize_text_file(b"x\x1b[31mred\x1b[0m".to_vec()), "x.....red....");
+        assert_eq!(normalize_text_file(b"a\x01b\x7fc\x1b".to_vec()), "a.b.c.");
+        assert_eq!(normalize_text_file("a\u{202e}b".into()), "ab");
+        assert_eq!(normalize_text_file(b"ok\xffok".to_vec()), "ok\u{fffd}ok");
+    }
 }

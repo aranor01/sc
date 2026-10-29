@@ -25,6 +25,55 @@ fn build_matcher(highlight: Option<(&str, bool, bool, bool)>) -> Option<ContentM
     ContentMatcher::build(needle, is_regex, case_sensitive, whole_words).ok()
 }
 
+/// Start offset of every line of the text last handed to the overlay, found
+/// with one `memchr` scan. Replaces `text.lines().skip(n)` / `.count()`, which
+/// rescan from the top of the text on every call. Same line semantics as
+/// `str::lines`.
+struct LineIndex {
+    /// `(ptr, len)` of the text `starts` was built for.
+    key: (usize, usize),
+    starts: Vec<usize>,
+}
+
+impl LineIndex {
+    fn new() -> Self {
+        Self { key: (0, 0), starts: Vec::new() }
+    }
+
+    /// Rebuilds the index if `text` is not the text it was built for.
+    /// Returns whether it did.
+    fn sync(&mut self, text: &str) -> bool {
+        let key = (text.as_ptr() as usize, text.len());
+        if self.key == key {
+            return false;
+        }
+        self.key = key;
+        self.starts.clear();
+        if !text.is_empty() {
+            self.starts.push(0);
+            self.starts.extend(
+                memchr::memchr_iter(b'\n', text.as_bytes())
+                    .map(|p| p + 1)
+                    .filter(|&next| next < text.len()),
+            );
+        }
+        true
+    }
+
+    fn len(&self) -> usize {
+        self.starts.len()
+    }
+
+    /// Line `idx` of `text` (which must be the text last passed to `sync`),
+    /// without its line terminator.
+    fn line<'t>(&self, text: &'t str, idx: usize) -> &'t str {
+        let end = self.starts.get(idx + 1).copied().unwrap_or(text.len());
+        let line = &text[self.starts[idx]..end];
+        let line = line.strip_suffix('\n').unwrap_or(line);
+        line.strip_suffix('\r').unwrap_or(line)
+    }
+}
+
 pub struct OutputOverlayState {
     pub scroll: u64,
     pending_line: Option<u64>,
@@ -46,6 +95,7 @@ pub struct OutputOverlayState {
     /// the true total wrapped-row count — both previously found by
     /// rescanning `text` directly.
     row_cache_complete: bool,
+    lines: LineIndex,
 }
 
 impl OutputOverlayState {
@@ -57,6 +107,15 @@ impl OutputOverlayState {
             row_cache_width: 0,
             row_cache: vec![0],
             row_cache_complete: false,
+            lines: LineIndex::new(),
+        }
+    }
+
+    /// Points the line index at `text`; if that's a different text from last
+    /// time, the row cache described the old one and is dropped.
+    fn sync_text(&mut self, text: &str) {
+        if self.lines.sync(text) {
+            self.reset_row_cache();
         }
     }
 
@@ -96,6 +155,7 @@ impl OutputOverlayState {
     /// `resolve_pending_jump`, which needs the row offset of one specific
     /// line and is only called on an actual jump, not every frame.
     fn ensure_row_cache_to_line(&mut self, text: &str, width: u16, line_idx: usize) {
+        self.sync_text(text);
         self.sync_row_cache_width(width);
         if self.row_cache_complete || self.row_cache.len() - 1 > line_idx {
             return;
@@ -103,8 +163,8 @@ impl OutputOverlayState {
         let w = width.max(1) as usize;
         let already = self.row_cache.len() - 1;
         let mut rows = *self.row_cache.last().unwrap();
-        for raw_line in text.lines().skip(already) {
-            rows += wrapped_row_count(&super::expand_tabs(raw_line), w) as u64;
+        for idx in already..self.lines.len() {
+            rows += wrapped_row_count(&super::expand_tabs(self.lines.line(text, idx)), w) as u64;
             self.row_cache.push(rows);
             if self.row_cache.len() - 1 > line_idx {
                 return;
@@ -119,6 +179,7 @@ impl OutputOverlayState {
     /// walks lines past what's already cached, a stationary or slowly
     /// moving scroll position costs nothing.
     fn ensure_row_cache_to_scroll(&mut self, text: &str, width: u16, scroll: u64) {
+        self.sync_text(text);
         self.sync_row_cache_width(width);
         if self.row_cache_complete {
             return;
@@ -129,8 +190,8 @@ impl OutputOverlayState {
         if rows > scroll {
             return; // already covers it
         }
-        for raw_line in text.lines().skip(already) {
-            rows += wrapped_row_count(&super::expand_tabs(raw_line), w) as u64;
+        for idx in already..self.lines.len() {
+            rows += wrapped_row_count(&super::expand_tabs(self.lines.line(text, idx)), w) as u64;
             self.row_cache.push(rows);
             if rows > scroll {
                 return;
@@ -144,6 +205,7 @@ impl OutputOverlayState {
     /// actually needed (e.g. `End`, or a scroll target past what's been
     /// scanned so far) — not on every frame.
     fn ensure_row_cache_complete(&mut self, text: &str, width: u16) {
+        self.sync_text(text);
         self.sync_row_cache_width(width);
         if self.row_cache_complete {
             return;
@@ -151,8 +213,8 @@ impl OutputOverlayState {
         let w = width.max(1) as usize;
         let already = self.row_cache.len() - 1;
         let mut rows = *self.row_cache.last().unwrap();
-        for raw_line in text.lines().skip(already) {
-            rows += wrapped_row_count(&super::expand_tabs(raw_line), w) as u64;
+        for idx in already..self.lines.len() {
+            rows += wrapped_row_count(&super::expand_tabs(self.lines.line(text, idx)), w) as u64;
             self.row_cache.push(rows);
         }
         self.row_cache_complete = true;
@@ -166,8 +228,8 @@ impl OutputOverlayState {
             return; // text no longer has that many lines
         }
         let mut rows_before = self.row_cache[line_idx];
-        if let Some(raw_line) = text.lines().nth(line_idx) {
-            let line_text = super::expand_tabs(raw_line);
+        {
+            let line_text = super::expand_tabs(self.lines.line(text, line_idx));
             let matcher = build_matcher(highlight);
             if let Some((m_start, _)) =
                 matcher.as_ref().and_then(|m| m.find_matches(&line_text).into_iter().next())
@@ -185,14 +247,9 @@ impl OutputOverlayState {
         }
         self.pending_cap_scroll = false;
 
-        // Cheap bound: reuse the cache's line count if we already know it
-        // exactly; otherwise fall back to a plain (tab-expansion-free) count,
-        // same cost as before.
-        let line_count = if self.row_cache_complete {
-            self.row_cache.len() - 1
-        } else {
-            text.lines().count()
-        };
+        self.sync_text(text);
+        // Cheap bound: the line count, ignoring wrapping.
+        let line_count = self.lines.len();
         let scroll_limit = line_count.saturating_sub(viewport_height as usize) as u64;
         if self.scroll <= scroll_limit {
             return;
@@ -365,6 +422,7 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
 
         let width = content_width(area);
         let text_area = Rect { width, ..inner };
+        state.sync_text(self.text);
         state.cap_scroll(self.text, width, inner.height);
         state.resolve_pending_jump(self.text, width, self.highlight);
 
@@ -376,7 +434,7 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
         let total_lines = if state.row_cache_complete {
             *state.row_cache.last().unwrap()
         } else {
-            *(state.row_cache.last().unwrap()).max(&(self.text.lines().count() as u64))
+            *(state.row_cache.last().unwrap()).max(&(state.lines.len() as u64))
         };
 
         let matcher = build_matcher(self.highlight);
@@ -384,13 +442,10 @@ impl<'a> StatefulWidget for OutputOverlayWidget<'a> {
             .fg(to_color(self.cs.search_match_fg))
             .bg(to_color(self.cs.search_match_bg));
 
-        let lines: Vec<Line> = self
-            .text
-            .lines()
-            .skip(start_idx)
-            .take(take_n)
-            .map(|raw_line| {
-                let line = super::expand_tabs(raw_line);
+        let end_idx = (start_idx + take_n).min(state.lines.len());
+        let lines: Vec<Line> = (start_idx..end_idx)
+            .map(|idx| {
+                let line = super::expand_tabs(state.lines.line(self.text, idx));
                 let Some(m) = matcher.as_ref() else {
                     return Line::from(Span::styled(line, style));
                 };
@@ -456,6 +511,26 @@ mod tests {
 
     fn find_row_containing(buf: &Buffer, area: Rect, needle: &str) -> Option<u16> {
         (area.y..area.y + area.height).find(|&y| row_text(buf, y, area).contains(needle))
+    }
+
+    #[test]
+    fn line_index_matches_str_lines() {
+        for text in ["", "\n", "a", "a\n", "a\nb", "a\n\nb\n", "\n\na", "a\r\nb\r\n"] {
+            let mut idx = LineIndex::new();
+            idx.sync(text);
+            let got: Vec<&str> = (0..idx.len()).map(|i| idx.line(text, i)).collect();
+            let want: Vec<&str> = text.lines().collect();
+            assert_eq!(got, want, "text {text:?}");
+        }
+    }
+
+    #[test]
+    fn line_index_rebuilds_for_a_different_text() {
+        let mut idx = LineIndex::new();
+        assert!(idx.sync("a\nb"));
+        assert!(!idx.sync("a\nb"));
+        assert!(idx.sync("x\ny\nz"));
+        assert_eq!(idx.len(), 3);
     }
 
     #[test]

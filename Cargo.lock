@@ -734,6 +734,7 @@ dependencies = [
  "dirs",
  "glob",
  "libc",
+ "memchr",
  "nix",
  "ratatui",
  "regex",

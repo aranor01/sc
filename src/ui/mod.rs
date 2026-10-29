@@ -41,8 +41,11 @@ pub fn sanitize_display(s: &str) -> Cow<'_, str> {
 /// after it on that row — including the panel/overlay border, which ends up
 /// overwritten or skipped. Column tracking uses Unicode display width, like
 /// the rest of the rendering pipeline.
-pub fn expand_tabs(line: &str) -> String {
+pub fn expand_tabs(line: &str) -> Cow<'_, str> {
     const TAB_WIDTH: usize = 8;
+    if !line.contains('\t') {
+        return Cow::Borrowed(line);
+    }
     let mut out = String::with_capacity(line.len());
     let mut col = 0usize;
     for ch in line.chars() {
@@ -57,7 +60,7 @@ pub fn expand_tabs(line: &str) -> String {
             col += ch.width().unwrap_or(0);
         }
     }
-    out
+    Cow::Owned(out)
 }
 
 #[cfg(test)]
