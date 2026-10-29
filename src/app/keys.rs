@@ -337,6 +337,7 @@ impl App {
         if event.code == KeyCode::Esc
             && event.modifiers == KeyModifiers::NONE
             && !self.show_output
+            && self.show_cmdline
             && !self.cmdline.is_empty()
         {
             self.explicit_action_mode = !self.explicit_action_mode;
@@ -422,7 +423,10 @@ impl App {
             PanelOutcome::Passthrough => {}
         }
 
-        // Cmdline key handling
+        // Cmdline key handling (a hidden command line consumes no keys)
+        if !self.show_cmdline {
+            return;
+        }
         match self.cmdline.handle_key(&event) {
             CmdlineOutcome::HistoryPrev => self.handle_action(Action::CmdlineHistoryPrev),
             CmdlineOutcome::HistoryNext => self.handle_action(Action::CmdlineHistoryNext),

@@ -59,6 +59,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Fixed
 
+- While the command line is hidden, keys are handled by the panels and action bindings only.
 - File names, paths and matched lines containing control or bidi/format characters
   (e.g. ESC) are shown with `?` in place of each one, in panels, popups, dialogs and the status bar.
 - Resizing the terminal while an interactive program (e.g. `less`) launched from the

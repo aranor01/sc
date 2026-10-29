@@ -571,7 +571,7 @@ impl App {
     }
 
     fn action_mode(&self) -> bool {
-        self.cmdline.is_empty() || self.explicit_action_mode || self.pending_chord.is_some()
+        !self.show_cmdline || self.cmdline.is_empty() || self.explicit_action_mode || self.pending_chord.is_some()
     }
 
     fn set_status(&mut self, text: &str, warn: bool) {
