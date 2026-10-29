@@ -293,12 +293,13 @@ impl<'a> PopupListWidget<'a> {
                 let hint_len = hint.chars().count();
                 // The hint keeps its full width; the text is truncated to make room.
                 let text_room = if hint_len > 0 { inner_w.saturating_sub(hint_len + 2) } else { inner_w };
+                let s = &*super::sanitize_display(s);
                 let text_len = s.chars().count();
                 let display = if text_len > text_room && text_room > 1 {
                     let truncated: String = s.chars().take(text_room - 1).collect();
                     format!("{truncated}\u{2026}")
                 } else {
-                    s.clone()
+                    s.to_string()
                 };
                 if hint_len == 0 {
                     return ListItem::new(Line::from(Span::styled(display, style)));

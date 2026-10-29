@@ -23,7 +23,7 @@ pub struct StatusBarState {
 impl StatusBarState {
     pub fn set(&mut self, text: &str, warn: bool) {
         self.msg = Some(StatusMsg {
-            text: text.to_string(),
+            text: super::sanitize_display(text).into_owned(),
             expiry: Instant::now() + Duration::from_secs(3),
             warn,
         });

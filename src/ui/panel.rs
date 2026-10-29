@@ -651,7 +651,7 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
 
         // 2 corners + 2 padding spaces around the title text itself.
         let title_max = (area.width as usize).saturating_sub(4);
-        let title_text = truncate_path_front(&self.title, title_max);
+        let title_text = truncate_path_front(&super::sanitize_display(&self.title), title_max);
 
         let mut block = Block::default()
             .borders(Borders::ALL)
@@ -753,10 +753,11 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
                 let is_cursor = abs_idx == state.cursor;
 
                 let tag_ch = if is_tagged { '*' } else { ' ' };
+                let shown_name = super::sanitize_display(&entry.name);
                 let name_part = if showing_search_result {
-                    truncate_path(&entry.name, name_width)
+                    truncate_path(&shown_name, name_width)
                 } else {
-                    truncate_str(&entry.name, name_width)
+                    truncate_str(&shown_name, name_width)
                 };
                 let count_part = match match_counts {
                     Some(counts) => format!(
@@ -845,7 +846,7 @@ impl<'a> PanelWidget<'a> {
         let PanelContent::Matches(ref ms) = state.content else { return };
 
         let title_max = (area.width as usize).saturating_sub(4);
-        let title_text = truncate_path_front(&self.title, title_max);
+        let title_text = truncate_path_front(&super::sanitize_display(&self.title), title_max);
         let footer = format!(" {} matches ", ms.matches.len());
 
         let block = Block::default()
@@ -907,7 +908,7 @@ impl<'a> PanelWidget<'a> {
                 // tab written to the terminal jumps the physical cursor past
                 // what ratatui's buffer model expects, overwriting the
                 // panel's own border on that row.
-                let expanded = super::expand_tabs(&m.text);
+                let expanded = super::sanitize_display(&super::expand_tabs(&m.text)).into_owned();
                 let full_hits = matcher.as_ref().map(|mm| mm.find_matches(&expanded)).unwrap_or_default();
                 let (text, hits) = truncate_matches_line(&expanded, &full_hits, text_w);
                 let num = format!(" {:>num_w$} ", m.line);

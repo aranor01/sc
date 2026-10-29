@@ -605,7 +605,7 @@ impl ConfirmState {
         // `prefix` + path in quotes + `suffix`, the path shrunk to whatever room is left.
         let quoted = |prefix: &str, path: &str, suffix: &str, truncate: fn(&str, usize) -> String| {
             let fixed = prefix.chars().count() + suffix.chars().count() + 2;
-            let path = shorten(path, width.saturating_sub(fixed), truncate);
+            let path = shorten(&super::sanitize_display(path), width.saturating_sub(fixed), truncate);
             format!("{prefix}'{path}'{suffix}")
         };
         let verb = match self.op {

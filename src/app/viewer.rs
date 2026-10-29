@@ -121,10 +121,7 @@ pub(super) fn normalize_pty_output(bytes: &[u8]) -> String {
 }
 
 pub(super) fn is_bidi_or_invisible(c: char) -> bool {
-    matches!(
-        get_general_category(c),
-        GeneralCategory::Format // covers all Cf: bidi controls, zero-width joiners, etc.
-    )
+    crate::ui::is_format_char(c)
 }
 
 pub(super) fn normalize_text_file(bytes: &[u8]) -> String {

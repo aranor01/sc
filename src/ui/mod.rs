@@ -9,10 +9,30 @@ pub mod output_overlay;
 pub mod panel;
 pub mod status_bar;
 
+use std::borrow::Cow;
+use unicode_general_category::{get_general_category, GeneralCategory};
 use unicode_width::UnicodeWidthChar;
 
 pub fn to_color(c: crate::config::Color) -> ratatui::style::Color {
     ratatui::style::Color::Rgb(c.0, c.1, c.2)
+}
+
+/// Whether `c` is a Unicode format character (Cf): bidi controls, zero-width joiners, etc.
+pub fn is_format_char(c: char) -> bool {
+    get_general_category(c) == GeneralCategory::Format
+}
+
+/// Makes untrusted text (file names, paths, matched lines) safe to draw: control
+/// characters (which a terminal would interpret, e.g. ESC) and format characters
+/// (bidi overrides that can spoof a name) are each shown as `?`. Borrows when clean.
+/// Render-time only: the real name must be kept for file operations.
+pub fn sanitize_display(s: &str) -> Cow<'_, str> {
+    let bad = |c: char| c.is_control() || is_format_char(c);
+    if s.chars().any(bad) {
+        s.chars().map(|c| if bad(c) { '?' } else { c }).collect::<String>().into()
+    } else {
+        s.into()
+    }
 }
 
 /// Expands tab characters to spaces at 8-column tab stops. A raw tab written
@@ -43,6 +63,17 @@ pub fn expand_tabs(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_display_replaces_control_and_format_chars() {
+        assert_eq!(sanitize_display("howq\x1b\x1b"), "howq??");
+        assert_eq!(sanitize_display("a\u{202e}b\x7f\u{85}"), "a?b??");
+    }
+
+    #[test]
+    fn sanitize_display_borrows_clean_text() {
+        assert!(matches!(sanitize_display("plain ünï 日本"), Cow::Borrowed(_)));
+    }
 
     #[test]
     fn expand_tabs_at_start_of_line_uses_full_tab_stop() {

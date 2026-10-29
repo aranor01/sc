@@ -54,6 +54,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Fixed
 
+- File names, paths and matched lines containing control or bidi/format characters
+  (e.g. ESC) are shown with `?` in place of each one, in panels, popups, dialogs and the status bar.
 - Resizing the terminal while an interactive program (e.g. `less`) launched from the
   command line or a menu command is running resizes that program.
 - File operation confirmation dialogs shorten long paths: the file name at the end,

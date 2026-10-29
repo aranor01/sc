@@ -5,7 +5,6 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use unicode_width::UnicodeWidthChar;
-use unicode_general_category::{get_general_category, GeneralCategory};
 
 use anyhow::Result;
 use crossterm::{
