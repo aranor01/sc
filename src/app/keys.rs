@@ -102,7 +102,7 @@ impl App {
                 match outcome {
                     PopupOutcome::Accept(path) => {
                         self.modal = Modal::None;
-                        self.navigate_from_path_history(&path);
+                        self.navigate_to_path(&path);
                     }
                     PopupOutcome::Dismissed => self.modal = Modal::None,
                     _ => {}

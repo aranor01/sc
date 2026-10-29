@@ -774,6 +774,27 @@ fn going_back_to_a_cache_whose_root_was_deleted_shows_an_error_instead_of_restor
 }
 
 #[test]
+fn jumping_to_a_bookmark_closes_the_search_view() {
+    let base = make_search_base("bookmark_closes_search");
+    let mut app = test_app(&base);
+    app.start_search(search_query("target"));
+    wait_for_search_done(&mut app);
+    assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+
+    let dest = base.join("target");
+    app.navigate_to_bookmark(&dest.to_string_lossy());
+    assert!(matches!(app.left.content, PanelContent::Dir));
+    assert_eq!(app.left.path.0, dest.to_string_lossy());
+
+    // The search stays reachable through the back history.
+    app.handle_action(Action::GoBack);
+    assert!(matches!(app.left.content, PanelContent::SearchResults(_)));
+    assert_eq!(app.left.path.0, base.to_string_lossy());
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn path_history_popup_leaves_search_open_until_a_pick_is_made() {
     let base = make_search_base("pathhist_guard");
     let mut app = test_app(&base);

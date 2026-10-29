@@ -33,11 +33,24 @@ impl App {
         }
     }
 
+    /// Navigates the active panel to `path`, leaving any search view (a search
+    /// shown in the active panel is cached into the back/forward history).
     pub(super) fn navigate_to_path(&mut self, path: &str) {
         let path = absolutize_str(path);
         if !std::path::Path::new(&path).exists() {
             self.modal = Modal::Error(format!("Path no longer exists: {path}"));
             return;
+        }
+        match self.active_panel().content {
+            PanelContent::Dir => {}
+            // Keep the results reachable through Alt-Left, like jumping out on a hit.
+            PanelContent::SearchResults(_) => {
+                self.end_search_companions();
+                self.cache_search_to_history();
+                self.active_panel_mut().content = PanelContent::Dir;
+            }
+            // The results live in the other panel; there's nothing to cache from here.
+            PanelContent::Matches(_) => self.close_search(),
         }
         let panel = self.active_panel_mut();
         let old = std::mem::replace(&mut panel.path, crate::provider::NodePath(path.clone()));
@@ -47,16 +60,6 @@ impl App {
         panel.refresh();
         panel.select_child_toward(&old.0);
         self.push_path_history(&path);
-    }
-
-    /// Close-search-then-navigate used by the path-history popup's Accept
-    /// handlers (keyboard and mouse): picking a history entry is a "go
-    /// somewhere new" commitment, so any open search view is closed first.
-    pub(super) fn navigate_from_path_history(&mut self, path: &str) {
-        if !matches!(self.active_panel().content, PanelContent::Dir) {
-            self.close_search();
-        }
-        self.navigate_to_path(path);
     }
 
     pub(super) fn navigate_to_bookmark(&mut self, path: &str) {
@@ -64,17 +67,8 @@ impl App {
         if !std::path::Path::new(&path).exists() {
             self.bookmarks.retain(|b| b != &path);
             let _ = crate::bookmarks::save(&self.bookmarks);
-            self.modal = Modal::Error(format!("Path no longer exists: {path}"));
-            return;
         }
-        let panel = self.active_panel_mut();
-        let old = std::mem::replace(&mut panel.path, crate::provider::NodePath(path.clone()));
-        panel.cursor = 0;
-        panel.scroll = 0;
-        panel.tagged.clear();
-        panel.refresh();
-        panel.select_child_toward(&old.0);
-        self.push_path_history(&path);
+        self.navigate_to_path(&path);
     }
 
     pub(super) fn quicksearch_jump(&mut self, pattern: &str) {

@@ -112,7 +112,7 @@ impl App {
                         } else { None };
                         self.modal = Modal::None;
                         if let Some(p) = path {
-                            self.navigate_from_path_history(&p);
+                            self.navigate_to_path(&p);
                         }
                     } else if !area.contains(up) {
                         self.modal = Modal::None;
