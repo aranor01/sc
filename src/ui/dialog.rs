@@ -153,6 +153,7 @@ impl InputDialogState {
 }
 
 pub struct InputDialogAreas {
+    pub input: Rect,
     pub ok: Button,
     pub cancel: Button,
     pub cb_files_only: Option<Rect>,
@@ -303,6 +304,7 @@ pub fn render_input_dialog(
         cancel_btn.render_state(CANCEL_LABEL, buf,
             state.focus.is_focused(cancel_focus_idx) || cancel_btn.is_pressed(press));
         (InputDialogAreas {
+            input: input_area,
             ok: ok_btn,
             cancel: cancel_btn,
             cb_files_only: cb_fo_rect,
@@ -311,6 +313,7 @@ pub fn render_input_dialog(
         }, cursor_out)
     } else {
         (InputDialogAreas {
+            input: input_area,
             ok: Button::default(),
             cancel: Button::default(),
             cb_files_only: None,

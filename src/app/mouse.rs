@@ -54,6 +54,10 @@ impl App {
                         }
                         s.focus.set(cb_idx);
                     }
+                } else if down == Some(up) && self.input_field.get().is_some_and(|r| r.contains(up)) {
+                    if let Modal::InputDialog(ref mut s) = self.modal {
+                        s.focus.set(0);
+                    }
                 } else if input_ok.clicked(down, up) {
                     if let Modal::InputDialog(state) =
                         std::mem::replace(&mut self.modal, Modal::None)

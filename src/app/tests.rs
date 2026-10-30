@@ -1370,3 +1370,29 @@ fn fuzzy_filter_narrows_panel_and_is_dropped_on_esc_and_navigation() {
 
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn clicking_the_input_field_of_an_input_dialog_refocuses_it() {
+    let base = make_search_base("input_dialog_click_focus");
+    let mut app = test_app(&base);
+    let mut state = InputDialogState::new(InputDialogAction::Mkdir, " Create directory ", "");
+    state.focus.set(1);
+    app.modal = Modal::InputDialog(state);
+    let field = Rect { x: 10, y: 5, width: 30, height: 1 };
+    app.input_field.set(Some(field));
+    let inside = Position { x: 12, y: 5 };
+    app.mouse_pressed = Some(inside);
+    app.handle_modal_click(inside);
+    let Modal::InputDialog(s) = &app.modal else { panic!("dialog should stay open") };
+    assert!(s.focus.is_focused(0));
+
+    // A click that started elsewhere (drag) doesn't change focus.
+    let Modal::InputDialog(s) = &mut app.modal else { unreachable!() };
+    s.focus.set(1);
+    app.mouse_pressed = Some(Position { x: 0, y: 0 });
+    app.handle_modal_click(inside);
+    let Modal::InputDialog(s) = &app.modal else { unreachable!() };
+    assert!(s.focus.is_focused(1));
+
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -310,6 +310,7 @@ impl App {
             ModalAreas::InputDialog(a, cursor) => {
                 self.input_ok_btn.set(a.ok);
                 self.input_cancel_btn.set(a.cancel);
+                self.input_field.set(Some(a.input));
                 self.input_cb_files_only.set(a.cb_files_only);
                 self.input_cb_case_sensitive.set(a.cb_case_sensitive);
                 self.input_cb_regexp.set(a.cb_regexp);

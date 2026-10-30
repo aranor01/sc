@@ -62,6 +62,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Fixed
 
+- Clicking the text field of a single-field dialog (Rename, Filter, New directory, …) focuses it.
 - While the command line is hidden, keys are handled by the panels and action bindings only.
 - File names, paths and matched lines containing control or bidi/format characters
   (e.g. ESC) are shown with `?` in place of each one, in panels, popups, dialogs and the status bar.
