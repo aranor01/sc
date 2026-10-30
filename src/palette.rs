@@ -1,4 +1,4 @@
-//! Command palette data: the command list parsed from `CheatSheet.md`, fuzzy scoring and
+//! Command palette data: the command list parsed from `CheatSheet.md` and
 //! the recent-actions list. The UI session that uses them lives in `app.rs`, since it
 //! needs the private `Action` enum.
 
@@ -67,39 +67,6 @@ fn config_key_of(cell: &str) -> Option<String> {
     Some(name.to_string())
 }
 
-/// Subsequence match of `query` against `text`, case-insensitive. Higher is better:
-/// consecutive characters and word starts score extra, gaps cost. `None` = no match.
-pub fn fuzzy_score(query: &str, text: &str) -> Option<i32> {
-    let q: Vec<char> = query.chars().filter(|c| !c.is_whitespace()).flat_map(char::to_lowercase).collect();
-    if q.is_empty() {
-        return Some(0);
-    }
-    let t: Vec<char> = text.chars().collect();
-    let mut qi = 0;
-    let mut score = 0;
-    let mut prev_match: Option<usize> = None;
-    for (i, &c) in t.iter().enumerate() {
-        if qi == q.len() {
-            break;
-        }
-        if c.to_lowercase().next() != Some(q[qi]) {
-            continue;
-        }
-        score += 10;
-        if prev_match == Some(i.wrapping_sub(1)) {
-            score += 15;
-        } else if let Some(p) = prev_match {
-            score -= (i - p - 1).min(10) as i32;
-        }
-        if i == 0 || !t[i - 1].is_alphanumeric() {
-            score += 12;
-        }
-        prev_match = Some(i);
-        qi += 1;
-    }
-    (qi == q.len()).then_some(score)
-}
-
 /// The part of a description before the first `(`, `;` or `.`, trimmed.
 pub fn short_description(desc: &str) -> &str {
     let end = desc.find(['(', ';', '.']).unwrap_or(desc.len());
@@ -162,24 +129,6 @@ mod tests {
         assert!(cmds.iter().any(|c| c.config_key == "copy" && c.category == "File Operations"));
         assert!(cmds.iter().any(|c| c.config_key == "action_palette"));
         assert!(!cmds.iter().any(|c| c.label == "Move Up"));
-    }
-
-    #[test]
-    fn fuzzy_requires_ordered_subsequence() {
-        assert!(fuzzy_score("srt", "Sort Panel").is_some());
-        assert!(fuzzy_score("tsr", "Sort Panel").is_none());
-        assert_eq!(fuzzy_score("", "anything"), Some(0));
-        assert!(fuzzy_score("SORT", "sort panel").is_some());
-    }
-
-    #[test]
-    fn fuzzy_prefers_consecutive_and_word_start_matches() {
-        let tight = fuzzy_score("sort", "Sort Panel").unwrap();
-        let loose = fuzzy_score("sort", "Show Octal Remote Tree").unwrap();
-        assert!(tight > loose);
-        let initials = fuzzy_score("sp", "Sort Panel").unwrap();
-        let buried = fuzzy_score("sp", "Unselect Group").unwrap();
-        assert!(initials > buried);
     }
 
     #[test]

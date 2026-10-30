@@ -13,6 +13,7 @@ mod macros;
 mod pattern;
 mod provider;
 mod state;
+mod text;
 mod textbuf;
 mod ui;
 

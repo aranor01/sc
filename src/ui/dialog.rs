@@ -2,7 +2,7 @@ use crate::config::ColorScheme;
 use crate::ui::cmdline::CmdLineState;
 use crate::ui::focus::FocusRing;
 use crate::ui::modal_event::ModalOutcome;
-use crate::ui::panel::{truncate_path, truncate_str};
+use crate::text::{truncate_path, truncate_str};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use unicode_width::UnicodeWidthStr;
 use ratatui::{

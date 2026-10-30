@@ -93,9 +93,9 @@ impl App {
                 })
                 .filter_map(|e| {
                     let q = &session.query;
-                    crate::palette::fuzzy_score(q, &e.label).map(|s| s + 100).or_else(|| {
+                    crate::text::fuzzy_score(q, &e.label).map(|s| s + 100).or_else(|| {
                         let hay = format!("{} {} {}", e.category, e.label, e.description);
-                        crate::palette::fuzzy_score(q, &hay)
+                        crate::text::fuzzy_score(q, &hay)
                     }).map(|s| (s, e))
                 })
                 .collect();
