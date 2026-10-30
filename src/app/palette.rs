@@ -36,6 +36,7 @@ impl App {
         self.completion = None;
         self.reverse_search = None;
         self.quicksearch = None;
+        self.fuzzy_filter_active = false;
         self.palette = Some(PaletteSession {
             list: PopupListState::new(Vec::new()),
             rows: Vec::new(),

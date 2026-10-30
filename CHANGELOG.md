@@ -10,6 +10,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- Fuzzy filter (`/`, action `fuzzy_filter`): type to narrow the active panel to the entries
+  fuzzy-matching the text; Esc, erasing the text, or changing directory removes it.
 - Asynchronous file search (`Alt-?` / `Ctrl-f`, action `search`): find files by name
   (glob or regex) and optionally by content from the active panel's directory, with
   max-depth / hidden / follow-symlinks options. **File pattern** has its own **RegExp**/
@@ -56,6 +58,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   commands instead of a separate menu dialog.
 - The filter dialog's default binding moved from `Ctrl-f` to `Alt-f` (`Ctrl-f` now
   opens the search dialog).
+- The default binding of `quicksearch` is now `Alt-s` only; `/` opens the fuzzy filter.
 
 ### Fixed
 

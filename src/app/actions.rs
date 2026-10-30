@@ -298,6 +298,13 @@ impl App {
                 );
                 self.modal = Modal::PathHistoryList(popup);
             }
+            Action::FuzzyFilter => {
+                if !matches!(self.active_panel().content, PanelContent::Dir) {
+                    self.set_status("Fuzzy filter is not available in search panels", true);
+                    return;
+                }
+                self.fuzzy_filter_active = true;
+            }
             Action::Filter => {
                 if !matches!(self.active_panel().content, PanelContent::Dir) {
                     self.set_status("Filter is not available in search panels", true);

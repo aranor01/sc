@@ -56,8 +56,9 @@ triggers the action):
 | `sync_panels` | `Alt-i` |
 | `refresh_panel` | `Alt-r` |
 | `sort_panel` | `Ctrl-s` |
-| `quicksearch` | `/`, `Alt-s` |
+| `quicksearch` | `Alt-s` |
 | `filter` | `Alt-f` |
+| `fuzzy_filter` | `/` |
 | `search` | `Alt-?`, `Ctrl-f` |
 | `toggle_hidden` | `Alt-.` |
 | `bookmark_open` | `Ctrl-\` |

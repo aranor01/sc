@@ -1336,3 +1336,37 @@ fn go_to_parent_and_history_back_select_the_directory_we_left() {
     assert_eq!(app.left.cursor, 0);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn fuzzy_filter_narrows_panel_and_is_dropped_on_esc_and_navigation() {
+    let base = make_search_base("fuzzy_filter");
+    std::fs::write(base.join("alpha.txt"), "").unwrap();
+    std::fs::write(base.join("beta.txt"), "").unwrap();
+    let mut app = test_app(&base);
+    let key = |c| KeyEvent::new(c, KeyModifiers::NONE);
+    app.fuzzy_filter_active = true;
+    for c in "alp".chars() {
+        app.handle_key_event(key(KeyCode::Char(c)));
+    }
+    let names = |a: &App| a.left.entries.iter().map(|e| e.name.clone()).filter(|n| n != "..").collect::<Vec<_>>();
+    assert_eq!(names(&app), ["alpha.txt"]);
+
+    // Navigation key closes the prompt but keeps the filter.
+    app.handle_key_event(key(KeyCode::Down));
+    assert!(!app.fuzzy_filter_active);
+    assert_eq!(names(&app), ["alpha.txt"]);
+
+    // Reopening and pressing Esc removes it.
+    app.fuzzy_filter_active = true;
+    app.handle_key_event(key(KeyCode::Esc));
+    assert!(app.left.fuzzy_filter.is_none());
+    assert_eq!(names(&app).len(), 4); // alpha, beta, target, dest
+
+    // A filter belongs to one directory only.
+    app.left.fuzzy_filter = Some(("alp".into(), app.left.path.clone()));
+    app.left.path = crate::provider::NodePath(base.join("target").to_string_lossy().into_owned());
+    app.left.refresh();
+    assert!(app.left.fuzzy_filter.is_none());
+
+    let _ = std::fs::remove_dir_all(&base);
+}

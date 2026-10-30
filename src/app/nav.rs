@@ -71,6 +71,18 @@ impl App {
         self.navigate_to_path(&path);
     }
 
+    /// Applies `query` as the active panel's fuzzy filter (empty removes it) and puts the
+    /// cursor on the first remaining entry.
+    pub(super) fn set_fuzzy_filter(&mut self, query: &str) {
+        let panel = self.active_panel_mut();
+        panel.fuzzy_filter = (!query.is_empty()).then(|| (query.to_string(), panel.path.clone()));
+        panel.refresh();
+        let vh = self.active_vh();
+        let first = self.active_panel().entries.iter().position(|e| e.name != "..").unwrap_or(0);
+        let current = self.active_panel().cursor as i32;
+        self.active_panel_mut().move_cursor(first as i32 - current, vh);
+    }
+
     pub(super) fn quicksearch_jump(&mut self, pattern: &str) {
         if pattern.is_empty() {
             return;

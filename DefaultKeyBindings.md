@@ -133,14 +133,17 @@
        toggle visibility of hidden files (dotfiles) in the active panel
 
 - / (Slash)
+       open the fuzzy filter prompt in the active panel: takes input like quicksearch, but hides
+       the entries that don't fuzzy-match the typed text (same matching as the command palette).
+       Up/Down/Enter leave the prompt and keep the filter; Esc or erasing the text removes it,
+       and so does navigating to another directory. The header shows it as `[~text]`
+
+- A-s
        open quicksearch in the active panel: the cmdline area shows a `Search:` prompt and
        the cursor jumps to the first entry whose name starts with the typed string
        (case-insensitive prefix match); Esc closes the prompt. Enter closes the prompt and
        is also passed to the panel, same as Home/End/PgUp/PgDown/Up/Down: it opens the
        currently selected directory (or does nothing if the entry isn't a directory)
-
-- A-s
-       same as / (alternate quicksearch shortcut)
 
 - A-f
        open the filter dialog for the active panel: hides entries not matching the given

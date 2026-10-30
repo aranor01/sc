@@ -136,6 +136,9 @@ pub struct PanelState {
     pub sort_asc: bool,
     pub show_hidden: bool,
     pub filter: Option<FilterPattern>,
+    /// Transient fuzzy filter: the query and the directory it was typed in. Dropped as soon
+    /// as the panel lists a different directory.
+    pub fuzzy_filter: Option<(String, NodePath)>,
     pub content: PanelContent,
 }
 
@@ -153,6 +156,7 @@ impl PanelState {
             sort_asc: true,
             show_hidden: false,
             filter: None,
+            fuzzy_filter: None,
             content: PanelContent::Dir,
         };
         s.refresh();
@@ -217,6 +221,19 @@ impl PanelState {
                             || (pat.files_only && e.kind == NodeKind::Dir)
                             || pat.matches(&e.name)
                     });
+                }
+                // Transient fuzzy filter (always keep ".."); belongs to one directory only
+                if self.fuzzy_filter.as_ref().is_some_and(|(_, dir)| *dir != self.path) {
+                    self.fuzzy_filter = None;
+                }
+                if let Some((ref query, _)) = self.fuzzy_filter {
+                    let keep = |e: &NodeEntry| {
+                        e.name == ".." || crate::text::fuzzy_score(query, &e.name).is_some()
+                    };
+                    let hidden: HashSet<String> =
+                        entries.iter().filter(|e| !keep(e)).map(|e| e.name.clone()).collect();
+                    self.tagged.retain(|n| !hidden.contains(n));
+                    entries.retain(keep);
                 }
                 // Keep ".." at position 0, sort the rest
                 let sort_start = if entries.first().map(|e| e.name == "..").unwrap_or(false) { 1 } else { 0 };
@@ -672,6 +689,8 @@ impl<'a> StatefulWidget for PanelWidget<'a> {
             };
             let name_label = if let PanelContent::SearchResults(sr) = &state.content {
                 format!("Name{} [{}]", icon(name_active), sr.query.pattern)
+            } else if let Some((ref query, _)) = state.fuzzy_filter {
+                format!("Name{} [~{}]", icon(name_active), query)
             } else if let Some(ref pat) = state.filter {
                 format!("Name{} [{}]", icon(name_active), pat.raw)
             } else {

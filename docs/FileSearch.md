@@ -48,8 +48,8 @@ When the search starts, the active panel is replaced by a *results panel*:
   everywhere in sc, when the command line is not empty an Esc only enters action mode
   first — so closing a still-running search takes Esc, Esc, Esc; a finished one takes
   Esc, Esc.
-- Tagging works normally (`Insert`, `*`, `+`, `-`), and quicksearch (`/`) matches over
-  the displayed relative paths.
+- Tagging works normally (`Insert`, `*`, `+`, `-`), and quicksearch (`Alt-s`) matches over
+  the displayed relative paths. The fuzzy filter (`/`) is not available in search panels.
 - **F5/F6/F8** operate on the tagged (or selected) hits, with the inactive panel's
   directory as destination — allowed only while the inactive panel is a normal panel
   (i.e. name-only searches); otherwise refused with a status warning.

@@ -248,13 +248,16 @@ impl App {
             }
         }
 
-        // Quicksearch: intercept keys while active
-        if self.quicksearch.is_some() {
+        // Quicksearch / fuzzy filter: intercept keys while active. Both take the same input;
+        // the fuzzy filter keeps its query on the panel, so leaving the prompt through a
+        // navigation key keeps the filter, while Esc (or erasing the query) removes it.
+        if self.quicksearch.is_some() || self.fuzzy_filter_active {
             match event.code {
                 // Navigation keys: dismiss then execute
                 KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
                 | KeyCode::Home | KeyCode::End | KeyCode::Enter => {
                     self.quicksearch = None;
+                    self.fuzzy_filter_active = false;
                     if event.code == KeyCode::Enter
                         && matches!(self.active_panel().content, PanelContent::Dir)
                         && self.active_panel().current_entry().map(|e| e.kind != NodeKind::Dir).unwrap_or(false)
@@ -277,7 +280,22 @@ impl App {
                     }
                 }
                 KeyCode::Esc => {
+                    if self.fuzzy_filter_active {
+                        self.set_fuzzy_filter("");
+                    }
                     self.quicksearch = None;
+                    self.fuzzy_filter_active = false;
+                }
+                KeyCode::Backspace | KeyCode::Char(_) if self.fuzzy_filter_active => {
+                    let mut query = self.active_panel().fuzzy_filter.as_ref().map(|(q, _)| q.clone()).unwrap_or_default();
+                    match event.code {
+                        KeyCode::Char(c) if event.modifiers == KeyModifiers::NONE || event.modifiers == KeyModifiers::SHIFT => query.push(c),
+                        KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => { query.pop(); }
+                        _ => self.fuzzy_filter_active = false,
+                    }
+                    if self.fuzzy_filter_active {
+                        self.set_fuzzy_filter(&query);
+                    }
                 }
                 KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
                     if let Some(ref mut qs) = self.quicksearch {
@@ -296,7 +314,10 @@ impl App {
                         self.quicksearch_jump(&pattern);
                     }
                 }
-                _ => { self.quicksearch = None; }
+                _ => {
+                    self.quicksearch = None;
+                    self.fuzzy_filter_active = false;
+                }
             }
             return;
         }

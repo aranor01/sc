@@ -36,6 +36,8 @@ impl App {
             prompt = "(reverse-i-search): ";
         } else if self.quicksearch.is_some() {
             prompt = "Search: ";
+        } else if self.fuzzy_filter_active {
+            prompt = "Fuzzy filter: ";
         } else {
             prompt = "$ ";
             command_line_is_active = !self.action_mode();
@@ -102,7 +104,12 @@ impl App {
             let buf = frame.buffer_mut();
             // When quicksearch is active, show the search pattern instead of cmdline text
             let qs_state;
-            let render_state = if let Some(ref pattern) = self.quicksearch {
+            let typed = if self.fuzzy_filter_active {
+                Some(self.active_panel().fuzzy_filter.as_ref().map_or("", |(q, _)| q.as_str()).to_string())
+            } else {
+                self.quicksearch.clone()
+            };
+            let render_state = if let Some(ref pattern) = typed {
                 qs_state = {
                     let mut s = CmdLineState::new();
                     s.text = pattern.clone();
