@@ -1163,6 +1163,46 @@ fn hidden_cmdline_is_shown_while_quicksearch_or_fuzzy_filter_is_active() {
 }
 
 #[test]
+fn quick_action_starts_on_printable_key_while_cmdline_is_hidden() {
+    use crate::config::QuickAction;
+    let base = make_search_base("quick_action");
+    std::fs::write(base.join("alpha.txt"), "a").unwrap();
+    std::fs::write(base.join("beta.txt"), "b").unwrap();
+    let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+
+    // Empty setting: the key is ignored.
+    let mut app = test_app(&base);
+    app.config.panels.quick_action = None;
+    app.show_cmdline = false;
+    app.handle_key_event(key('b'));
+    assert!(app.quicksearch.is_none() && !app.fuzzy_filter_active);
+    assert_eq!(app.cmdline.text, "");
+
+    let mut app = test_app(&base);
+    app.config.panels.quick_action = Some(QuickAction::Quicksearch);
+    app.show_cmdline = false;
+    app.handle_key_event(key('b'));
+    assert_eq!(app.quicksearch.as_deref(), Some("b"));
+    assert_eq!(app.cmdline.text, "");
+    assert_eq!(app.left.current_entry().unwrap().name, "beta.txt");
+
+    let mut app = test_app(&base);
+    app.config.panels.quick_action = Some(QuickAction::FuzzyFilter);
+    app.show_cmdline = false;
+    app.handle_key_event(key('a'));
+    assert!(app.fuzzy_filter_active);
+    assert_eq!(app.left.fuzzy_filter.as_ref().map(|(q, _)| q.as_str()), Some("a"));
+
+    // Visible command line: typing still goes to the command line.
+    let mut app = test_app(&base);
+    app.handle_key_event(key('b'));
+    assert!(app.quicksearch.is_none() && !app.fuzzy_filter_active);
+    assert_eq!(app.cmdline.text, "b");
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn enter_on_executable_text_file_view_it_by_default() {
     use std::os::unix::fs::PermissionsExt;
     let executable_text_content = "#!/bin/sh\necho hi\n";

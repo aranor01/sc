@@ -10,6 +10,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Added
 
+- `panels.quick_action` setting (`"fuzzy_filter"` by default, or `"quicksearch"`/empty): a
+  printable key typed while the command line is hidden starts that action and is fed to it.
 - Fuzzy filter (`/`, action `fuzzy_filter`): type to narrow the active panel to the entries
   fuzzy-matching the text; Esc, erasing the text, or changing directory removes it.
 - Asynchronous file search (`Alt-?` / `Ctrl-f`, action `search`): find files by name

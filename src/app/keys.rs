@@ -426,6 +426,25 @@ impl App {
             }
         }
 
+        // Quick action: with the command line hidden, a printable key starts the configured
+        // action and is fed to it, since there is no command line to type into.
+        if !self.show_cmdline
+            && matches!(event.code, KeyCode::Char(_))
+            && (event.modifiers == KeyModifiers::NONE || event.modifiers == KeyModifiers::SHIFT)
+        {
+            if let Some(qa) = self.config.panels.quick_action {
+                self.handle_action(match qa {
+                    QuickAction::FuzzyFilter => Action::FuzzyFilter,
+                    QuickAction::Quicksearch => Action::Quicksearch,
+                });
+                // The action refuses to start in some panels; only re-dispatch if it did.
+                if self.quicksearch.is_some() || self.fuzzy_filter_active {
+                    self.handle_key_event_inner(event);
+                }
+                return;
+            }
+        }
+
         // Panel navigation keys are always intercepted first.
         let am = self.action_mode();
         let vh = self.active_vh();

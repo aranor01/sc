@@ -237,7 +237,8 @@ The values above are the built-in defaults; only include the keys you want to ch
     "time_lenght": 14,
     "default_action_executable": "",
     "default_action_text": ":view",
-    "default_action": ""
+    "default_action": "",
+    "quick_action": "fuzzy_filter"
   }
 }
 ```
@@ -264,7 +265,10 @@ The values above are the built-in defaults; only include the keys you want to ch
   The default is `:view`.
   3. `default_action_executable` — used when neither of the above properties apply.
   The default is an empty string.
-  
+- `quick_action` — what a printable key does while the command line is hidden (`Alt-Ctrl-b`).
+  `"fuzzy_filter"` (the default) or `"quicksearch"` starts that action on the active panel and
+  feeds it the typed character, showing the command line temporarily for its prompt; empty
+  ignores the key.
 
 ## Related files
 

@@ -23,7 +23,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::config::{format_key_spelled, ActionBindings, Config, KeyBinding};
+use crate::config::{format_key_spelled, ActionBindings, Config, KeyBinding, QuickAction};
 use crate::ipc::{parse_message, CmdlineInjectMode, IpcMessage, IpcServer};
 use crate::history::CommandHistory;
 use crate::macros::{MacroContext, PanelContext};

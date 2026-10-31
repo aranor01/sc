@@ -454,6 +454,15 @@ pub struct PanelsConfig {
     pub default_action_text: String,
     /// Fallback action used when the specific field above is empty. Empty is a no-op.
     pub default_action: String,
+    /// Action started by a printable key typed in action mode; the key is fed to it.
+    /// `None` sends the key to the command line.
+    pub quick_action: Option<QuickAction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuickAction {
+    FuzzyFilter,
+    Quicksearch,
 }
 
 impl Default for PanelsConfig {
@@ -464,6 +473,7 @@ impl Default for PanelsConfig {
             default_action_executable: String::new(),
             default_action_text: ":view".to_string(),
             default_action: String::new(),
+            quick_action: Some(QuickAction::FuzzyFilter),
         }
     }
 }
@@ -719,6 +729,16 @@ impl Config {
             }
             if let Some(v) = panels.get("default_action").and_then(|v| v.as_str()) {
                 cfg.panels.default_action = v.to_string();
+            }
+            if let Some(v) = panels.get("quick_action").and_then(|v| v.as_str()) {
+                cfg.panels.quick_action = match v {
+                    "" => None,
+                    "fuzzy_filter" => Some(QuickAction::FuzzyFilter),
+                    "quicksearch" => Some(QuickAction::Quicksearch),
+                    other => anyhow::bail!(
+                        "panels.quick_action must be empty, \"fuzzy_filter\" or \"quicksearch\", got \"{other}\""
+                    ),
+                };
             }
         }
 
@@ -991,6 +1011,16 @@ mod tests {
         assert_eq!(cfg.panels.default_action_executable, "");
         assert_eq!(cfg.panels.default_action_text, ":view");
         assert_eq!(cfg.panels.default_action, "");
+    }
+
+    #[test]
+    fn panels_quick_action_defaults_to_none_and_parses() {
+        assert_eq!(Config::default().panels.quick_action, Some(QuickAction::FuzzyFilter));
+        let parse = |v: &str| Config::load_from_str(&format!(r#"{{"panels": {{"quick_action": "{v}"}}}}"#));
+        assert_eq!(parse("fuzzy_filter").unwrap().panels.quick_action, Some(QuickAction::FuzzyFilter));
+        assert_eq!(parse("quicksearch").unwrap().panels.quick_action, Some(QuickAction::Quicksearch));
+        assert_eq!(parse("").unwrap().panels.quick_action, None);
+        assert!(parse("bogus").is_err());
     }
 
     #[test]
