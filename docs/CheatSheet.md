@@ -74,7 +74,7 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 | Move | Move tagged files (or the selected file) to the inactive panel's directory | `move`: `F6` |
 | Delete | Delete the tagged files (or the selected file) in the active panel | `delete`: `F8` |
 | Rename | Rename the currently selected file | `rename`: `Shift-F6` |
-| Make Directory | Create a new directory in the active panel | `mkdir`: `F7` |
+| Make Directory [Mkdir] | Create a new directory in the active panel | `mkdir`: `F7` |
 
 ## Text Viewer
 
@@ -106,8 +106,8 @@ Keys of the internal full-screen text viewer (opened with `view`). They only app
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Toggle Shell | Toggle output overlay (stateless mode) or full interactive subshell (subshell mode); Ctrl-o and Alt-o also exit subshell passthrough back to the sc UI | `toggle_shell`: `Ctrl-o` |
-| Toggle Shell & Sync | Like Toggle Shell; also copies the SC command line into the subshell's readline buffer | `toggle_shell_and_sync_command_line`: `Alt-o` |
+| Toggle Shell [Shell] | Toggle output overlay (stateless mode) or full interactive subshell (subshell mode); Ctrl-o and Alt-o also exit subshell passthrough back to the sc UI | `toggle_shell`: `Ctrl-o` |
+| Toggle Shell & Sync [Shell] | Like Toggle Shell; also copies the SC command line into the subshell's readline buffer | `toggle_shell_and_sync_command_line`: `Alt-o` |
 
 ## Layout
 
@@ -121,6 +121,6 @@ Keys of the internal full-screen text viewer (opened with `view`). They only app
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Command Palette | Open the command palette: fuzzy search over every command (shows categories, recent actions and each command's shortcut) | `action_palette`: `F1` |
-| User Menu | Open the command palette pre-filtered to the user-configured menu commands | `user_menu`: `F2` |
+| Actions | Open the action palette: fuzzy search over every action (shows categories, recent actions and each action's shortcut) | `action_palette`: `F1` |
+| User Commands [Menu] | Open the command palette pre-filtered to the user-configured menu commands | `user_menu`: `F2` |
 | Exit | Exit the application | `exit`: `F10`, `Ctrl-q` |

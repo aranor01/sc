@@ -13,6 +13,7 @@ const MAX_RECENT: usize = 4;
 pub struct Command {
     pub category: String,
     pub label: String,
+    pub short_label: Option<String>,
     pub description: String,
     /// Name of the `keybindings` field in the config file (e.g. `sort_panel`).
     pub config_key: String,
@@ -48,14 +49,31 @@ pub fn parse_cheatsheet(md: &str) -> Vec<Command> {
             continue;
         }
         let Some(key) = config_key_of(cols[2]) else { continue };
+        let (label, short_label) = parse_label(cols[0]);
         out.push(Command {
             category: category.clone(),
-            label: cols[0].to_string(),
+            label,
+            short_label,
             description: cols[1].to_string(),
             config_key: key,
         });
     }
     out
+}
+
+/// Extracts the main label and optional short label from brackets (e.g., "Remove Bookmark [DelBookmark]")
+fn parse_label(raw: &str) -> (String, Option<String>) {
+    if let Some(open_idx) = raw.rfind('[') {
+        if let Some(close_idx) = raw.rfind(']') {
+            if open_idx < close_idx {
+                let label = raw[..open_idx].trim().to_string();
+                let short = raw[open_idx + 1..close_idx].trim().to_string();
+                let short_label = if short.is_empty() { None } else { Some(short) };
+                return (label, short_label);
+            }
+        }
+    }
+    (raw.to_string(), None)
 }
 
 fn config_key_of(cell: &str) -> Option<String> {
@@ -90,7 +108,7 @@ mod tests {
 ## Panels
 | Action | Description | Config key: default |
 |---|---|---|
-| Sort Panel | Open sort popup | `sort_panel`: `Ctrl-s` |
+| Sort Panel [Sort] | Open sort popup | `sort_panel`: `Ctrl-s` |
 | Refresh | Reload | `refresh_panel`: `Alt-r`, `F9` |
 ## Text Viewer
 | Action | Description | Config key: default |
@@ -110,6 +128,7 @@ mod tests {
         assert_eq!(cmds[0], Command {
             category: "Panels".into(),
             label: "Sort Panel".into(),
+            short_label: Some("Sort".into()),
             description: "Open sort popup".into(),
             config_key: "sort_panel".into(),
         });

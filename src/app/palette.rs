@@ -39,7 +39,7 @@ impl App {
             .into_iter()
             .filter_map(|(key, bindings, _)| {
                 let label = self.palette_commands.iter().find(|c| c.config_key == key)
-                    .map(|c| c.label.as_str())
+                    .map(|c| c.short_label.as_ref().unwrap_or(&c.label).as_str())
                     .or_else(|| crate::ui::button_bar::fallback_label(key))?;
                 Some((label.to_string(), bindings))
             })
