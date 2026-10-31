@@ -43,8 +43,13 @@ impl App {
             command_line_is_active = !self.action_mode();
         }
         let cmdline_widget = CmdLineWidget { cs: &cs, prompt, active: command_line_is_active };
+        // A hidden command line is shown anyway while quicksearch / fuzzy filter need its row.
+        let prompt_needs_cmdline = self.quicksearch.is_some() || self.fuzzy_filter_active;
+        let cmdline_visible = self.show_cmdline || prompt_needs_cmdline;
         let cmdline_height = if self.show_cmdline {
             cmdline_widget.needed_lines(&self.cmdline, area.width)
+        } else if prompt_needs_cmdline {
+            1
         } else {
             0
         };
@@ -53,7 +58,7 @@ impl App {
         let layout = AppLayout::compute(
             area,
             self.orientation,
-            self.show_cmdline,
+            cmdline_visible,
             show_bottom_bar,
             cmdline_height,
         );

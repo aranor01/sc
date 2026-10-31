@@ -1140,6 +1140,29 @@ fn enter_while_quicksearch_active_also_opens_viewer_via_default_text_action() {
 }
 
 #[test]
+fn hidden_cmdline_is_shown_while_quicksearch_or_fuzzy_filter_is_active() {
+    use ratatui::{backend::TestBackend, Terminal};
+    let base = make_search_base("hidden_cmdline_prompt");
+    let mut app = test_app(&base);
+    app.show_cmdline = false;
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    let mut panel_height = |app: &mut App| {
+        term.draw(|f| app.render(f)).unwrap();
+        app.left_area.get().height
+    };
+    let full = panel_height(&mut app);
+    app.quicksearch = Some(String::new());
+    assert_eq!(panel_height(&mut app), full - 1);
+    app.quicksearch = None;
+    app.fuzzy_filter_active = true;
+    assert_eq!(panel_height(&mut app), full - 1);
+    app.fuzzy_filter_active = false;
+    assert_eq!(panel_height(&mut app), full);
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn enter_on_executable_text_file_view_it_by_default() {
     use std::os::unix::fs::PermissionsExt;
     let executable_text_content = "#!/bin/sh\necho hi\n";
