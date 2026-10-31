@@ -342,7 +342,7 @@ impl Default for KeyBindings {
             go_back: vec![KeyBinding::Single(ke(Left, a))],
             go_forward: vec![KeyBinding::Single(ke(Right, a))],
             toggle_matches_panel: vec![KeyBinding::Single(ke(Char('m'), a))],
-            view: vec![KeyBinding::Single(ke(F(3), n))],
+            view: vec![KeyBinding::Single(ke(Char('v'), a))],
             action_palette: vec![KeyBinding::Single(ke(F(1), n))],
             viewer: ViewerKeyBindings::default(),
         }
@@ -538,14 +538,15 @@ pub fn find_cheatsheet() -> Option<std::path::PathBuf> {
     beside.exists().then_some(beside)
 }
 
-fn generate_default_config(scripts_dir: &std::path::Path) -> String {
+fn generate_default_config(scripts_dir: &std::path::Path, config_path: &std::path::Path) -> String {
     let s = scripts_dir.to_string_lossy();
+    let c = config_path.to_string_lossy();
     format!(
         r#"{{
   "menu": [
-    {{ "label": "View",        "command": "{s}/view.sh %f",                             "keys": "Shift-F3" }},
-    {{ "label": "Edit",        "command": "{s}/edit.sh %f",                             "keys": "F4" }},
-    {{ "label": "Edit config", "command": "{s}/edit.sh ~/.config/sc/config.json" }}
+    {{ "label": "View",        "command": "{s}/view.sh %f",                          "keys": "F3", "add_to_bar":true }},
+    {{ "label": "Edit",        "command": "{s}/edit.sh %f",                          "keys": "F4", "add_to_bar":true }},
+    {{ "label": "Edit config", "command": "{s}/edit.sh {c}" }}
   ]
 }}
 "#
@@ -563,7 +564,7 @@ impl Config {
 
         if !path.exists() {
             if let Some(scripts_dir) = find_scripts_dir() {
-                let content = generate_default_config(&scripts_dir);
+                let content = generate_default_config(&scripts_dir, &path);
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
@@ -994,15 +995,15 @@ mod tests {
     }
 
     #[test]
-    fn view_default_binding_is_f3() {
+    fn view_default_binding_is_alt_v() {
         let cfg = Config::load_from_str("{}").unwrap();
-        assert_eq!(cfg.keybindings.view, vec![single(F(3), M::NONE)]);
+        assert_eq!(cfg.keybindings.view, vec![single(Char('v'), M::ALT)]);
     }
 
     #[test]
     fn view_binding_configurable() {
-        let cfg = Config::load_from_str(r#"{"keybindings":{"view":"Alt-v"}}"#).unwrap();
-        assert_eq!(cfg.keybindings.view, vec![single(Char('v'), M::ALT)]);
+        let cfg = Config::load_from_str(r#"{"keybindings":{"view":"F3"}}"#).unwrap();
+        assert_eq!(cfg.keybindings.view, vec![single(F(3), M::NONE)]);
     }
 
     #[test]
