@@ -32,6 +32,20 @@ impl App {
         out
     }
 
+    /// Built-in actions for the button bar as (label, bindings): the label is the CheatSheet's
+    /// first column, or a hardcoded short name when the CheatSheet doesn't list the action.
+    pub(super) fn bar_builtins(&self) -> Vec<(String, &ActionBindings)> {
+        self.bindings_list()
+            .into_iter()
+            .filter_map(|(key, bindings, _)| {
+                let label = self.palette_commands.iter().find(|c| c.config_key == key)
+                    .map(|c| c.label.as_str())
+                    .or_else(|| crate::ui::button_bar::fallback_label(key))?;
+                Some((label.to_string(), bindings))
+            })
+            .collect()
+    }
+
     pub(super) fn open_palette(&mut self, view: PaletteView) {
         self.completion = None;
         self.reverse_search = None;

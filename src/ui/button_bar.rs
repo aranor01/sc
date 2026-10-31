@@ -1,5 +1,5 @@
-use crate::config::{format_key, ActionBindings, ColorScheme, KeyBinding, KeyBindings, MenuItem};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crate::config::{format_key, ActionBindings, ColorScheme, KeyBinding, MenuItem};
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -9,15 +9,6 @@ use ratatui::{
 
 use super::button::Button;
 use super::to_color;
-
-fn first_key(bindings: &ActionBindings) -> Option<KeyEvent> {
-    for b in bindings {
-        if let KeyBinding::Single(ke) = b {
-            return Some(*ke);
-        }
-    }
-    None
-}
 
 fn first_fkey(bindings: &ActionBindings) -> Option<u8> {
     for b in bindings {
@@ -30,6 +21,21 @@ fn first_fkey(bindings: &ActionBindings) -> Option<u8> {
         }
     }
     None
+}
+
+/// Short name used on the bar when the CheatSheet has no label for a built-in action.
+pub fn fallback_label(config_key: &str) -> Option<&'static str> {
+    Some(match config_key {
+        "action_palette" => "Actions",
+        "user_menu" => "Menu",
+        "view" => "View",
+        "copy" => "Copy",
+        "move" => "Move",
+        "mkdir" => "Mkdir",
+        "delete" => "Delete",
+        "exit" => "Quit",
+        _ => return None,
+    })
 }
 
 /// What happens when a button bar entry is clicked.
@@ -49,7 +55,8 @@ pub struct BarEntry {
 
 pub struct ButtonBarWidget<'a> {
     pub cs: &'a ColorScheme,
-    pub kb: &'a KeyBindings,
+    /// Built-in actions as (display label, bindings).
+    pub builtins: &'a [(String, &'a ActionBindings)],
     pub menu: &'a [MenuItem],
     pub press: Option<Position>,
 }
@@ -57,25 +64,16 @@ pub struct ButtonBarWidget<'a> {
 impl<'a> ButtonBarWidget<'a> {
     /// Returns bar entries: built-in Fkey bindings, then menu Fkey items, both sorted by Fkey;
     /// then non-Fkey `add_to_bar` menu items in config order.
-    pub fn entries(kb: &KeyBindings, menu: &[MenuItem]) -> Vec<BarEntry> {
+    pub fn entries(builtins: &[(String, &ActionBindings)], menu: &[MenuItem]) -> Vec<BarEntry> {
         let mut fkey_entries: Vec<(u8, BarEntry)> = Vec::new();
         let mut extra_entries: Vec<BarEntry> = Vec::new();
 
         // Built-in bindings
-        let pairs: &[(&ActionBindings, &str)] = &[
-            (&kb.action_palette, "Actions"),
-            (&kb.user_menu,   "Menu"),
-            (&kb.copy,        "Copy"),
-            (&kb.move_entry,  "Move"),
-            (&kb.mkdir,       "Mkdir"),
-            (&kb.delete,      "Delete"),
-            (&kb.exit,        "Quit"),
-        ];
-        for (bindings, label) in pairs {
+        for (label, bindings) in builtins {
             if let Some(n) = first_fkey(bindings) {
                 fkey_entries.push((n, BarEntry {
                     key_label: format!("F{n}"),
-                    label: label.to_string(),
+                    label: label.clone(),
                     action: BarAction::Fkey(n),
                 }));
             }
@@ -128,12 +126,12 @@ impl<'a> ButtonBarWidget<'a> {
     }
 
     /// Returns the action of the button whose area contains `pos`, if any.
-    pub fn button_at(kb: &KeyBindings, menu: &[MenuItem], bb_area: Rect, pos: Position) -> Option<BarAction> {
+    pub fn button_at(builtins: &[(String, &ActionBindings)], menu: &[MenuItem], bb_area: Rect, pos: Position) -> Option<BarAction> {
         if pos.y != bb_area.y {
             return None;
         }
         let mut x = bb_area.x;
-        for entry in Self::entries(kb, menu) {
+        for entry in Self::entries(builtins, menu) {
             let w = (entry.key_label.len() + entry.label.len() + 1) as u16;
             if pos.x >= x && pos.x < x + w {
                 return Some(entry.action);
@@ -155,7 +153,7 @@ impl<'a> Widget for ButtonBarWidget<'a> {
         let label_fg = to_color(self.cs.button_bar_fg);
         let label_bg = to_color(self.cs.button_bar_bg);
 
-        let entries = Self::entries(self.kb, self.menu);
+        let entries = Self::entries(self.builtins, self.menu);
         let mut x = area.x;
         for entry in &entries {
             let key_str = &entry.key_label;
@@ -191,5 +189,21 @@ impl<'a> Widget for ButtonBarWidget<'a> {
             let fill = " ".repeat((area.x + area.width - x) as usize);
             buf.set_string(x, area.y, &fill, Style::default().bg(label_bg));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::parse_key_binding;
+
+    #[test]
+    fn builtin_with_custom_fkey_is_shown_with_its_label() {
+        let sort = vec![parse_key_binding("F9").unwrap()];
+        let ctrl = vec![parse_key_binding("Ctrl-s").unwrap()];
+        let builtins = vec![("Sort Panel".to_string(), &sort), ("Other".to_string(), &ctrl)];
+        let entries = ButtonBarWidget::entries(&builtins, &[]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!((entries[0].key_label.as_str(), entries[0].label.as_str()), ("F9", "Sort Panel"));
     }
 }

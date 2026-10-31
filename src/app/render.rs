@@ -211,8 +211,9 @@ impl App {
                     bb_area,
                 );
             } else {
+                let builtins = self.bar_builtins();
                 frame.render_widget(
-                    ButtonBarWidget { cs: &cs, kb: &self.config.keybindings, menu: &self.config.menu, press },
+                    ButtonBarWidget { cs: &cs, builtins: &builtins, menu: &self.config.menu, press },
                     bb_area,
                 );
             }

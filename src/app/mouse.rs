@@ -180,7 +180,9 @@ impl App {
 
     pub(super) fn handle_button_bar_click(&mut self, pos: Position) {
         let bb_area = self.button_bar_area.get();
-        match ButtonBarWidget::button_at(&self.config.keybindings, &self.config.menu, bb_area, pos) {
+        let builtins = self.bar_builtins();
+        let action = ButtonBarWidget::button_at(&builtins, &self.config.menu, bb_area, pos);
+        match action {
             Some(BarAction::Fkey(n)) => self.handle_key_event(KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE)),
             Some(BarAction::Menu(cmd)) => self.execute_menu_item(cmd),
             None => {}
