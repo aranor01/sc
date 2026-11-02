@@ -31,8 +31,8 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 | Action | Description | Config key: default |
 |---|---|---|
 | Switch Panel | Switch focus to the other panel | `switch_panel`: `Tab` |
-| Sort Panel | Open sort popup: choose sort order (Name, Extension, Size, Modified, Unsorted; asc/desc) | `sort_panel`: `Ctrl-s` |
-| Sync Panels | Open in the inactive panel the same directory shown in the active panel | `sync_panels`: `Alt-i` |
+| Sort Panel | Open a popup to choose sort order (Name, Extension, Size, Modified, Unsorted; asc/desc) | `sort_panel`: `Ctrl-s` |
+| Sync Panels | Open the directory shown in the active panel also in the inactive panel | `sync_panels`: `Alt-i` |
 | Refresh Panel | Force-refresh the active panel's directory listing (re-reads from disk) | `refresh_panel`: `Alt-r` |
 
 ## General Navigation and Interaction Keys (non-configurable)
@@ -70,9 +70,9 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 | Action | Description | Config key: default |
 |---|---|---|
 | View | Open the internal full-screen text viewer on the selected file | `view`: `F3` |
-| Copy | Copy tagged files (or the selected file) to the inactive panel's directory | `copy`: `F5` |
-| Move | Move tagged files (or the selected file) to the inactive panel's directory | `move`: `F6` |
-| Delete | Delete the tagged files (or the selected file) in the active panel | `delete`: `F8` |
+| Copy | Copy tagged files or the selected file to the inactive panel's directory | `copy`: `F5` |
+| Move | Move tagged files or the selected file to the inactive panel's directory | `move`: `F6` |
+| Delete | Delete tagged files or the selected file in the active panel | `delete`: `F8` |
 | Rename | Rename the currently selected file | `rename`: `Shift-F6` |
 | Make Directory [Mkdir] | Create a new directory in the active panel | `mkdir`: `F7` |
 
@@ -100,14 +100,14 @@ Keys of the internal full-screen text viewer (opened with `view`). They only app
 | Insert Path (Inactive) | Copy the inactive panel's path to the command line | `cmdline_insert_path_other`: `Ctrl-x Ctrl-p` |
 | History Previous | Go to the previous command in the history | `cmdline_history_prev`: `Ctrl-Up` |
 | History Next | Go to the next command in the history | `cmdline_history_next`: `Ctrl-Down` |
-| Reverse Search | Filter the command history by the command line text (matches shown above the command line, most recent highlighted, Backspace re-filters); Enter/Tab accepts the highlighted entry, Esc cancels | `reverse_search`: `Ctrl-r`, `Alt-h` |
+| Reverse Search | Search the command history (matches shown above the command line, most recent highlighted, Backspace re-filters); Enter/Tab accepts the highlighted entry, Esc cancels | `reverse_search`: `Ctrl-r`, `Alt-h` |
 
 ## Shell
 
 | Action | Description | Config key: default |
 |---|---|---|
-| Toggle Shell [Shell] | Toggle output overlay (stateless mode) or full interactive subshell (subshell mode); Ctrl-o and Alt-o also exit subshell passthrough back to the sc UI | `toggle_shell`: `Ctrl-o` |
-| Toggle Shell & Sync [Shell] | Like Toggle Shell; also copies the SC command line into the subshell's readline buffer | `toggle_shell_and_sync_command_line`: `Alt-o` |
+| Toggle Shell [Shell] | Toggle the subshell or, in stateless mode, the last command output | `toggle_shell`: `Ctrl-o` |
+| Show Shell & Sync [Shell] | Show the subshell and copy the SC command line into it | `toggle_shell_and_sync_command_line`: `Alt-o` |
 
 ## Layout
 
