@@ -354,6 +354,17 @@ impl App {
             }
         }
 
+        // ESC removes an active fuzzy filter even when its prompt is no longer shown,
+        // taking precedence over entering action mode.
+        if event.code == KeyCode::Esc
+            && event.modifiers == KeyModifiers::NONE
+            && !self.show_output
+            && self.active_panel().fuzzy_filter.is_some()
+        {
+            self.set_fuzzy_filter("");
+            return;
+        }
+
         // ESC: toggle explicit action mode when cmdline has text (one-shot panel focus).
         if event.code == KeyCode::Esc
             && event.modifiers == KeyModifiers::NONE
