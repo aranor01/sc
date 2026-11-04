@@ -25,9 +25,13 @@ A two-panel visual shell for Linux terminals, in the spirit of Midnight Commande
 
 ## Screenshots
 
-| User menu | Command-line autocompletion |
+| Palette | Command-line autocompletion |
 |---|---|
-| ![User menu](screenshots/user_menu.png) | ![Autocompletion](screenshots/autocompletion.png) |
+| ![Palette](screenshots/palette.png) | ![Autocompletion](screenshots/autocompletion.png) |
+
+| Search results | Internal Viewer |
+|---|---|
+| ![Palette](screenshots/search_results.png) | ![Internal Viewer](screenshots/viewer.png) |
 
 ## Installation
 
