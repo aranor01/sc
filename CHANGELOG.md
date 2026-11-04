@@ -67,6 +67,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 - The button bar shows every built-in action bound to a function key, labelled with its
   CheatSheet name, not only a hardcoded list of them bound to function keys by default.
 - Quicksearch shows its prompt also when the command line is hidden.
+- Keys bound to other actions work while the quicksearch prompt is open, and hide the prompt.
 - Clicking the text field of a single-field dialog (Rename, Filter, New directory, …) focuses it.
 - While the command line is hidden, keys are handled by the panels and action bindings only.
 - File names, paths and matched lines containing control or bidi/format characters

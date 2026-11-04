@@ -251,7 +251,19 @@ impl App {
         // Quicksearch / fuzzy filter: intercept keys while active. Both take the same input;
         // the fuzzy filter keeps its query on the panel, so leaving the prompt through a
         // navigation key keeps the filter, while Esc (or erasing the query) removes it.
+        // Any other key (bound actions, modified keys, Tab, F-keys, ...) hides the prompt
+        // and is then handled normally below.
         if self.quicksearch.is_some() || self.fuzzy_filter_active {
+            let mut dismissed_only = false;
+            // A key that is not typed into the prompt and not bound to anything (an action or
+            // a user menu entry) is ignored, leaving the prompt open.
+            let typing = (event.modifiers == KeyModifiers::NONE || event.modifiers == KeyModifiers::SHIFT)
+                && matches!(event.code, KeyCode::Char(_) | KeyCode::Backspace);
+            let pending = self.pending_chord.as_ref();
+            let ignored = !typing
+                && matches!(match_key(&self.bindings_list(), &event, pending), KeyMatch::None)
+                && !self.config.menu.iter().any(|item| menu_item_matches_key(item, pending, &event))
+                && !menu_item_is_chord_start(&self.config.menu, &event);
             match event.code {
                 // Navigation keys: dismiss then execute
                 KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
@@ -291,9 +303,13 @@ impl App {
                     match event.code {
                         KeyCode::Char(c) if event.modifiers == KeyModifiers::NONE || event.modifiers == KeyModifiers::SHIFT => query.push(c),
                         KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => { query.pop(); }
-                        _ => self.fuzzy_filter_active = false,
+                        _ if ignored => {}
+                        _ => {
+                            self.fuzzy_filter_active = false;
+                            dismissed_only = true;
+                        }
                     }
-                    if self.fuzzy_filter_active {
+                    if self.fuzzy_filter_active && !ignored {
                         self.set_fuzzy_filter(&query);
                     }
                 }
@@ -314,12 +330,16 @@ impl App {
                         self.quicksearch_jump(&pattern);
                     }
                 }
+                _ if ignored => {}
                 _ => {
                     self.quicksearch = None;
                     self.fuzzy_filter_active = false;
+                    dismissed_only = true;
                 }
             }
-            return;
+            if !dismissed_only {
+                return;
+            }
         }
 
         // Search views: Enter activates a hit / opens the viewer; Esc interrupts a
