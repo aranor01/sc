@@ -1310,7 +1310,7 @@ fn typing_fuzzy_filters_and_shows_the_live_shortcut() {
     app.open_palette(PaletteView::Root);
     type_str(&mut app, "sortpan");
     let s = app.palette.as_ref().unwrap();
-    assert!(s.list.items[0].starts_with("Panels: Sort Panel \u{2013} Open sort popup"), "{:?}", s.list.items[0]);
+    assert!(s.list.items[0].starts_with("Panels: Sort Panel \u{2013} Open a popup"), "{:?}", s.list.items[0]);
     assert_eq!(s.list.hints[0], "Alt-z");
     type_str(&mut app, "qqqq");
     assert_eq!(palette_items(&app), vec!["No matching actions"]);
