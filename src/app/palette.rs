@@ -114,7 +114,7 @@ impl App {
                     }).map(|s| (s, e))
                 })
                 .collect();
-            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            scored.sort_by_key(|b| std::cmp::Reverse(b.0));
             for (_, e) in scored {
                 let text = if session.view == PaletteView::Root && e.category != user_cat {
                     format!("{}: {}", e.category, e.display())

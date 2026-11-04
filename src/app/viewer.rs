@@ -212,6 +212,9 @@ impl App {
         }
     }
 }
+/// Search highlight: needle, case_sensitive, is_regex, whole_words.
+pub(super) type Highlight = (String, bool, bool, bool);
+
 
 /// The text the full-screen overlay currently shows (file viewer, else command output)
 /// with its search highlight. Takes the fields separately so callers can keep using
@@ -220,8 +223,8 @@ pub(super) fn text_view<'a>(
     viewer: &'a mut Option<ViewerContent>,
     show_output: bool,
     last_output: &'a mut Option<TextBuffer>,
-    output_highlight: &'a mut Option<(String, bool, bool, bool)>,
-) -> Option<(&'a mut TextBuffer, &'a mut Option<(String, bool, bool, bool)>)> {
+    output_highlight: &'a mut Option<Highlight>,
+) -> Option<(&'a mut TextBuffer, &'a mut Option<Highlight>)> {
     if let Some(v) = viewer {
         return Some((&mut v.buf, &mut v.highlight));
     }
