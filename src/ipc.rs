@@ -12,10 +12,10 @@ pub struct IpcServer {
 //
 // The IPC socket is reachable by anything that can open a path on the local
 // filesystem (see `socket_path` below), which is a much bigger set of
-// potential callers than "the child processes sc itself launched." The two
+// potential callers than "the child processes scd itself launched." The two
 // constants and the `read_authenticated_message` function further down are
 // what stand between "any process that can open this path" and "full control
-// over this sc instance" — see the doc comment on `read_authenticated_message`
+// over this scd instance" — see the doc comment on `read_authenticated_message`
 // for the full reasoning.
 
 /// Hard ceiling on a single IPC message's size, in bytes. The underlying read
@@ -24,7 +24,7 @@ pub struct IpcServer {
 /// likely reject) it. Most legitimate actions — a handful of filenames, a
 /// filter pattern, some command-line text — are a few dozen bytes. The one
 /// documented use case that can legitimately get large is `TagOnly`/`Tag`
-/// fed from stdin (see docs/IpcActions.md's `git diff --name-only | sc-action
+/// fed from stdin (see docs/IpcActions.md's `git diff --name-only | scd-action
 /// ... TagOnly -` example): at roughly 40-60 bytes per path including the
 /// newline, 8 MiB comfortably covers well over 100,000 changed files, which
 /// is generous even for a large monorepo diff. If a payload somehow did
@@ -36,7 +36,7 @@ pub struct IpcServer {
 const MAX_MESSAGE_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB
 
 /// Total wall-clock time we're willing to spend reading one peer's message,
-/// from the moment we start reading. A legitimate `sc-action` client does a
+/// from the moment we start reading. A legitimate `scd-action` client does a
 /// single `write_all` and then exits (which closes its end of the socket and
 /// delivers EOF) in well under a millisecond, so half a second is enormous
 /// headroom for a same-host Unix socket under any realistic system load. Its
@@ -44,7 +44,7 @@ const MAX_MESSAGE_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB
 /// connects and simply never sends anything (or never closes) would block the
 /// accepting thread forever. Both places that accept IPC connections do so on
 /// their one and only thread — the main TUI render loop, and the Ctrl+O
-/// subshell's PTY-shuffling loop — so "blocks forever" would mean "sc, or the
+/// subshell's PTY-shuffling loop — so "blocks forever" would mean "scd, or the
 /// subshell session, freezes solid until the peer goes away."
 ///
 /// This is deliberately enforced as a wall-clock deadline in
@@ -106,17 +106,17 @@ impl IpcServer {
 
         // `bind()` creates the socket's filesystem entry the same way `open()`
         // or `mkdir()` would: with mode `0o777 & !umask`. That is NOT private
-        // by default — if sc happens to start under a permissive umask (0, or
+        // by default — if scd happens to start under a permissive umask (0, or
         // 002, both genuinely used as defaults in some containers/CI images,
         // and occasionally set deliberately in a user's own shell for
         // shared-directory reasons), the socket file would be left group- or
         // world-writable. Unix domain sockets enforce the same permission bits
         // on connect() that regular files enforce on open(), so a writable
         // socket file means any other local user's process could connect and
-        // drive this sc instance — including, if this happens to be a `sudo
-        // sc`, at root's privilege level. `socket_path` below also means this
+        // drive this scd instance — including, if this happens to be a `sudo
+        // scd`, at root's privilege level. `socket_path` below also means this
         // matters more than it might seem: whenever `$XDG_RUNTIME_DIR` isn't
-        // set (which is the common case for a plain `sudo sc`, since sudo's
+        // set (which is the common case for a plain `sudo scd`, since sudo's
         // default `env_reset` strips it and root rarely has a `/run/user/0`
         // from a one-off `sudo` invocation), the socket falls back to a
         // world-traversable directory such as `/tmp`.
@@ -203,7 +203,7 @@ impl Drop for IpcServer {
 }
 
 fn socket_path(pid: u32) -> PathBuf {
-    let name = format!("sc-{pid}.sock");
+    let name = format!("scd-{pid}.sock");
     if let Ok(run) = std::env::var("XDG_RUNTIME_DIR") {
         return PathBuf::from(run).join(name);
     }
@@ -220,7 +220,7 @@ fn socket_path(pid: u32) -> PathBuf {
 /// Returns `None` if the peer isn't us, if the read failed or timed out, or
 /// (implicitly, via `parse_message` at the call site) if the payload wasn't
 /// something we understand. In every case the caller just drops the message
-/// and moves on — same "fail silently" philosophy the `sc-action` client uses
+/// and moves on — same "fail silently" philosophy the `scd-action` client uses
 /// (see its own doc comment), since there's no good place to surface an error
 /// for a background IPC listener.
 ///
@@ -239,7 +239,7 @@ fn socket_path(pid: u32) -> PathBuf {
 ///    kernel's own record of the connecting process's credentials (via
 ///    `getsockopt(SO_PEERCRED)`, see `peer_uid` below) holds regardless of
 ///    umask, regardless of where the socket file ends up, and regardless of
-///    its file mode — it's what actually closes the gap where, say, `sc` is
+///    its file mode — it's what actually closes the gap where, say, `scd` is
 ///    running as root under `sudo` and an unrelated, unprivileged local
 ///    process tries to connect and drive it.
 ///

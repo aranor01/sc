@@ -120,7 +120,7 @@ impl App {
                 if echo {
                     let _ = std::io::Write::write_all(
                         &mut std::io::stdout(),
-                        format!("[sc]$ cd {}\r\n", shell_escape_path(&cwd)).as_bytes(),
+                        format!("[scd]$ cd {}\r\n", shell_escape_path(&cwd)).as_bytes(),
                     );
                 }
                 let _ = sub.send_line(&format!(" cd {}", shell_escape_path(&cwd)));
@@ -132,17 +132,17 @@ impl App {
         if echo {
             let _ = std::io::Write::write_all(
                 &mut std::io::stdout(),
-                format!("[sc]$ {}\r\n", cmd).as_bytes(),
+                format!("[scd]$ {}\r\n", cmd).as_bytes(),
             );
         }
 
         // Always run cmdline commands in a fresh PTY. This gives clean output
         // with no readline echo artifacts regardless of shell mode. The persistent
         // subshell is reserved for Ctrl+O interactive passthrough only.
-        // Append sc-action so the shell reports its final $PWD back via IPC,
+        // Append scd-action so the shell reports its final $PWD back via IPC,
         // enabling transparent cd navigation in the panel.
-        let binding = std::env::current_exe().unwrap().parent().unwrap().to_owned().join("sc-action");
-        let sc_action_path = binding.to_str().unwrap_or("sc-action");
+        let binding = std::env::current_exe().unwrap().parent().unwrap().to_owned().join("scd-action");
+        let sc_action_path = binding.to_str().unwrap_or("scd-action");
         let wrapped = format!(r#"{cmd}; {sc_action_path} "$SC_TOKEN" ShowPanels "$PWD""#);
         let raw = crate::subshell::run_with_pty_capture(&wrapped, &cwd);
         let text = normalize_pty_output(&raw);
@@ -157,7 +157,7 @@ impl App {
             let _ = crossterm::execute!(stdout(), Hide, EnterAlternateScreen, EnableBracketedPaste);
         }
 
-        // Drain the IPC socket: picks up the ShowPanels message sent by sc-action
+        // Drain the IPC socket: picks up the ShowPanels message sent by scd-action
         // above, and also any Tag/Filter/etc. messages the command may have sent.
         let pending: Vec<_> = self.ipc.iter().flat_map(|ipc| {
             std::iter::from_fn(|| ipc.try_recv())
@@ -168,7 +168,7 @@ impl App {
 
         // In subshell mode, add the command to bash's in-memory history so the
         // user can recall it with Up arrow during Ctrl+O sessions (skipped for
-        // menu commands, same as sc's own history above). Either way, mark that
+        // menu commands, same as scd's own history above). Either way, mark that
         // a fresh prompt is needed: the cwd-sync block above may have written to
         // the subshell too, and its echo/prompt accumulates unread in the PTY
         // master buffer until the next passthrough starts and drains it.
@@ -228,8 +228,8 @@ impl App {
         // for the in-progress line — pastes into the resumed subshell would arrive
         // unbracketed until the user finishes that line. Leaving the mode alone keeps
         // the terminal state consistent with whatever bash itself last set. We still
-        // force it back on with EnableBracketedPaste below once sc regains the real
-        // terminal, so sc's own TUI never depends on what bash left behind.
+        // force it back on with EnableBracketedPaste below once scd regains the real
+        // terminal, so scd's own TUI never depends on what bash left behind.
         if self.mouse {
             let _ = crossterm::execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
         } else {
@@ -276,7 +276,7 @@ impl App {
                     sub.send_raw(cmdline_text.as_bytes());
                 }
             } else if self.subshell_prompt_needed {
-                // A sc cmdline command ran since last passthrough: drain() discarded
+                // A scd cmdline command ran since last passthrough: drain() discarded
                 // bash's PS1, so we need \n to force a fresh one. \x15 is only needed
                 // when cmdline text will follow (see above); otherwise it just rings
                 // the bell for no reason on an already-empty line.
@@ -298,7 +298,7 @@ impl App {
             if !sub.is_alive() {
                 // The user typed `exit` (or the shell crashed). Drop the Subshell
                 // (which SIGTERMs and closes the master fd) and fall back to
-                // stateless mode so sc keeps working normally.
+                // stateless mode so scd keeps working normally.
                 self.shell_mode = ShellMode::Stateless;
                 // Skip cwd sync — /proc/<pid>/cwd is gone.
             } else if !matches!(self.active_panel().content, PanelContent::Matches(_)) {

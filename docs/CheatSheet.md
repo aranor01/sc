@@ -1,6 +1,6 @@
 # Sunset Commander — Key Bindings Cheat Sheet
 
-Config keys refer to the field names in the `keybindings` section of `~/.config/sc/config.json`.
+Config keys refer to the field names in the `keybindings` section of `~/.config/scd/config.json`.
 Defaults use the notation accepted by the config parser (e.g. `Alt-Up`, `Ctrl-s`, `Ctrl-x t`).
 
 ## Modifier Keys

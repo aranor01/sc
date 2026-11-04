@@ -59,8 +59,8 @@ jobs:
       # (e.g. sc_0.1.0-1_amd64.deb) that can't coexist as release assets.
       - name: Rename packages with target suffix
         run: |
-          mv target/${{ matrix.target }}/debian/*.deb "target/${{ matrix.target }}/debian/sc-${{ matrix.target }}.deb"
-          mv target/${{ matrix.target }}/generate-rpm/*.rpm "target/${{ matrix.target }}/generate-rpm/sc-${{ matrix.target }}.rpm"
+          mv target/${{ matrix.target }}/debian/*.deb "target/${{ matrix.target }}/debian/scd-${{ matrix.target }}.deb"
+          mv target/${{ matrix.target }}/generate-rpm/*.rpm "target/${{ matrix.target }}/generate-rpm/scd-${{ matrix.target }}.rpm"
 
       # Only the static musl build gets a tarball + curl|bash installer: it's
       # the one binary that works on any x86_64 Linux regardless of glibc
@@ -70,10 +70,10 @@ jobs:
       - name: Build tarball
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
-          bundle="sc-${{ matrix.target }}"
+          bundle="scd-${{ matrix.target }}"
           mkdir -p "$bundle/scripts" "$bundle/docs"
-          cp target/${{ matrix.target }}/release/sc "$bundle/"
-          cp target/${{ matrix.target }}/release/sc-action "$bundle/"
+          cp target/${{ matrix.target }}/release/scd "$bundle/"
+          cp target/${{ matrix.target }}/release/scd-action "$bundle/"
           cp scripts/*.sh "$bundle/scripts/"
           cp docs/*.md "$bundle/docs/"
           cp README.md "$bundle/"
@@ -103,8 +103,8 @@ jobs:
         with:
           name: linux-tarball-${{ matrix.target }}
           path: |
-            target/${{ matrix.target }}/sc-${{ matrix.target }}.tar.gz
-            target/${{ matrix.target }}/sc-${{ matrix.target }}.tar.gz.sha256
+            target/${{ matrix.target }}/scd-${{ matrix.target }}.tar.gz
+            target/${{ matrix.target }}/scd-${{ matrix.target }}.tar.gz.sha256
             target/${{ matrix.target }}/install.sh
 
       - name: Attach packages to release
@@ -126,7 +126,7 @@ jobs:
           gh release upload "${{ github.ref_name }}" target/${{ matrix.target }}/debian/*.deb target/${{ matrix.target }}/generate-rpm/*.rpm --clobber
           if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
             gh release upload "${{ github.ref_name }}" \
-              "target/${{ matrix.target }}/sc-${{ matrix.target }}.tar.gz" \
-              "target/${{ matrix.target }}/sc-${{ matrix.target }}.tar.gz.sha256" \
+              "target/${{ matrix.target }}/scd-${{ matrix.target }}.tar.gz" \
+              "target/${{ matrix.target }}/scd-${{ matrix.target }}.tar.gz.sha256" \
               "target/${{ matrix.target }}/install.sh" --clobber
           fi

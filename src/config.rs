@@ -505,11 +505,11 @@ pub struct Config {
 }
 
 /// Locate the scripts directory at runtime using a two-step search:
-/// 1. Compile-time install prefix: `<SC_INSTALL_PREFIX>/share/sc/scripts/`
+/// 1. Compile-time install prefix: `<SC_INSTALL_PREFIX>/share/scd/scripts/`
 /// 2. Fallback: `scripts/` directory alongside the running binary
 pub fn find_scripts_dir() -> Option<std::path::PathBuf> {
     let prefix = std::path::PathBuf::from(env!("SC_INSTALL_PREFIX"))
-        .join("share").join("sc").join("scripts");
+        .join("share").join("scd").join("scripts");
     if prefix.join("edit.sh").exists() {
         return Some(prefix);
     }
@@ -524,12 +524,12 @@ pub fn find_scripts_dir() -> Option<std::path::PathBuf> {
     None
 }
 
-/// Locate `CheatSheet.md` at runtime: `<SC_INSTALL_PREFIX>/share/doc/sc/`, then a `docs/`
+/// Locate `CheatSheet.md` at runtime: `<SC_INSTALL_PREFIX>/share/doc/scd/`, then a `docs/`
 /// directory alongside the running binary. `None` means the caller should use its
 /// embedded copy.
 pub fn find_cheatsheet() -> Option<std::path::PathBuf> {
     let installed = std::path::PathBuf::from(env!("SC_INSTALL_PREFIX"))
-        .join("share").join("doc").join("sc").join("CheatSheet.md");
+        .join("share").join("doc").join("scd").join("CheatSheet.md");
     if installed.exists() {
         return Some(installed);
     }
@@ -554,12 +554,12 @@ fn generate_default_config(scripts_dir: &std::path::Path, config_path: &std::pat
 }
 
 impl Config {
-    /// Load config from the default path (~/.config/sc/config.json).
+    /// Load config from the default path (~/.config/scd/config.json).
     /// If the file is absent and scripts are found, generates a default config.
     pub fn load() -> Result<Self> {
         let path = dirs::config_dir()
             .context("cannot determine config directory")?
-            .join("sc")
+            .join("scd")
             .join("config.json");
 
         if !path.exists() {

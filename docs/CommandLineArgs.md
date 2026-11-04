@@ -1,9 +1,9 @@
-# sc — Command Line Arguments
+# scd — Command Line Arguments
 
 ## Synopsis
 
 ```
-sc [OPTIONS] [DIR1] [DIR2]
+scd [OPTIONS] [DIR1] [DIR2]
 ```
 
 ## Arguments
@@ -17,7 +17,7 @@ sc [OPTIONS] [DIR1] [DIR2]
 
 | Option | Description |
 |---|---|
-| `--restore-paths` | Override `startup.restore_paths` in config: restore panel paths from `~/.local/state/sc/state.json`. Conflicts with `--no-restore-paths`. |
+| `--restore-paths` | Override `startup.restore_paths` in config: restore panel paths from `~/.local/state/scd/state.json`. Conflicts with `--no-restore-paths`. |
 | `--no-restore-paths` | Override `startup.restore_paths` in config: start panels at the current working directory. Conflicts with `--restore-paths`. |
 | `--subshell` | Override `startup.subshell` in config: start in subshell mode. Conflicts with `--no-subshell`. |
 | `--no-subshell` | Override `startup.subshell` in config: start in stateless mode. Conflicts with `--subshell`. |
@@ -55,12 +55,12 @@ Each panel's starting path is determined in this priority order:
 
 | Invocation | Left panel | Right panel | Note |
 |---|---|---|---|
-| `sc` | cwd (or restored, per config) | cwd (or restored, per config) | |
-| `sc --restore-paths` | restored from state | restored from state | overrides config |
-| `sc --no-restore-paths` | cwd | cwd | overrides config |
-| `sc /tmp` | `/tmp` | `/tmp` | flag ignored |
-| `sc /tmp --restore-paths` | `/tmp` | `/tmp` | flag ignored |
-| `sc /tmp --no-restore-paths` | `/tmp` | `/tmp` | flag ignored |
-| `sc /tmp /var` | `/tmp` | `/var` | flag ignored |
-| `sc /tmp /var --restore-paths` | `/tmp` | `/var` | flag ignored |
-| `sc /tmp /var --no-restore-paths` | `/tmp` | `/var` | flag ignored |
+| `scd` | cwd (or restored, per config) | cwd (or restored, per config) | |
+| `scd --restore-paths` | restored from state | restored from state | overrides config |
+| `scd --no-restore-paths` | cwd | cwd | overrides config |
+| `scd /tmp` | `/tmp` | `/tmp` | flag ignored |
+| `scd /tmp --restore-paths` | `/tmp` | `/tmp` | flag ignored |
+| `scd /tmp --no-restore-paths` | `/tmp` | `/tmp` | flag ignored |
+| `scd /tmp /var` | `/tmp` | `/var` | flag ignored |
+| `scd /tmp /var --restore-paths` | `/tmp` | `/var` | flag ignored |
+| `scd /tmp /var --no-restore-paths` | `/tmp` | `/var` | flag ignored |

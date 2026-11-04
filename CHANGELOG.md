@@ -62,6 +62,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   opens the search dialog).
 - The default binding of `quicksearch` is now `Alt-s` only; `/` opens the fuzzy filter.
 - Default bindings swapped: `toggle_cmdline` is now `Alt-b` and `toggle_button_bar` is `Ctrl-Alt-b`.
+- Renamed to avoid conflicts: binaries `scd`/`scd-action`, package `sunset-commander`, and
+  config/state directories `scd` (move any existing `sc` ones); `install.sh` removes the old 0.1.0 install.
 
 ### Fixed
 

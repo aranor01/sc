@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# sc-complete — Tab completion helper for Sunset Commander
-# Usage: sc-complete <cmdline>
+# scd-complete — Tab completion helper for Sunset Commander
+# Usage: scd-complete <cmdline>
 # Prints one completion candidate per line on stdout.
 # Completes from the end of the input (cursor-at-end assumed).
 # Exits 0 on success; any non-zero exit is silently ignored by the UI.

@@ -135,7 +135,7 @@ impl App {
 
 pub(super) fn find_complete_script() -> Option<PathBuf> {
     let dir = crate::config::find_scripts_dir()?;
-    for name in &["sc-complete", "complete.sh"] {
+    for name in &["scd-complete", "complete.sh"] {
         let p = dir.join(name);
         if p.exists() {
             return Some(p);

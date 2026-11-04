@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    // Navigate from OUT_DIR (.../target/{profile}/build/sc-hash/out) up 3 levels
+    // Navigate from OUT_DIR (.../target/{profile}/build/sunset-commander-hash/out) up 3 levels
     // to reach .../target/{profile}/
     let profile_dir = out_dir
-        .parent().unwrap() // sc-hash dir
+        .parent().unwrap() // sunset-commander-hash dir
         .parent().unwrap() // build/
         .parent().unwrap(); // debug/ or release/
 

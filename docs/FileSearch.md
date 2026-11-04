@@ -45,7 +45,7 @@ When the search starts, the active panel is replaced by a *results panel*:
   interrupted by jumping away and back (see below). A second Esc — or the first Esc once
   the search is already interrupted or has completed on its own — closes the results
   (and matches) panel and restores both panels to their previous directories. As
-  everywhere in sc, when the command line is not empty an Esc only enters action mode
+  everywhere in scd, when the command line is not empty an Esc only enters action mode
   first — so closing a still-running search takes Esc, Esc, Esc; a finished one takes
   Esc, Esc.
 - Tagging works normally (`Insert`, `*`, `+`, `-`), and quicksearch (`Alt-s`) matches over
@@ -68,7 +68,7 @@ first, and it does not additionally navigate to the parent of the search root. H
 navigation is a
 no-op while the matches panel is focused (`Tab` back to the results panel first). Starting
 a new search, or `Alt-r`, drops whatever was cached. This isn't persisted to
-`panel_history.json` — it's process-memory only, and starting a fresh `sc` session never
+`panel_history.json` — it's process-memory only, and starting a fresh `scd` session never
 resurrects it. If the jump happened before the search reached `Done`, the restored view is
 marked `(partial, Alt-r to refresh)` in its footer, since it only ever shows what had been
 found up to that point.

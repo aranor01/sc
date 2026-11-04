@@ -180,7 +180,7 @@ impl PanelHistory {
 fn history_path() -> PathBuf {
     dirs::state_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("sc")
+        .join("scd")
         .join("panel_history.json")
 }
 

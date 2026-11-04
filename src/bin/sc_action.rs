@@ -6,7 +6,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 3 {
-        eprintln!("usage: sc-action <token> <action> [args...|-]");
+        eprintln!("usage: scd-action <token> <action> [args...|-]");
         process::exit(1);
     }
 
@@ -21,8 +21,8 @@ fn main() {
         args[3..].to_vec()
     };
 
-    // Silent exit on failure: sc-action runs inside the PTY, so any error output
-    // would appear in the terminal. Only sc starting it can fail (sc crashed).
+    // Silent exit on failure: scd-action runs inside the PTY, so any error output
+    // would appear in the terminal. Only scd starting it can fail (scd crashed).
     let Ok(mut stream) = UnixStream::connect(token) else {
         process::exit(0);
     };

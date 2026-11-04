@@ -1,10 +1,10 @@
 # Configuration
 
-Sunset Commander reads a single optional JSON file at `~/.config/sc/config.json`. The app
+Sunset Commander reads a single optional JSON file at `~/.config/scd/config.json`. The app
 runs with built-in defaults if the file is absent, and any key you omit falls back to its
 default individually — you only need to specify the settings you want to change.
 
-If the file doesn't exist yet and sc can locate its bundled helper scripts (see
+If the file doesn't exist yet and scd can locate its bundled helper scripts (see
 [Bundled scripts](#bundled-scripts) below), it generates a starter `config.json` with a
 `View`/`Edit`/`Edit config` menu wired up to those scripts.
 
@@ -127,7 +127,7 @@ Notes:
 ```
 
 - `restore_paths` — if `true`, panels restore the last-visited paths from
-  `~/.local/state/sc/state.json` on launch instead of starting at the current working
+  `~/.local/state/scd/state.json` on launch instead of starting at the current working
   directory. Defaults to `false`.
 - `subshell` — if `true`, `Ctrl-o` toggles a full interactive subshell instead of a stateless
   output overlay. Defaults to `true`.
@@ -141,7 +141,7 @@ All three can be overridden per-launch on the command line; see
 
 `action_palette` (`F1`) opens a searchable palette of every built-in command, each shown with
 its current shortcut. The list is read from `CheatSheet.md` (installed in
-`<prefix>/share/doc/sc/`, with a built-in copy as fallback). Recent picks are remembered in
+`<prefix>/share/doc/scd/`, with a built-in copy as fallback). Recent picks are remembered in
 `state.json`. `user_menu` (`F2`) opens the same palette limited to the commands below.
 
 ## User menu
@@ -171,10 +171,10 @@ its current shortcut. The list is read from `CheatSheet.md` (installed in
 
 ## Bundled scripts
 
-sc ships two helper scripts, `view.sh` and `edit.sh`, used by the auto-generated default
+scd ships two helper scripts, `view.sh` and `edit.sh`, used by the auto-generated default
 menu. They're resolved at runtime by checking, in order:
 
-1. `<install prefix>/share/sc/scripts/` (the install prefix is fixed at compile time,
+1. `<install prefix>/share/scd/scripts/` (the install prefix is fixed at compile time,
    `/usr/local` by default).
 2. A `scripts/` directory next to the running binary (used for `cargo run` / development
    builds).
@@ -272,15 +272,15 @@ The values above are the built-in defaults; only include the keys you want to ch
 
 ## Related files
 
-Besides `config.json`, sc keeps a few other files under `~/.config/sc/` and
-`~/.local/state/sc/`:
+Besides `config.json`, scd keeps a few other files under `~/.config/scd/` and
+`~/.local/state/scd/`:
 
 | File | Contents |
 |---|---|
-| `~/.config/sc/config.json` | This file. |
-| `~/.config/sc/bookmarks.json` | Bookmarked directories (`Ctrl-b` to add, `Ctrl-\` to browse). |
-| `~/.local/state/sc/state.json` | Panel layout, visibility toggles, text viewer settings (line numbers), and last-visited paths. |
-| `~/.local/state/sc/command_history` | Command line history. |
-| `~/.local/state/sc/panel_history.json` | Per-panel directory navigation history. |
+| `~/.config/scd/config.json` | This file. |
+| `~/.config/scd/bookmarks.json` | Bookmarked directories (`Ctrl-b` to add, `Ctrl-\` to browse). |
+| `~/.local/state/scd/state.json` | Panel layout, visibility toggles, text viewer settings (line numbers), and last-visited paths. |
+| `~/.local/state/scd/command_history` | Command line history. |
+| `~/.local/state/scd/panel_history.json` | Per-panel directory navigation history. |
 
 None of these need to be created or edited by hand under normal use.

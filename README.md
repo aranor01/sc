@@ -1,4 +1,4 @@
-# Sunset Commander (sc)
+# Sunset Commander (scd)
 
 A two-panel visual shell for Linux terminals, in the spirit of Midnight Commander.
 
@@ -49,13 +49,17 @@ needed to pass the flag through the pipe):
 curl -fsSL https://github.com/aranor01/sc/releases/latest/download/install.sh | bash -s -- --uninstall
 ```
 
+> **Upgrading from 0.1.0:** the binary is now `scd` (was `sc`), and the config/state directories
+> moved from `sc` to `scd` (e.g. `~/.config/sc` → `~/.config/scd`). `install.sh` removes the old
+> install; if you installed a `.deb`/`.rpm`, remove the old `sc` package yourself.
+
 Or build it yourself. Requires a recent Rust toolchain ([rustup.rs](https://rustup.rs)).
 
 Build and run from source:
 
 ```sh
 cargo build --release
-./target/release/sc
+./target/release/scd
 ```
 
 Or build a Debian package with [`cargo-deb`](https://github.com/kornelski/cargo-deb):
@@ -63,7 +67,7 @@ Or build a Debian package with [`cargo-deb`](https://github.com/kornelski/cargo-
 ```sh
 cargo install cargo-deb
 SC_INSTALL_PREFIX=/usr cargo deb
-sudo dpkg -i target/debian/sc_*.deb
+sudo dpkg -i target/debian/sunset-commander_*.deb
 ```
 
 Or build an RPM package with [`cargo-generate-rpm`](https://github.com/cat-in-136/cargo-generate-rpm)
@@ -73,7 +77,7 @@ Or build an RPM package with [`cargo-generate-rpm`](https://github.com/cat-in-13
 cargo install cargo-generate-rpm
 SC_INSTALL_PREFIX=/usr cargo build --release
 cargo generate-rpm
-sudo rpm -ivh target/generate-rpm/sc-*.rpm
+sudo rpm -ivh target/generate-rpm/sunset-commander-*.rpm
 ```
 
 To produce a statically-linked binary (useful for installing on distros with an
@@ -95,10 +99,10 @@ has none, so the default `$auto` otherwise just prints a harmless warning.
 ## Usage
 
 ```sh
-sc [OPTIONS] [DIR1] [DIR2]
+scd [OPTIONS] [DIR1] [DIR2]
 ```
 
-Run `sc --help` for the full list of options, or see
+Run `scd --help` for the full list of options, or see
 [`docs/CommandLineArgs.md`](docs/CommandLineArgs.md) for the complete reference, including
 how `DIR1`/`DIR2` interact with the `--restore-paths` option.
 
@@ -133,7 +137,7 @@ of command-line shortcuts.
 
 ## Custom Menu Commands
 
-Add entries to the `"menu"` array in `~/.config/sc/config.json` (see
+Add entries to the `"menu"` array in `~/.config/scd/config.json` (see
 [`docs/Configuration.md`](docs/Configuration.md) for the full schema). Each entry needs a
 `label` and a `command`; `command` can reference the selected file, the tagged files, or
 either panel's directory using the macros documented in
@@ -141,13 +145,13 @@ either panel's directory using the macros documented in
 command directly without opening the menu, and `add_to_bar: true` also shows it as a button
 in the button bar (see [Customizing the Button Bar](#customizing-the-button-bar) below).
 
-If `~/.config/sc/config.json` doesn't exist yet, sc creates one the first time it runs,
+If `~/.config/scd/config.json` doesn't exist yet, scd creates one the first time it runs,
 already wired up with `View` / `Edit` / `Edit config` entries — so you're extending
 a working file, not starting from a blank one.
 
 Press F1 for the command palette — fuzzy-search any command and see its shortcut.
 
-Menu edits take effect the next time you press F2 — no need to restart sc. Direct `keys`
+Menu edits take effect the next time you press F2 — no need to restart scd. Direct `keys`
 shortcuts and `add_to_bar` buttons pick up the change too, but only once F2 has been
 pressed at least once after saving (they aren't reloaded independently).
 
@@ -193,7 +197,7 @@ Bar colors come from the `button_bar_*` keys in the color scheme (see
 
 ## More Complex Scripting
 
-sc can be driven from outside its own UI. This feature is particularly useful in combination
+scd can be driven from outside its own UI. This feature is particularly useful in combination
 with user-menu commands. The set of actions that can be triggered will grow, but you can
 already inject strings in the command line, select or filter files in the panel, and more.
 See [`docs/IpcActions.md`](docs/IpcActions.md) for the full list of actions and examples.

@@ -51,7 +51,7 @@ const BIDI_CONTROL_CHARS: [char; 11] = [
 ///   regardless of what would otherwise follow it. Without this, a
 ///   maliciously-named file or a hostile IPC caller could send raw escape
 ///   sequences straight through to whatever terminal emulator is hosting
-///   `sc`.
+///   `scd`.
 /// - **Bidi control characters** (`BIDI_CONTROL_CHARS` above): see its own
 ///   comment.
 ///

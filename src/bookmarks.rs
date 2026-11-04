@@ -4,7 +4,7 @@ use std::path::PathBuf;
 pub fn bookmarks_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("sc")
+        .join("scd")
         .join("bookmarks.json")
 }
 

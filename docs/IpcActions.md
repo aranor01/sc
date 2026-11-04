@@ -1,17 +1,17 @@
-# sc — Scripting / IPC Actions
+# scd — Scripting / IPC Actions
 
-While sc is running, it listens for actions on a local Unix domain socket and exports the
+While scd is running, it listens for actions on a local Unix domain socket and exports the
 socket's path as `$SC_TOKEN` in its own environment, so any command launched from the
 command line or the user menu inherits it automatically.
 
 ## Security
 
-Only processes running as the same Unix user as `sc` can talk to the socket — this is
+Only processes running as the same Unix user as `scd` can talk to the socket — this is
 checked with `SO_PEERCRED` on every connection, not just inferred from file permissions,
 so it still holds if the socket ends up somewhere more exposed than usual (e.g. under
-`sudo sc`, where `$XDG_RUNTIME_DIR` is typically unset and the socket falls back to a
+`sudo scd`, where `$XDG_RUNTIME_DIR` is typically unset and the socket falls back to a
 shared temp directory). The socket file is also always created mode `0600`, regardless of
-the umask in effect when `sc` started. A connection that doesn't finish sending a message
+the umask in effect when `scd` started. A connection that doesn't finish sending a message
 within 500ms, or that sends more than 8 MiB, is dropped.
 
 By default, only `ShowPanels` is enabled; every other action below requires opting in via
@@ -34,16 +34,16 @@ non-ASCII text, passes through unchanged. The same filter applies to every other
 reaches the command line — typing, autocomplete, yanking, and copying a file or path name in
 — since a file name can also carry arbitrary bytes.
 
-## `sc-action`
+## `scd-action`
 
-A companion binary, installed alongside `sc`, sends one action per invocation:
+A companion binary, installed alongside `scd`, sends one action per invocation:
 
 ```
-sc-action <token> <action> [args...]
-sc-action <token> <action> -       # read args from stdin, one per line
+scd-action <token> <action> [args...]
+scd-action <token> <action> -       # read args from stdin, one per line
 ```
 
-If `SC_TOKEN` is unset or invalid, `sc-action` exits quietly without doing anything.
+If `SC_TOKEN` is unset or invalid, `scd-action` exits quietly without doing anything.
 
 ## Actions
 
@@ -74,16 +74,16 @@ it's treated as part of the text and `Insert` is used.
 ## Examples
 
 Both examples below use actions other than `ShowPanels`, so they require `ipc_scripting`
-to be enabled (see Security above) — otherwise `sc-action` runs normally but sc silently
+to be enabled (see Security above) — otherwise `scd-action` runs normally but scd silently
 ignores the message.
 
 ```sh
 # From a script or user-menu command: tag every file a build just touched.
-git diff --name-only | sc-action "$SC_TOKEN" TagOnly -
+git diff --name-only | scd-action "$SC_TOKEN" TagOnly -
 ```
 
 ```sh
 # Insert at the cursor (default), or explicitly append/replace.
-sc-action "$SC_TOKEN" InjectToCommandLine "picked-file.txt"
-sc-action "$SC_TOKEN" InjectToCommandLine Append "picked-file.txt"
+scd-action "$SC_TOKEN" InjectToCommandLine "picked-file.txt"
+scd-action "$SC_TOKEN" InjectToCommandLine Append "picked-file.txt"
 ```

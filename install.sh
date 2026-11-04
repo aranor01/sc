@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs (or, with --uninstall, removes) sc from the statically-linked
+# Installs (or, with --uninstall, removes) scd from the statically-linked
 # (musl) release tarball, placing files in the same locations the .deb/.rpm
 # packages use. __SC_VERSION__ is substituted with the release tag by the
 # packages.yml workflow before this script is uploaded as a release asset.
@@ -23,18 +23,30 @@ main() {
         fi
     fi
 
+    # Removes the 0.1.0 install (binaries `sc`/`sc-action`, dirs `share/sc`,
+    # `share/doc/sc`). `$PREFIX/bin/sc` alone could be an unrelated program
+    # (the spreadsheet `sc`), so only act if our scripts dir is present.
+    remove_legacy() {
+        if [ -d "$PREFIX/share/sc/scripts" ]; then
+            $sudo rm -f "$PREFIX/bin/sc" "$PREFIX/bin/sc-action"
+            $sudo rm -rf "$PREFIX/share/sc" "$PREFIX/share/doc/sc"
+            echo "Removed the previous 'sc' install from $PREFIX"
+        fi
+    }
+
     if [ "${1:-}" = "--uninstall" ]; then
-        $sudo rm -f "$PREFIX/bin/sc" "$PREFIX/bin/sc-action"
-        $sudo rm -rf "$PREFIX/share/sc/scripts" "$PREFIX/share/doc/sc"
-        $sudo rmdir "$PREFIX/share/sc" 2>/dev/null || true
-        echo "Uninstalled sc from $PREFIX"
+        remove_legacy
+        $sudo rm -f "$PREFIX/bin/scd" "$PREFIX/bin/scd-action"
+        $sudo rm -rf "$PREFIX/share/scd/scripts" "$PREFIX/share/doc/scd"
+        $sudo rmdir "$PREFIX/share/scd" 2>/dev/null || true
+        echo "Uninstalled scd from $PREFIX"
         exit 0
     fi
 
     os="$(uname -s)"
     arch="$(uname -m)"
     if [ "$os" != "Linux" ] || [ "$arch" != "x86_64" ]; then
-        echo "error: unsupported platform ($os/$arch) — sc only ships prebuilt x86_64 Linux binaries" >&2
+        echo "error: unsupported platform ($os/$arch) — scd only ships prebuilt x86_64 Linux binaries" >&2
         exit 1
     fi
 
@@ -48,7 +60,7 @@ main() {
     tmpdir="$(mktemp -d)"
     trap 'rm -rf "$tmpdir"' EXIT
 
-    tarball="sc-$TARGET.tar.gz"
+    tarball="scd-$TARGET.tar.gz"
     url="https://github.com/$REPO/releases/download/$VERSION/$tarball"
     echo "Downloading $url"
     curl -fsSL "$url" -o "$tmpdir/$tarball"
@@ -57,17 +69,19 @@ main() {
     (cd "$tmpdir" && sha256sum -c "$tarball.sha256")
     tar xzf "$tmpdir/$tarball" -C "$tmpdir"
 
-    bundle="$tmpdir/sc-$TARGET"
-    $sudo install -Dm755 "$bundle/sc" "$PREFIX/bin/sc"
-    $sudo install -Dm755 "$bundle/sc-action" "$PREFIX/bin/sc-action"
+    remove_legacy
+
+    bundle="$tmpdir/scd-$TARGET"
+    $sudo install -Dm755 "$bundle/scd" "$PREFIX/bin/scd"
+    $sudo install -Dm755 "$bundle/scd-action" "$PREFIX/bin/scd-action"
     for f in "$bundle"/scripts/*.sh; do
-        $sudo install -Dm755 "$f" "$PREFIX/share/sc/scripts/$(basename "$f")"
+        $sudo install -Dm755 "$f" "$PREFIX/share/scd/scripts/$(basename "$f")"
     done
     for f in "$bundle/README.md" "$bundle"/docs/*.md; do
-        $sudo install -Dm644 "$f" "$PREFIX/share/doc/sc/$(basename "$f")"
+        $sudo install -Dm644 "$f" "$PREFIX/share/doc/scd/$(basename "$f")"
     done
 
-    echo "Installed sc $VERSION to $PREFIX"
+    echo "Installed scd $VERSION to $PREFIX"
 }
 
 main "$@"

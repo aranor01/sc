@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-/// sc — a visual shell for Linux terminals, in the spirit of Midnight Commander.
+/// scd — a visual shell for Linux terminals, in the spirit of Midnight Commander.
 #[derive(Parser, Debug)]
-#[command(name = "sc", version = env!("SC_VERSION"), about, long_about = None)]
+#[command(name = "scd", version = env!("SC_VERSION"), about, long_about = None)]
 pub struct Cli {
     /// Starting path for both panels
     #[arg(value_name = "DIR1")]
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn no_args_has_no_overrides() {
-        let cli = Cli::parse_from(["sc"]);
+        let cli = Cli::parse_from(["scd"]);
         assert_eq!(cli.dir1, None);
         assert_eq!(cli.dir2, None);
         assert_eq!(cli.restore_paths_flag(), None);
@@ -99,100 +99,100 @@ mod tests {
 
     #[test]
     fn positional_dirs_are_parsed() {
-        let cli = Cli::parse_from(["sc", "/tmp", "/var"]);
+        let cli = Cli::parse_from(["scd", "/tmp", "/var"]);
         assert_eq!(cli.dir1, Some(PathBuf::from("/tmp")));
         assert_eq!(cli.dir2, Some(PathBuf::from("/var")));
     }
 
     #[test]
     fn only_dir1_leaves_dir2_none() {
-        let cli = Cli::parse_from(["sc", "/tmp"]);
+        let cli = Cli::parse_from(["scd", "/tmp"]);
         assert_eq!(cli.dir1, Some(PathBuf::from("/tmp")));
         assert_eq!(cli.dir2, None);
     }
 
     #[test]
     fn restore_paths_flag_true() {
-        let cli = Cli::parse_from(["sc", "--restore-paths"]);
+        let cli = Cli::parse_from(["scd", "--restore-paths"]);
         assert_eq!(cli.restore_paths_flag(), Some(true));
     }
 
     #[test]
     fn restore_paths_flag_false() {
-        let cli = Cli::parse_from(["sc", "--no-restore-paths"]);
+        let cli = Cli::parse_from(["scd", "--no-restore-paths"]);
         assert_eq!(cli.restore_paths_flag(), Some(false));
     }
 
     #[test]
     fn conflicting_restore_flags_error() {
-        let result = Cli::try_parse_from(["sc", "--restore-paths", "--no-restore-paths"]);
+        let result = Cli::try_parse_from(["scd", "--restore-paths", "--no-restore-paths"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn subshell_flag_true() {
-        let cli = Cli::parse_from(["sc", "--subshell"]);
+        let cli = Cli::parse_from(["scd", "--subshell"]);
         assert_eq!(cli.subshell_flag(), Some(true));
     }
 
     #[test]
     fn subshell_flag_false() {
-        let cli = Cli::parse_from(["sc", "--no-subshell"]);
+        let cli = Cli::parse_from(["scd", "--no-subshell"]);
         assert_eq!(cli.subshell_flag(), Some(false));
     }
 
     #[test]
     fn conflicting_subshell_flags_error() {
-        let result = Cli::try_parse_from(["sc", "--subshell", "--no-subshell"]);
+        let result = Cli::try_parse_from(["scd", "--subshell", "--no-subshell"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn ipc_scripting_flag_true() {
-        let cli = Cli::parse_from(["sc", "--ipc-scripting"]);
+        let cli = Cli::parse_from(["scd", "--ipc-scripting"]);
         assert_eq!(cli.ipc_scripting_flag(), Some(true));
     }
 
     #[test]
     fn ipc_scripting_flag_false() {
-        let cli = Cli::parse_from(["sc", "--no-ipc-scripting"]);
+        let cli = Cli::parse_from(["scd", "--no-ipc-scripting"]);
         assert_eq!(cli.ipc_scripting_flag(), Some(false));
     }
 
     #[test]
     fn conflicting_ipc_scripting_flags_error() {
-        let result = Cli::try_parse_from(["sc", "--ipc-scripting", "--no-ipc-scripting"]);
+        let result = Cli::try_parse_from(["scd", "--ipc-scripting", "--no-ipc-scripting"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn no_mouse_short_and_long_flag() {
-        assert!(!Cli::parse_from(["sc", "-d"]).mouse());
-        assert!(!Cli::parse_from(["sc", "--no-mouse"]).mouse());
-        assert!(Cli::parse_from(["sc"]).mouse());
+        assert!(!Cli::parse_from(["scd", "-d"]).mouse());
+        assert!(!Cli::parse_from(["scd", "--no-mouse"]).mouse());
+        assert!(Cli::parse_from(["scd"]).mouse());
     }
 
     #[test]
     fn unknown_flag_errors() {
-        let result = Cli::try_parse_from(["sc", "--bogus"]);
+        let result = Cli::try_parse_from(["scd", "--bogus"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn too_many_positional_args_errors() {
-        let result = Cli::try_parse_from(["sc", "/a", "/b", "/c"]);
+        let result = Cli::try_parse_from(["scd", "/a", "/b", "/c"]);
         assert!(result.is_err());
     }
 
     #[test]
     fn help_flag_is_recognized() {
-        let result = Cli::try_parse_from(["sc", "--help"]);
+        let result = Cli::try_parse_from(["scd", "--help"]);
         assert_eq!(result.unwrap_err().kind(), clap::error::ErrorKind::DisplayHelp);
     }
 
     #[test]
     fn version_flag_is_recognized() {
-        let result = Cli::try_parse_from(["sc", "--version"]);
+        let result = Cli::try_parse_from(["scd", "--version"]);
         assert_eq!(result.unwrap_err().kind(), clap::error::ErrorKind::DisplayVersion);
     }
 }

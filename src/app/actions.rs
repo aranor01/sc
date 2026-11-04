@@ -47,7 +47,7 @@ impl App {
             }
             Action::UserMenu => {
                 // Reload menu entries from config.json so edits (new/fixed commands)
-                // show up without restarting sc. Always re-read rather than checking
+                // show up without restarting scd. Always re-read rather than checking
                 // mtime first: the file is tiny and F2 is a rare, human-paced event,
                 // so a stat-based skip would add complexity for no real savings.
                 match Config::load() {

@@ -733,7 +733,7 @@ mod tests {
 
     /// A file of `n` numbered lines, read 4 KiB at a time.
     fn chunked_file(name: &str, n: usize) -> (std::path::PathBuf, TextBuffer) {
-        let path = std::env::temp_dir().join(format!("sc-overlay-{}-{name}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("scd-overlay-{}-{name}", std::process::id()));
         std::fs::write(&path, (1..=n).map(|i| format!("line-{i}\n")).collect::<String>()).unwrap();
         let buf = TextBuffer::open_with_chunk(path.to_str().unwrap(), 4096).unwrap();
         (path, buf)
