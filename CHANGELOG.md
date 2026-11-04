@@ -61,6 +61,7 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 - The filter dialog's default binding moved from `Ctrl-f` to `Alt-f` (`Ctrl-f` now
   opens the search dialog).
 - The default binding of `quicksearch` is now `Alt-s` only; `/` opens the fuzzy filter.
+- Default bindings swapped: `toggle_cmdline` is now `Alt-b` and `toggle_button_bar` is `Ctrl-Alt-b`.
 
 ### Fixed
 

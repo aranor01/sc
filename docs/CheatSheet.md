@@ -114,8 +114,8 @@ Keys of the internal full-screen text viewer (opened with `view`). They only app
 | Action | Description | Config key: default |
 |---|---|---|
 | Toggle Layout | Toggle panel layout between vertical and horizontal | `toggle_layout`: `Alt-,` |
-| Toggle Command Line | Toggle command line visibility | `toggle_cmdline`: `Ctrl-Alt-b` |
-| Toggle Button Bar | Toggle button bar visibility | `toggle_button_bar`: `Alt-b` |
+| Toggle Command Line | Toggle command line visibility | `toggle_cmdline`: `Alt-b` |
+| Toggle Button Bar | Toggle button bar visibility | `toggle_button_bar`: `Ctrl-Alt-b` |
 
 ## Miscellaneous
 

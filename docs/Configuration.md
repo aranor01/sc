@@ -84,8 +84,8 @@ triggers the action):
 | `reverse_search` | `Ctrl-r`, `Alt-h` |
 | `toggle_shell` | `Ctrl-o` |
 | `toggle_shell_and_sync_command_line` | `Alt-o` |
-| `toggle_cmdline` | `Ctrl-Alt-b` |
-| `toggle_button_bar` | `Alt-b` |
+| `toggle_cmdline` | `Alt-b` |
+| `toggle_button_bar` | `Ctrl-Alt-b` |
 | `action_palette` | `F1` |
 | `user_menu` | `F2` |
 | `exit` | `F10`, `Ctrl-q` |

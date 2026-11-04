@@ -176,10 +176,10 @@
 - C-b
        add the active panel's current directory to bookmarks
 
-- C-A-b
+- A-b
        toggle command line visibility
 
-- A-b
+- C-A-b
        toggle button bar visibility
 
 - C-o
