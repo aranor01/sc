@@ -437,6 +437,9 @@ pub struct App {
     quicksearch: Option<String>,
     /// Prompt of the fuzzy filter being typed; the query itself lives on the active panel.
     fuzzy_filter_active: bool,
+    /// Edit state (cursor, kill ring) shared by the quicksearch and fuzzy filter prompts;
+    /// its text is re-synced from the authoritative text on every key.
+    search_edit: CmdLineState,
     shell_mode: ShellMode,
     needs_full_redraw: bool,
     ipc: Option<IpcServer>,
@@ -541,6 +544,7 @@ impl App {
             recent_actions: state.recent_actions.clone(),
             quicksearch: None,
             fuzzy_filter_active: false,
+            search_edit: CmdLineState::new(),
             shell_mode: ShellMode::Stateless,
             needs_full_redraw: false,
             ipc: IpcServer::new(),

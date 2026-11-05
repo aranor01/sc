@@ -298,38 +298,7 @@ impl App {
                     self.quicksearch = None;
                     self.fuzzy_filter_active = false;
                 }
-                KeyCode::Backspace | KeyCode::Char(_) if self.fuzzy_filter_active => {
-                    let mut query = self.active_panel().fuzzy_filter.as_ref().map(|(q, _)| q.clone()).unwrap_or_default();
-                    match event.code {
-                        KeyCode::Char(c) if event.modifiers == KeyModifiers::NONE || event.modifiers == KeyModifiers::SHIFT => query.push(c),
-                        KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => { query.pop(); }
-                        _ if ignored => {}
-                        _ => {
-                            self.fuzzy_filter_active = false;
-                            dismissed_only = true;
-                        }
-                    }
-                    if self.fuzzy_filter_active && !ignored {
-                        self.set_fuzzy_filter(&query);
-                    }
-                }
-                KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
-                    if let Some(ref mut qs) = self.quicksearch {
-                        qs.pop();
-                        let pattern = qs.clone();
-                        self.quicksearch_jump(&pattern);
-                    }
-                }
-                KeyCode::Char(c)
-                    if event.modifiers == KeyModifiers::NONE
-                        || event.modifiers == KeyModifiers::SHIFT =>
-                {
-                    if let Some(ref mut qs) = self.quicksearch {
-                        qs.push(c);
-                        let pattern = qs.clone();
-                        self.quicksearch_jump(&pattern);
-                    }
-                }
+                _ if self.edit_search_key(&event) => {}
                 _ if ignored => {}
                 _ => {
                     self.quicksearch = None;
@@ -503,5 +472,47 @@ impl App {
             CmdlineOutcome::HistoryNext => self.handle_action(Action::CmdlineHistoryNext),
             CmdlineOutcome::Consumed | CmdlineOutcome::Passthrough => {}
         }
+    }
+}
+
+impl App {
+    /// Edits the quicksearch / fuzzy filter text like the command line (cursor movement,
+    /// Delete, word and line kills, yank). Plain keys always edit; modified ones only when
+    /// not bound to an action or menu entry. Returns whether the key was consumed.
+    fn edit_search_key(&mut self, event: &KeyEvent) -> bool {
+        let plain = event.modifiers == KeyModifiers::NONE || event.modifiers == KeyModifiers::SHIFT;
+        let editing_key = matches!(
+            event.code,
+            KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete | KeyCode::Left | KeyCode::Right
+        );
+        let text = if self.fuzzy_filter_active {
+            self.active_panel().fuzzy_filter.as_ref().map(|(q, _)| q.clone()).unwrap_or_default()
+        } else {
+            self.quicksearch.clone().unwrap_or_default()
+        };
+        if self.search_edit.text != text {
+            self.search_edit.cursor = text.len();
+            self.search_edit.text = text.clone();
+        }
+        let typing = plain && matches!(event.code, KeyCode::Char(_) | KeyCode::Backspace);
+        let unbound = matches!(match_key(&self.bindings_list(), event, self.pending_chord.as_ref()), KeyMatch::None)
+            && !self.config.menu.iter().any(|item| menu_item_matches_key(item, self.pending_chord.as_ref(), event))
+            && !menu_item_is_chord_start(&self.config.menu, event);
+        if !(typing || (plain && editing_key) || unbound) {
+            return false;
+        }
+        if !matches!(self.search_edit.handle_key(event), CmdlineOutcome::Consumed) {
+            return false;
+        }
+        let new_text = self.search_edit.text.clone();
+        if new_text != text {
+            if self.fuzzy_filter_active {
+                self.set_fuzzy_filter(&new_text);
+            } else {
+                self.quicksearch = Some(new_text.clone());
+                self.quicksearch_jump(&new_text);
+            }
+        }
+        true
     }
 }

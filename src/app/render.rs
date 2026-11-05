@@ -118,7 +118,7 @@ impl App {
                 qs_state = {
                     let mut s = CmdLineState::new();
                     s.text = pattern.clone();
-                    s.cursor = pattern.len();
+                    s.cursor = self.search_edit.cursor_in(pattern);
                     s
                 };
                 &qs_state

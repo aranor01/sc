@@ -1140,6 +1140,47 @@ fn enter_while_quicksearch_active_also_opens_viewer_via_default_text_action() {
 }
 
 #[test]
+fn search_inputs_edit_text_like_the_command_line() {
+    let base = make_search_base("search_editing");
+    std::fs::write(base.join("alpha.txt"), "").unwrap();
+    std::fs::write(base.join("beta.txt"), "").unwrap();
+    let mut app = test_app(&base);
+    let k = |c: KeyCode, m: KeyModifiers| KeyEvent::new(c, m);
+    let n = KeyModifiers::NONE;
+
+    app.quicksearch = Some(String::new());
+    for c in "alpa".chars() {
+        app.handle_key_event(k(KeyCode::Char(c), n));
+    }
+    app.handle_key_event(k(KeyCode::Left, n));
+    app.handle_key_event(k(KeyCode::Char('h'), n));
+    assert_eq!(app.quicksearch.as_deref(), Some("alpha"));
+    app.handle_key_event(k(KeyCode::Char('a'), KeyModifiers::CONTROL));
+    app.handle_key_event(k(KeyCode::Delete, n));
+    assert_eq!(app.quicksearch.as_deref(), Some("lpha"));
+    app.handle_key_event(k(KeyCode::Char('u'), KeyModifiers::CONTROL));
+    assert_eq!(app.quicksearch.as_deref(), Some("lpha"));
+    app.handle_key_event(k(KeyCode::Char('e'), KeyModifiers::CONTROL));
+    app.handle_key_event(k(KeyCode::Char('u'), KeyModifiers::CONTROL));
+    assert_eq!(app.quicksearch.as_deref(), Some(""));
+    app.handle_key_event(k(KeyCode::Esc, n));
+
+    app.handle_action(Action::FuzzyFilter);
+    for c in "btx".chars() {
+        app.handle_key_event(k(KeyCode::Char(c), n));
+    }
+    app.handle_key_event(k(KeyCode::Left, n));
+    app.handle_key_event(k(KeyCode::Backspace, n));
+    assert!(app.fuzzy_filter_active);
+    assert_eq!(app.left.fuzzy_filter.as_ref().map(|(q, _)| q.as_str()), Some("bx"));
+    app.handle_key_event(k(KeyCode::Right, n));
+    app.handle_key_event(k(KeyCode::Backspace, n));
+    assert_eq!(app.left.fuzzy_filter.as_ref().map(|(q, _)| q.as_str()), Some("b"));
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn hidden_cmdline_is_shown_while_quicksearch_or_fuzzy_filter_is_active() {
     use ratatui::{backend::TestBackend, Terminal};
     let base = make_search_base("hidden_cmdline_prompt");

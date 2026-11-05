@@ -153,6 +153,12 @@ impl CmdLineState {
         self.cursor = 0;
     }
 
+    /// Cursor to show for `text` when this state last edited it: the stored cursor if
+    /// `text` is still what was edited, otherwise (text changed elsewhere) its end.
+    pub fn cursor_in(&self, text: &str) -> usize {
+        if self.text == text { self.cursor.min(text.len()) } else { text.len() }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }

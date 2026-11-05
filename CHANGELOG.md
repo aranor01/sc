@@ -56,6 +56,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Changed
 
+- Quicksearch and the fuzzy filter prompt are edited like the command line (cursor
+  movement, Delete, word movement, kill/yank keys).
 - `F2` (`user_menu`) now opens the command palette filtered to the user-configured menu
   commands instead of a separate menu dialog.
 - The filter dialog's default binding moved from `Ctrl-f` to `Alt-f` (`Ctrl-f` now

@@ -135,7 +135,8 @@
 - / (Slash)
        open the fuzzy filter prompt in the active panel: takes input like quicksearch, but hides
        the entries that don't fuzzy-match the typed text (same matching as the command palette).
-       Up/Down/Enter leave the prompt and keep the filter; Esc or erasing the text removes it,
+       The text is edited like the command line (Left/Right, Delete, C-a/C-e, word movement,
+       kills). Up/Down/PgUp/PgDown/Home/End/Enter leave the prompt and keep the filter; Esc or erasing the text removes it,
        and so does navigating to another directory. The header shows it as `[~text]`
 
 - A-s
@@ -143,7 +144,9 @@
        the cursor jumps to the first entry whose name starts with the typed string
        (case-insensitive prefix match); Esc closes the prompt. Enter closes the prompt and
        is also passed to the panel, same as Home/End/PgUp/PgDown/Up/Down: it opens the
-       currently selected directory (or does nothing if the entry isn't a directory)
+       currently selected directory (or does nothing if the entry isn't a directory).
+       The typed text is edited like the command line (Left/Right, Delete, C-a/C-e,
+       word movement, C-k/C-u/C-w kills, C-y yank)
 
 - A-f
        open the filter dialog for the active panel: hides entries not matching the given

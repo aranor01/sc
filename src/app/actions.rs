@@ -253,6 +253,7 @@ impl App {
             }
             Action::Quicksearch => {
                 self.quicksearch = Some(String::new());
+                self.search_edit.clear();
             }
             Action::ToggleHidden => {
                 let panel = self.active_panel_mut();
@@ -304,6 +305,7 @@ impl App {
                     return;
                 }
                 self.fuzzy_filter_active = true;
+                self.search_edit.clear();
             }
             Action::Filter => {
                 if !matches!(self.active_panel().content, PanelContent::Dir) {
