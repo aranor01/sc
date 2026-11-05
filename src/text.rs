@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn truncate_path_front_collapses_with_leading_ellipsis() {
-        assert_eq!(truncate_path_front("/home/alice/projects/scd", 15), ".../projects/scd");
+        assert_eq!(truncate_path_front("/home/alice/projects/sc", 15), ".../projects/sc");
     }
 
     #[test]
