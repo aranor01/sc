@@ -155,7 +155,7 @@ Menu edits take effect the next time you press F2 — no need to restart scd. Di
 shortcuts and `add_to_bar` buttons pick up the change too, but only once F2 has been
 pressed at least once after saving (they aren't reloaded independently).
 
-Two examples:
+Some examples (remove comments if you want to use them in your config):
 
 ```jsonc
 {
@@ -167,7 +167,17 @@ Two examples:
     { "label": "Archive from other panel", "command": "tar czf \"`basename %D`\".tar.gz -C %D %S" },
 
     // Count lines in the tagged files, or the selected file if none are tagged.
-    { "label": "Word count", "command": "wc -l %s", "keys": "F9" }
+    { "label": "Word count", "command": "wc -l %s", "keys": "F9" },
+
+    // Create a new tab in wezterm using the active panel directory as the initial working directory
+    { "label": "New Terminal", "command": "wezterm cli spawn --cwd %d bash -li", "keys": "C-t" },
+
+    // Compare selected files in both panels
+    { "label": "Compare", "command": "meld %f %D/%F", "keys": "A-d" },
+
+    // Copy the full path of the selected file to the clipboad
+    { "label": "Copy Path", "command": "echo -n \"%d/%f\" | xsel --clipboard --input" }
+
   ]
 }
 ```
