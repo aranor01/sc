@@ -148,7 +148,7 @@
        The typed text is edited like the command line (Left/Right, Delete, C-a/C-e,
        word movement, C-k/C-u/C-w kills, C-y yank)
 
-- A-f
+- A-+ (Alt-plus)
        open the filter dialog for the active panel: hides entries not matching the given
        pattern (shell glob by default; enable **RegExp** in the dialog for regex matching);
        the dialog also offers **Files only** (directories always shown) and **Case sensitive** options;
@@ -179,10 +179,10 @@
 - C-b
        add the active panel's current directory to bookmarks
 
-- A-b
+- A-c
        toggle command line visibility
 
-- C-A-b
+- C-A-c
        toggle button bar visibility
 
 - C-o

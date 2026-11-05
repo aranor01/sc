@@ -317,8 +317,8 @@ impl Default for KeyBindings {
             )],
             toggle_shell: vec![KeyBinding::Single(ke(Char('o'), c))],
             toggle_shell_and_sync_command_line: vec![KeyBinding::Single(ke(Char('o'), a))],
-            toggle_cmdline: vec![KeyBinding::Single(ke(Char('b'), a))],
-            toggle_button_bar: vec![KeyBinding::Single(ke(Char('b'), ca))],
+            toggle_cmdline: vec![KeyBinding::Single(ke(Char('c'), a))],
+            toggle_button_bar: vec![KeyBinding::Single(ke(Char('c'), ca))],
             cmdline_history_prev: vec![KeyBinding::Single(ke(Up, c))],
             cmdline_history_next: vec![KeyBinding::Single(ke(Down, c))],
             reverse_search: vec![KeyBinding::Single(ke(Char('r'), c)), KeyBinding::Single(ke(Char('h'), a))],
@@ -332,7 +332,7 @@ impl Default for KeyBindings {
             bookmark_add: vec![KeyBinding::Single(ke(Char('b'), c))],
             mkdir: vec![KeyBinding::Single(ke(F(7), n))],
             path_history: vec![KeyBinding::Single(ke(Char('H'), a)), KeyBinding::Single(ke(Down, a))],
-            filter: vec![KeyBinding::Single(ke(Char('f'), a))],
+            filter: vec![KeyBinding::Single(ke(Char('+'), a))],
             fuzzy_filter: vec![KeyBinding::Single(ke(Char('/'), n))],
             search: vec![KeyBinding::Single(ke(Char('?'), a)), KeyBinding::Single(ke(Char('f'), c))],
             select_group: vec![KeyBinding::Single(ke(Char('+'), n))],
@@ -948,7 +948,7 @@ mod tests {
     #[test]
     fn search_and_filter_default_bindings() {
         let cfg = Config::load_from_str("{}").unwrap();
-        assert_eq!(cfg.keybindings.filter, vec![single(Char('f'), M::ALT)]);
+        assert_eq!(cfg.keybindings.filter, vec![single(Char('+'), M::ALT)]);
         assert_eq!(
             cfg.keybindings.search,
             vec![single(Char('?'), M::ALT), single(Char('f'), M::CONTROL)]

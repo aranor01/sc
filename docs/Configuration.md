@@ -57,7 +57,7 @@ triggers the action):
 | `refresh_panel` | `Alt-r` |
 | `sort_panel` | `Ctrl-s` |
 | `quicksearch` | `Alt-s` |
-| `filter` | `Alt-f` |
+| `filter` | `Alt-+` |
 | `fuzzy_filter` | `/` |
 | `search` | `Alt-?`, `Ctrl-f` |
 | `toggle_hidden` | `Alt-.` |
@@ -84,8 +84,8 @@ triggers the action):
 | `reverse_search` | `Ctrl-r`, `Alt-h` |
 | `toggle_shell` | `Ctrl-o` |
 | `toggle_shell_and_sync_command_line` | `Alt-o` |
-| `toggle_cmdline` | `Alt-b` |
-| `toggle_button_bar` | `Ctrl-Alt-b` |
+| `toggle_cmdline` | `Alt-c` |
+| `toggle_button_bar` | `Ctrl-Alt-c` |
 | `action_palette` | `F1` |
 | `user_menu` | `F2` |
 | `exit` | `F10`, `Ctrl-q` |

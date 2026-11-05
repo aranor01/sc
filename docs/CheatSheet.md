@@ -19,7 +19,7 @@ config parser also accepts the short forms `A-`, `C-`, `S-` — see
 | Go Back | Go back to the previous directory in the active panel's history | `go_back`: `Alt-Left` |
 | Go Forward | Go forward in the active panel's history | `go_forward`: `Alt-Right` |
 | Quick Search | Jump to the first entry whose name starts with the typed string (case-insensitive prefix) | `quicksearch`: `Alt-s` |
-| Filter | Open a dialog to hide entries not matching a pattern (shell glob by default; dialog offers RegExp, Files only, and Case sensitive options); empty pattern removes the filter | `filter`: `Alt-f` |
+| Filter | Open a dialog to hide entries not matching a pattern (shell glob by default; dialog offers RegExp, Files only, and Case sensitive options); empty pattern removes the filter | `filter`: `Alt-+` |
 | Fuzzy Filter | Type to narrow the panel to the entries fuzzy-matching the typed text (same matching as the command palette); Esc or erasing the text removes it, and so does leaving the directory | `fuzzy_filter`: `/` |
 | Search | Find files by name and optionally content, asynchronously; hits stream into a results panel (see [`FileSearch.md`](FileSearch.md)) | `search`: `Alt-?`, `Ctrl-f` |
 | Toggle Matches Panel | Show/hide the matches panel of a content search without closing it (only applies to content-search results) | `toggle_matches_panel`: `Alt-m` |
@@ -114,8 +114,8 @@ Keys of the internal full-screen text viewer (opened with `view`). They only app
 | Action | Description | Config key: default |
 |---|---|---|
 | Toggle Layout | Toggle panel layout between vertical and horizontal | `toggle_layout`: `Alt-,` |
-| Toggle Command Line | Toggle command line visibility | `toggle_cmdline`: `Alt-b` |
-| Toggle Button Bar | Toggle button bar visibility | `toggle_button_bar`: `Ctrl-Alt-b` |
+| Toggle Command Line | Toggle command line visibility | `toggle_cmdline`: `Alt-c` |
+| Toggle Button Bar | Toggle button bar visibility | `toggle_button_bar`: `Ctrl-Alt-c` |
 
 ## Miscellaneous
 

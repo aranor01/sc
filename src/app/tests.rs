@@ -1408,7 +1408,7 @@ fn enter_runs_the_action_and_records_it_as_recent() {
 
     app.open_palette(PaletteView::Root);
     assert_eq!(palette_items(&app)[0], "\u{21ba} Toggle Button Bar \u{2013} Toggle button bar visibility");
-    assert_eq!(app.palette.as_ref().unwrap().list.hints[0], "Ctrl-Alt-b");
+    assert_eq!(app.palette.as_ref().unwrap().list.hints[0], "Ctrl-Alt-c");
     let _ = std::fs::remove_dir_all(&base);
 }
 

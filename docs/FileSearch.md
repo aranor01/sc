@@ -184,8 +184,7 @@ The IPC messages themselves are out of scope for v1.
 
 ## Configuration summary
 
-- Keybinding action `search`, default `["Alt-?", "Ctrl-f"]`. The filter dialog moves to
-  `Alt-f` to make room.
+- Keybinding action `search`, default `["Alt-?", "Ctrl-f"]`.
 - Keybinding action `toggle_matches_panel`, default `"Alt-m"`.
 - Color scheme keys `search_match_fg` / `search_match_bg` — the highlighted match
   substring in the matches panel and in the text viewer.

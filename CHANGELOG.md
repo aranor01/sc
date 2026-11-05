@@ -60,10 +60,10 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
   movement, Delete, word movement, kill/yank keys).
 - `F2` (`user_menu`) now opens the command palette filtered to the user-configured menu
   commands instead of a separate menu dialog.
-- The filter dialog's default binding moved from `Ctrl-f` to `Alt-f` (`Ctrl-f` now
+- The filter dialog's default binding moved from `Ctrl-f` to `Alt-+` (`Ctrl-f` now
   opens the search dialog).
 - The default binding of `quicksearch` is now `Alt-s` only; `/` opens the fuzzy filter.
-- Default bindings swapped: `toggle_cmdline` is now `Alt-b` and `toggle_button_bar` is `Ctrl-Alt-b`.
+- Default bindings changed: `toggle_cmdline` is now `Alt-c` and `toggle_button_bar` is `Ctrl-Alt-c`.
 - Renamed to avoid conflicts: binaries `scd`/`scd-action`, package `sunset-commander`, and
   config/state directories `scd` (move any existing `sc` ones); `install.sh` removes the old 0.1.0 install.
 

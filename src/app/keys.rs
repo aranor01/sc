@@ -388,16 +388,6 @@ impl App {
             }
         }
 
-        // Alt+B: move word left when cmdline has text; otherwise the action binding
-        // (toggle_cmdline) fires from match_key below.
-        if event.code == KeyCode::Char('b')
-            && event.modifiers == KeyModifiers::ALT
-            && !self.action_mode()
-        {
-            self.cmdline.move_word_left();
-            return;
-        }
-
         let pending = self.pending_chord.take();
         let bl = self.bindings_list();
         match match_key(&bl, &event, pending.as_ref()) {
