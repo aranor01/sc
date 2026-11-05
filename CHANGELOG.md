@@ -8,6 +8,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-05
+
 ### Added
 
 - `panels.quick_action` setting (`"fuzzy_filter"` by default, or `"quicksearch"`/empty): a
