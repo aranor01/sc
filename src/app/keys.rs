@@ -277,10 +277,11 @@ impl App {
                         self.open_current_entry_default_action();
                         return;
                     }
-                    let am = self.action_mode();
+                    // The search input owns the keys, so the panel handles them as in
+                    // action mode even when the command line holds text.
                     let vh = self.active_vh();
                     let path_before = self.active_panel().path.0.clone();
-                    match self.active_panel_mut().handle_key(&event, vh, am) {
+                    match self.active_panel_mut().handle_key(&event, vh, true) {
                         PanelOutcome::Consumed => {
                             let path_after = self.active_panel().path.0.clone();
                             if path_after != path_before {

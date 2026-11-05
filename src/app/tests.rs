@@ -1181,6 +1181,25 @@ fn search_inputs_edit_text_like_the_command_line() {
 }
 
 #[test]
+fn home_end_leave_the_search_input_and_move_the_panel_even_with_cmdline_text() {
+    let base = make_search_base("search_home_end");
+    std::fs::write(base.join("alpha.txt"), "").unwrap();
+    std::fs::write(base.join("beta.txt"), "").unwrap();
+    let mut app = test_app(&base);
+    app.cmdline.insert_str("ls");
+    let last = app.left.entries.len() - 1;
+    app.quicksearch = Some(String::new());
+    app.handle_key_event(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+    assert!(app.quicksearch.is_none());
+    assert_eq!(app.left.cursor, last);
+    app.handle_action(Action::FuzzyFilter);
+    app.handle_key_event(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+    assert!(!app.fuzzy_filter_active);
+    assert_eq!(app.left.cursor, 0);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn hidden_cmdline_is_shown_while_quicksearch_or_fuzzy_filter_is_active() {
     use ratatui::{backend::TestBackend, Terminal};
     let base = make_search_base("hidden_cmdline_prompt");

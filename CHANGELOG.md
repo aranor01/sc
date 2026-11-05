@@ -69,6 +69,8 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 ### Fixed
 
+- Home, End and Enter pressed in quicksearch act on the panel even when the command line
+  contains text.
 - The button bar shows every built-in action bound to a function key, labelled with its
   CheatSheet name, not only a hardcoded list of them bound to function keys by default.
 - Quicksearch shows its prompt also when the command line is hidden.
